@@ -173,6 +173,9 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
     parse_float("detect_iou", "IOU threshold", 0.05, 0.95)
     parse_int("min_box_area", "Minimum box area", 1, 200000)
     parse_float("cooldown_seconds", "Cooldown seconds", 0.0, 120.0)
+    parse_float("min_species_prob", "Minimum species probability", 0.0, 1.0)
+    parse_float("match_threshold", "Match threshold", 0.0, 1.0)
+    parse_float("ema_alpha", "EMA alpha", 0.0, 1.0)
 
     return parsed, errors
 
@@ -223,6 +226,9 @@ def make_app() -> Any:
             "detect_iou": f"{float(s.detect_iou):.2f}",
             "min_box_area": str(int(s.min_box_area)),
             "cooldown_seconds": f"{float(s.cooldown_seconds):.2f}",
+            "min_species_prob": f"{float(s.min_species_prob):.2f}",
+            "match_threshold": f"{float(s.match_threshold):.2f}",
+            "ema_alpha": f"{float(s.ema_alpha):.2f}",
         }
         if raw:
             for k, v in raw.items():
@@ -595,7 +601,15 @@ def make_app() -> Any:
     async def config_save(request: Request) -> HTMLResponse:
         s = load_settings()
         form = await request.form()
-        field_names = ("detect_conf", "detect_iou", "min_box_area", "cooldown_seconds")
+        field_names = (
+            "detect_conf",
+            "detect_iou",
+            "min_box_area",
+            "cooldown_seconds",
+            "min_species_prob",
+            "match_threshold",
+            "ema_alpha",
+        )
         raw = {name: str(form.get(name, "") or "").strip() for name in field_names}
         parsed, errors = _validate_detection_inputs(raw)
 
@@ -616,6 +630,9 @@ def make_app() -> Any:
         s.detect_iou = parsed["detect_iou"]
         s.min_box_area = parsed["min_box_area"]
         s.cooldown_seconds = parsed["cooldown_seconds"]
+        s.min_species_prob = parsed["min_species_prob"]
+        s.match_threshold = parsed["match_threshold"]
+        s.ema_alpha = parsed["ema_alpha"]
         save_settings(s)
 
         return RedirectResponse(url="/config?saved=1", status_code=303)

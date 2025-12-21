@@ -43,6 +43,21 @@
         <input type="number" name="cooldown_seconds" step="0.1" min="0" max="120" value="{{ form_values.cooldown_seconds }}" required />
       </label>
 
+      <label class="stack">
+        <span class="muted">Minimum species probability (0–1). Lower allows more uncertain labels.</span>
+        <input type="number" name="min_species_prob" step="0.01" min="0" max="1" value="{{ form_values.min_species_prob }}" required />
+      </label>
+
+      <label class="stack">
+        <span class="muted">Match threshold (0–1). Lower is stricter for re-ID (creates more individuals).</span>
+        <input type="number" name="match_threshold" step="0.01" min="0" max="1" value="{{ form_values.match_threshold }}" required />
+      </label>
+
+      <label class="stack">
+        <span class="muted">EMA alpha (0–1). Higher adapts prototypes faster; lower keeps them stable.</span>
+        <input type="number" name="ema_alpha" step="0.01" min="0" max="1" value="{{ form_values.ema_alpha }}" required />
+      </label>
+
       <div class="inline">
         <button type="submit">Save</button>
         <span class="muted">Saved values persist to /data/config.json.</span>
