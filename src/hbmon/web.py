@@ -133,6 +133,50 @@ def _as_utc_str(dt) -> str | None:
     return dt.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
+    """
+    Validate and coerce detection sensitivity inputs from the config form.
+    Returns (parsed_values, errors).
+    """
+    parsed: dict[str, Any] = {}
+    errors: list[str] = []
+
+    def parse_float(key: str, label: str, lo: float, hi: float) -> None:
+        text = (raw.get(key) or "").strip()
+        try:
+            val = float(text)
+        except Exception:
+            errors.append(f"{label} must be a number.")
+            return
+        if not (lo <= val <= hi):
+            errors.append(f"{label} must be between {lo} and {hi}.")
+            return
+        parsed[key] = val
+
+    def parse_int(key: str, label: str, lo: int, hi: int) -> None:
+        text = (raw.get(key) or "").strip()
+        try:
+            val_float = float(text)
+        except Exception:
+            errors.append(f"{label} must be a whole number.")
+            return
+        if not val_float.is_integer():
+            errors.append(f"{label} must be a whole number.")
+            return
+        val = int(val_float)
+        if val < lo or val > hi:
+            errors.append(f"{label} must be between {lo} and {hi}.")
+            return
+        parsed[key] = val
+
+    parse_float("detect_conf", "Detection confidence", 0.05, 0.95)
+    parse_float("detect_iou", "IOU threshold", 0.05, 0.95)
+    parse_int("min_box_area", "Minimum box area", 1, 200000)
+    parse_float("cooldown_seconds", "Cooldown seconds", 0.0, 120.0)
+
+    return parsed, errors
+
+
 # ----------------------------
 # App factory
 # ----------------------------
@@ -172,6 +216,19 @@ def make_app() -> Any:
     # ----------------------------
     # UI routes
     # ----------------------------
+
+    def _config_form_values(s, raw: dict[str, str] | None = None) -> dict[str, str]:
+        vals = {
+            "detect_conf": f"{float(s.detect_conf):.2f}",
+            "detect_iou": f"{float(s.detect_iou):.2f}",
+            "min_box_area": str(int(s.min_box_area)),
+            "cooldown_seconds": f"{float(s.cooldown_seconds):.2f}",
+        }
+        if raw:
+            for k, v in raw.items():
+                if k in vals:
+                    vals[k] = str(v)
+        return vals
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
@@ -518,6 +575,49 @@ def make_app() -> Any:
         db.commit()
 
         return RedirectResponse(url=f"/individuals/{ind_b.id}", status_code=303)
+
+    @app.get("/config", response_class=HTMLResponse)
+    def config_page(request: Request) -> HTMLResponse:
+        s = load_settings()
+        saved = request.query_params.get("saved") == "1"
+        return templates.TemplateResponse(
+            "config.html",
+            {
+                "request": request,
+                "title": "Config",
+                "form_values": _config_form_values(s),
+                "errors": [],
+                "saved": saved,
+            },
+        )
+
+    @app.post("/config", response_class=HTMLResponse)
+    async def config_save(request: Request) -> HTMLResponse:
+        s = load_settings()
+        form = await request.form()
+        raw = {k: str(form.get(k, "") or "").strip() for k in ("detect_conf", "detect_iou", "min_box_area", "cooldown_seconds")}
+        parsed, errors = _validate_detection_inputs(raw)
+
+        if errors:
+            return templates.TemplateResponse(
+                "config.html",
+                {
+                    "request": request,
+                    "title": "Config",
+                    "form_values": _config_form_values(s, raw),
+                    "errors": errors,
+                    "saved": False,
+                },
+                status_code=400,
+            )
+
+        s.detect_conf = float(parsed["detect_conf"])
+        s.detect_iou = float(parsed["detect_iou"])
+        s.min_box_area = int(parsed["min_box_area"])
+        s.cooldown_seconds = float(parsed["cooldown_seconds"])
+        save_settings(s)
+
+        return RedirectResponse(url="/config?saved=1", status_code=303)
 
     @app.get("/calibrate", response_class=HTMLResponse)
     def calibrate(request: Request) -> HTMLResponse:

@@ -342,3 +342,13 @@ input, select, button {
 
 button { cursor: pointer; }
 button:hover { background: var(--btn-bg-hover); }
+
+.alert {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 80%, transparent);
+}
+.alert.success { border-color: #3fbf7f; color: #bfffe0; }
+.alert.error { border-color: #ff7a7a; color: #ffc7c7; }

@@ -295,9 +295,12 @@ class ClipModel:
         self.prompts = dict(prompts) if prompts is not None else dict(DEFAULT_PROMPTS)
 
         # Load model components (cached)
-        self._model, self._preprocess, self._tokenizer = _load_openclip(
-            self.model_name, self.pretrained, self.device
-        )
+        try:
+            self._model, self._preprocess, self._tokenizer = _load_openclip(
+                self.model_name, self.pretrained, self.device
+            )
+        except Exception as exc:  # pragma: no cover - exercised indirectly in tests
+            raise RuntimeError(f"Failed to load CLIP model: {exc}") from exc
 
         # Prepare class text embeddings (cached per instance)
         self._text_features = self._build_text_features(self.labels, self.prompts)

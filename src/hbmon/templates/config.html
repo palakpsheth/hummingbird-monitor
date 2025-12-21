@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Config</h1>
+
+  <div class="card">
+    <p class="muted">
+      Adjust detection sensitivity while the worker is running. Changes are saved to config.json and picked up by the worker automatically.
+    </p>
+
+    {% if saved %}
+      <div class="alert success">Settings saved. Worker will apply them within a few seconds.</div>
+    {% endif %}
+
+    {% if errors %}
+      <div class="alert error">
+        <div><strong>Please fix the following:</strong></div>
+        <ul>
+          {% for e in errors %}
+            <li>{{ e }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    <form method="post" action="/config" class="stack">
+      <label class="stack">
+        <span class="muted">Detection confidence (0.05–0.95). Higher reduces false positives.</span>
+        <input type="number" name="detect_conf" step="0.01" min="0.05" max="0.95" value="{{ form_values.detect_conf }}" required />
+      </label>
+
+      <label class="stack">
+        <span class="muted">IOU threshold (0.05–0.95). Higher merges overlapping boxes more aggressively.</span>
+        <input type="number" name="detect_iou" step="0.01" min="0.05" max="0.95" value="{{ form_values.detect_iou }}" required />
+      </label>
+
+      <label class="stack">
+        <span class="muted">Minimum box area (pixels). Ignores tiny detections and noise.</span>
+        <input type="number" name="min_box_area" step="1" min="1" max="200000" value="{{ form_values.min_box_area }}" required />
+      </label>
+
+      <label class="stack">
+        <span class="muted">Cooldown seconds (0–120). Prevents duplicate triggers for the same visit.</span>
+        <input type="number" name="cooldown_seconds" step="0.1" min="0" max="120" value="{{ form_values.cooldown_seconds }}" required />
+      </label>
+
+      <div class="inline">
+        <button type="submit">Save</button>
+        <span class="muted">Saved values persist to /data/config.json.</span>
+      </div>
+    </form>
+  </div>
+{% endblock %}
