@@ -14,8 +14,9 @@
     </div>
 
     <div class="cal-wrap">
-      <img id="frame" src="/api/frame.jpg?ts={{ ts }}" alt="latest frame" />
-      <div id="box"></div>
+      <img id="frame" src="/api/frame.jpg?ts={{ ts }}" alt="latest frame" draggable="false" />
+      <div id="current-roi-box"></div>
+      <div id="proposed-roi-box"></div>
     </div>
 
     <form method="post" action="/api/roi" class="inline" style="margin-top:12px;">
@@ -25,6 +26,7 @@
       <input type="hidden" id="y2" name="y2" value="{{ roi.y2 if roi else '' }}" />
 
       <button type="submit">Save ROI</button>
+      <button type="button" id="clear-selection">Clear Selection</button>
       <a class="muted" href="/">Back to dashboard</a>
     </form>
 
