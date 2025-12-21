@@ -6,7 +6,7 @@ classify species (CLIP) and assign individual (embedding re-ID), then write to D
 High-level pipeline per loop:
 - Read frame from RTSP
 - Apply ROI crop (if configured)
-- Run YOLO (ultralytics) to detect "bird" class (COCO class 14)
+- Run YOLO (ultralytics) to detect "bird" class (COCO 'bird' class)
 - Pick best detection (largest area)
 - If not in cooldown: save snapshot + record clip
 - Crop around bbox for CLIP classification + embedding
@@ -61,8 +61,9 @@ except Exception:  # pragma: no cover
     _YOLO_AVAILABLE = False
 
 
-# COCO class id for "bird" in YOLOv8 models trained on COCO
-COCO_BIRD_CLASS = 14
+# Default COCO class id for 'bird'. We attempt to resolve this from the loaded model
+# class names at runtime, but fall back to this value (or HBMON_BIRD_CLASS_ID) if needed.
+DEFAULT_BIRD_CLASS_ID = 14
 
 
 @dataclass
@@ -111,7 +112,7 @@ def _apply_roi(frame_bgr: np.ndarray, s: Settings) -> tuple[np.ndarray, tuple[in
     return frame_bgr[y1:y2, x1:x2], (x1, y1)
 
 
-def _pick_best_bird_det(results: Any, min_box_area: int) -> Det | None:
+def _pick_best_bird_det(results: Any, min_box_area: int, bird_class_id: int) -> Det | None:
     """
     Extract best detection from ultralytics results (largest area bird).
     """
@@ -130,7 +131,7 @@ def _pick_best_bird_det(results: Any, min_box_area: int) -> Det | None:
         try:
             cls = int(b.cls.item()) if hasattr(b.cls, "item") else int(b.cls)
             conf = float(b.conf.item()) if hasattr(b.conf, "item") else float(b.conf)
-            if cls != COCO_BIRD_CLASS:
+            if cls != bird_class_id:
                 continue
 
             xyxy = b.xyxy[0].detach().cpu().numpy()
@@ -339,8 +340,32 @@ def run_worker() -> None:
     init_db()
 
     # Load models once
-    yolo_model_name = os.getenv("HBMON_YOLO_MODEL", "yolov8n.pt")
+    yolo_model_name = os.getenv("HBMON_YOLO_MODEL", "yolo11n.pt")
     yolo = YOLO(yolo_model_name)  # type: ignore[misc]
+
+    # Resolve the class id for 'bird' from the model's names mapping when possible.
+    # This keeps things robust if you later use custom-trained weights with different class ordering.
+    bird_class_id: int | None = None
+    try:
+        names = getattr(yolo, 'names', None)
+        if isinstance(names, dict):
+            for k, v in names.items():
+                if str(v).strip().lower() == 'bird':
+                    bird_class_id = int(k)
+                    break
+        elif isinstance(names, (list, tuple)):
+            for i, v in enumerate(names):
+                if str(v).strip().lower() == 'bird':
+                    bird_class_id = int(i)
+                    break
+    except Exception:
+        bird_class_id = None
+
+    if bird_class_id is None:
+        bird_class_id = int(os.getenv('HBMON_BIRD_CLASS_ID', str(DEFAULT_BIRD_CLASS_ID)))
+        print(f'[worker] Using bird_class_id={bird_class_id} (fallback)')
+    else:
+        print(f'[worker] Resolved bird_class_id={bird_class_id} from model names')
 
     clip = ClipModel(device=os.getenv("HBMON_DEVICE", "cpu"))
 
@@ -420,7 +445,7 @@ def run_worker() -> None:
                 roi_frame,
                 conf=float(s.detect_conf),
                 iou=float(s.detect_iou),
-                classes=[COCO_BIRD_CLASS],
+                classes=[bird_class_id],
                 imgsz=imgsz,
                 verbose=False,
             )
@@ -434,7 +459,7 @@ def run_worker() -> None:
             n = 0 if r0.boxes is None else len(r0.boxes)
             print(f"[worker] yolo boxes={n}")
 
-        det = _pick_best_bird_det(results, int(s.min_box_area))
+        det = _pick_best_bird_det(results, int(s.min_box_area), bird_class_id)
         if det is None:
             continue
 

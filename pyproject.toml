@@ -19,20 +19,19 @@ dependencies = [
 
   # ML stack
   "scikit-learn>=1.4,<2",
-  "ultralytics>=8.2,<9",
+  "ultralytics>=8.3.0,<9",
   "torch>=2.2,<3",
   "torchvision>=0.17,<1",
   "open-clip-torch>=2.20,<3",
   "pillow>=10,<12",
 ]
 
-[project.optional-dependencies]
+# MOVED FROM [project.optional-dependencies] to [dependency-groups]
+[dependency-groups]
 dev = [
   "pytest>=8,<9",
   "ruff>=0.6,<1",
-  # coverage reporting
   "pytest-cov>=4,<5",
-  # pre-commit hooks to run linting and tests locally
   "pre-commit>=3.6,<4",
 ]
 
