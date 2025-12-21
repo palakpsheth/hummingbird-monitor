@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -136,8 +136,13 @@ class Settings:
         """
         Environment overrides always win (runtime ops),
         but we keep the underlying persisted values.
+
+        IMPORTANT:
+        Do NOT use dataclasses.asdict(self) here, because that converts nested
+        dataclasses (like Roi) into plain dicts, which breaks code expecting
+        Roi methods like .clamp().
         """
-        s = Settings(**asdict(self))
+        s = replace(self)
         s.rtsp_url = env_str("HBMON_RTSP_URL", s.rtsp_url)
         s.camera_name = env_str("HBMON_CAMERA_NAME", s.camera_name)
 
@@ -198,68 +203,26 @@ def clips_dir() -> Path:
 
 
 def _ensure_dir(path: Path) -> Path:
-    """
-    Attempt to create a directory and return the path.  If creation fails due
-    to permissions (e.g. `/data` on a system without root access), fall back
-    to a directory with the same basename in the current working directory.
-
-    Parameters
-    ----------
-    path : Path
-        The desired directory path.
-
-    Returns
-    -------
-    Path
-        The path that was successfully created.
-    """
     try:
         path.mkdir(parents=True, exist_ok=True)
         return path
     except PermissionError:
-        # When running under an unprivileged user (e.g. during testing),
-        # attempting to create system-level directories like `/data` or
-        # `/media` may raise a permission error.  In that case, create a
-        # fallback directory named after the basename of the desired path in
-        # the current working directory.  For example, if `path` is `/data`,
-        # the fallback will be `./data`.  This avoids cluttering `/` and
-        # keeps test artifacts within the repository checkout.
         fallback = Path.cwd() / path.name
         fallback.mkdir(parents=True, exist_ok=True)
         return fallback
 
 
 def ensure_dirs() -> None:
-    """
-    Ensure that the data/media directories and their subdirectories exist.
-
-    This function attempts to create the configured directories returned by
-    `data_dir()` and `media_dir()`.  If creation fails due to permission
-    issues (e.g. lack of access to `/data` or `/media`), it falls back to
-    creating similarly named directories in the current working directory
-    (`./data` and `./media`) and updates the corresponding environment
-    variables (`HBMON_DATA_DIR` and `HBMON_MEDIA_DIR`) so subsequent calls to
-    `data_dir()` or `media_dir()` return the fallback paths.  This behavior
-    allows the application and tests to run without requiring elevated
-    privileges while still respecting user overrides via environment
-    variables.
-    """
-    # handle data dir
     dd_original = data_dir()
     dd = _ensure_dir(dd_original)
     if dd != dd_original:
-        # update env so that data_dir() returns the fallback on subsequent
-        # calls within this process.  This does not persist across
-        # processes, which is fine for tests.
-        os.environ['HBMON_DATA_DIR'] = str(dd)
+        os.environ["HBMON_DATA_DIR"] = str(dd)
 
-    # handle media dir
     md_original = media_dir()
     md = _ensure_dir(md_original)
     if md != md_original:
-        os.environ['HBMON_MEDIA_DIR'] = str(md)
+        os.environ["HBMON_MEDIA_DIR"] = str(md)
 
-    # create subdirs relative to whatever media_dir() now resolves to
     _ensure_dir(snapshots_dir())
     _ensure_dir(clips_dir())
 
@@ -282,7 +245,6 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
         except Exception:
             roi = None
 
-    # Only accept known fields (avoid config drift)
     s = Settings(
         rtsp_url=str(d.get("rtsp_url", "")),
         camera_name=str(d.get("camera_name", "camera")),
@@ -302,10 +264,6 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
 
 
 def load_settings() -> Settings:
-    """
-    Load persisted settings from /data/config.json, create defaults if missing,
-    then apply env overrides.
-    """
     ensure_dirs()
     p = config_path()
     if not p.exists():
@@ -319,23 +277,17 @@ def load_settings() -> Settings:
             raise ValueError("config.json root is not an object")
         s = _settings_from_dict(data)
     except Exception:
-        # If config is corrupted, fall back safely.
         s = Settings(last_updated_utc=time.time())
 
     return s.with_env_overrides()
 
 
 def save_settings(s: Settings) -> None:
-    """
-    Persist settings to /data/config.json (atomic write).
-    """
     ensure_dirs()
     p = config_path()
-    s = Settings(**asdict(s))
-    s.last_updated_utc = time.time()
 
     out: dict[str, Any] = asdict(s)
-    # dataclasses nests roi as dict or None, which is fine
+    out["last_updated_utc"] = time.time()
 
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(out, indent=2, sort_keys=True), encoding="utf-8")
