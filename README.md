@@ -24,7 +24,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Individual re-identification**: “bird A vs bird B” using image embeddings
 - **Name individuals** in the UI
 - **Counts & last-seen** stats per individual
-- Cross-linked navigation:
+- **Cross-linked** navigation:
   - Individuals list → individual page → all observations
   - Observation detail → linked individual
 - **Exports**
