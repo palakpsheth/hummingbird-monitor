@@ -141,7 +141,7 @@ def paginate(total_count: int, page: int, page_size: int, max_page_size: int = 1
     """
     safe_total = max(0, int(total_count))
     size = max(1, min(int(page_size), max_page_size))
-    total_pages = max(1, math.ceil(safe_total / size)) if safe_total else 1
+    total_pages = max(1, math.ceil(safe_total / size))
     current = max(1, min(int(page), total_pages))
     offset = (current - 1) * size
     return current, size, total_pages, offset
