@@ -2,10 +2,13 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   test:
@@ -35,7 +38,15 @@ jobs:
       # a summary to the console.
       - name: Tests (with coverage)
         run: |
-          uv run pytest --cov=hbmon --cov-report=term
+          uv run pytest --cov=hbmon --cov-report=term --cov-report=xml
+
+      # Post coverage report as a PR comment
+      - name: Coverage comment
+        if: github.event_name == 'pull_request'
+        uses: orgoro/coverage@v3.2
+        with:
+          coverageFile: coverage.xml
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # Generate a coverage badge based on the `.coverage` data file.
       # This uses the `tj-actions/coverage-badge-py` GitHub Action to
