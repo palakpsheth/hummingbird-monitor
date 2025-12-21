@@ -145,7 +145,7 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
         text = str(raw.get(key, "")).strip()
         try:
             val = float(text)
-        except Exception:
+        except ValueError:
             errors.append(f"{label} must be a number.")
             return
         if not (lo <= val <= hi):
@@ -157,14 +157,14 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
         text = str(raw.get(key, "")).strip()
         try:
             val_float = float(text)
-        except Exception:
+        except ValueError:
             errors.append(f"{label} must be a whole number.")
             return
         if not val_float.is_integer():
             errors.append(f"{label} must be a whole number.")
             return
         val = int(val_float)
-        if val < lo or val > hi:
+        if not (lo <= val <= hi):
             errors.append(f"{label} must be between {lo} and {hi}.")
             return
         parsed[key] = val
@@ -595,7 +595,8 @@ def make_app() -> Any:
     async def config_save(request: Request) -> HTMLResponse:
         s = load_settings()
         form = await request.form()
-        raw = {k: str(form.get(k, "") or "").strip() for k in ("detect_conf", "detect_iou", "min_box_area", "cooldown_seconds")}
+        field_names = ("detect_conf", "detect_iou", "min_box_area", "cooldown_seconds")
+        raw = {name: str(form.get(name, "") or "").strip() for name in field_names}
         parsed, errors = _validate_detection_inputs(raw)
 
         if errors:
@@ -611,10 +612,10 @@ def make_app() -> Any:
                 status_code=400,
             )
 
-        s.detect_conf = float(parsed["detect_conf"])
-        s.detect_iou = float(parsed["detect_iou"])
-        s.min_box_area = int(parsed["min_box_area"])
-        s.cooldown_seconds = float(parsed["cooldown_seconds"])
+        s.detect_conf = parsed["detect_conf"]
+        s.detect_iou = parsed["detect_iou"]
+        s.min_box_area = parsed["min_box_area"]
+        s.cooldown_seconds = parsed["cooldown_seconds"]
         save_settings(s)
 
         return RedirectResponse(url="/config?saved=1", status_code=303)
