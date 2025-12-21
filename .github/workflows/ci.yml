@@ -41,9 +41,10 @@ jobs:
       # Post coverage report as a PR comment
       - name: Coverage comment
         if: github.event_name == 'pull_request'
-        uses: py-cov-action/python-coverage-comment-action@v3
+        uses: orgoro/coverage@v3.2
         with:
-          GITHUB_TOKEN: ${{ github.token }}
+          coverageFile: coverage.xml
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # Generate a coverage badge based on the `.coverage` data file.
       # This uses the `tj-actions/coverage-badge-py` GitHub Action to
