@@ -323,6 +323,13 @@ def run_worker() -> None:
     ultralytics and the ClipModel dependencies.  If any of these are not
     available, a ``RuntimeError`` is raised.
     """
+    # Force RTSP over TCP for better compatibility (fixes 461 Unsupported Transport)
+    # Improve RTSP stability with OpenCV+FFmpeg
+    os.environ.setdefault(
+        "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+        "rtsp_transport;tcp|stimeout;5000000|max_delay;500000|fflags;nobuffer"
+    )
+
     if not (_CV2_AVAILABLE and _YOLO_AVAILABLE):
         raise RuntimeError(
             "OpenCV and ultralytics must be installed to run the worker"

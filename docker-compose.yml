@@ -10,24 +10,27 @@ services:
       - WB_AUTH=false
       - NET_MODE=LAN
     ports:
-      - "5000:5000"   # web UI
-      - "8554:8554"   # RTSP
+      - "5000:5000"
+      - "8554:8554"
+    volumes:
+      # (optional) also move wyze-bridge persistence under ./data
+      - ./data/wyze-bridge/tokens:/tokens
+      - ./data/wyze-bridge/img:/img
     restart: unless-stopped
 
   hbmon-web:
     build: .
     container_name: hbmon-web
-    command: ["python", "-m", "hbmon.web"]
+    command: [ "uvicorn", "hbmon.web:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info" ]
     environment:
       - TZ=America/Los_Angeles
-      - HBMON_DB_PATH=/data/hbmon.sqlite3
-      - HBMON_MEDIA_DIR=/media
+      - HBMON_DB_PATH=/data/hbmon.sqlite
+      - HBMON_MEDIA_DIR=/data/media
       - HBMON_CONFIG_PATH=/data/config.json
       - HBMON_RTSP_URL=${HBMON_RTSP_URL}
       - HBMON_TITLE=Hummingbird Monitor
     volumes:
-      - hbmon_data:/data
-      - hbmon_media:/media
+      - ./data:/data
     ports:
       - "8000:8000"
     depends_on:
@@ -40,27 +43,27 @@ services:
     command: ["python", "-m", "hbmon.worker"]
     environment:
       - TZ=America/Los_Angeles
-      - HBMON_DB_PATH=/data/hbmon.sqlite3
-      - HBMON_MEDIA_DIR=/media
+      - HBMON_DB_PATH=/data/hbmon.sqlite
+      - HBMON_MEDIA_DIR=/data/media
       - HBMON_CONFIG_PATH=/data/config.json
       - HBMON_RTSP_URL=${HBMON_RTSP_URL}
+
+      - HBMON_CAMERA_NAME=hummingbirdcam
+      - HBMON_FPS_LIMIT=8
+      - HBMON_CLIP_SECONDS=2.5
 
       - HBMON_YOLO_MODEL=yolov8n.pt
       - HBMON_DETECT_CONF=0.35
       - HBMON_DETECT_IOU=0.50
-      - HBMON_DETECT_FPS=8
-
-      - HBMON_PREBUFFER_SECONDS=2.5
-      - HBMON_POST_SECONDS=2.5
-      - HBMON_MAX_EVENT_SECONDS=10
       - HBMON_COOLDOWN_SECONDS=6
 
-      - HBMON_REID_SIM_THRESHOLD=0.28
+      # put YOLO writable/cache stuff under your repo too
+      - YOLO_CONFIG_DIR=/data/yolo
 
-      - HBMON_SPECIES_LIST=Anna's Hummingbird,Allen's Hummingbird,Rufous Hummingbird,Costa's Hummingbird,Black-chinned Hummingbird,Calliope Hummingbird,Broad-billed Hummingbird
+      - HBMON_MATCH_THRESHOLD=0.28
+      - "HBMON_SPECIES_LIST=Anna's Hummingbird,Allen's Hummingbird,Rufous Hummingbird,Costa's Hummingbird,Black-chinned Hummingbird,Calliope Hummingbird,Broad-billed Hummingbird"
     volumes:
-      - hbmon_data:/data
-      - hbmon_media:/media
+      - ./data:/data
     depends_on:
       - wyze-bridge
     restart: unless-stopped
@@ -75,7 +78,3 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
-
-volumes:
-  hbmon_data:
-  hbmon_media:
