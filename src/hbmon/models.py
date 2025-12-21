@@ -15,35 +15,90 @@ Rationale:
 
 from __future__ import annotations
 
+"""
+Models for the hummingbird monitor.
+
+This module attempts to gracefully handle the absence of SQLAlchemy so that it
+can be imported in environments where that dependency is not installed.  When
+SQLAlchemy is present, full ORM models are defined; when it is missing, a
+lightweight set of dataclass-based stubs is provided.  The stubs implement
+enough of the API for unit tests that do not rely on a real database.  Any
+attempt to use database features without SQLAlchemy will raise a clear
+``RuntimeError`` at runtime.
+
+The ``_SQLALCHEMY_AVAILABLE`` flag below can be inspected to determine if
+SQLAlchemy is available.
+"""
+
 import json
 import zlib
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, List, Optional
 
 import numpy as np
-from sqlalchemy import (
-    DateTime,
-    Float,
-    ForeignKey,
-    Integer,
-    LargeBinary,
-    String,
-    Text,
-    UniqueConstraint,
-    Index,
-)
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+try:
+    # Attempt to import SQLAlchemy.  If it is unavailable this import will
+    # raise ImportError and we will fall back to stubs.
+    from sqlalchemy import (
+        DateTime,
+        Float,
+        ForeignKey,
+        Integer,
+        LargeBinary,
+        String,
+        Text,
+        UniqueConstraint,
+        Index,
+    )
+    from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship  # type: ignore
+    _SQLALCHEMY_AVAILABLE = True
+except Exception:  # pragma: no cover - executed when SQLAlchemy missing
+    DateTime = Float = ForeignKey = Integer = LargeBinary = String = Text = UniqueConstraint = Index = None  # type: ignore
+    DeclarativeBase = object  # type: ignore
+    Mapped = mapped_column = relationship = None  # type: ignore
+    _SQLALCHEMY_AVAILABLE = False
+
+
+__all__ = [
+    "_SQLALCHEMY_AVAILABLE",
+    "Base",
+    "Individual",
+    "Observation",
+    "Embedding",
+    "_pack_embedding",
+    "_unpack_embedding",
+]
 
 
 # ----------------------------
 # Base
 # ----------------------------
 
-class Base(DeclarativeBase):
-    pass
+# ---------------------------------------------------------------------------
+# SQLAlchemy base or stub
+# ---------------------------------------------------------------------------
+if _SQLALCHEMY_AVAILABLE:
+    class Base(DeclarativeBase):
+        """Base class for SQLAlchemy ORM models."""
+        pass
+else:
+    class Base:
+        """
+        Fallback base class used when SQLAlchemy is unavailable.  This class
+        exists solely to allow type checking and attribute access without
+        raising ImportError at import time.  It should not be used for any
+        database operations.  Methods that rely on SQLAlchemy will raise
+        ``RuntimeError`` at runtime.
+        """
+        pass
 
 
 def utcnow() -> datetime:
+    """Return the current UTC timestamp.  Separated into its own function for
+    easier testing/mocking.
+    """
     return datetime.now(timezone.utc)
 
 
@@ -67,160 +122,272 @@ def _unpack_embedding(blob: bytes) -> np.ndarray:
     return arr
 
 
-# ----------------------------
-# ORM Models
-# ----------------------------
 
-class Individual(Base):
-    __tablename__ = "individuals"
+# ---------------------------------------------------------------------------
+# ORM models or stubs
+# ---------------------------------------------------------------------------
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+if _SQLALCHEMY_AVAILABLE:
+    # -----------------------------------------------------------------------
+    # SQLAlchemy-backed models
+    # -----------------------------------------------------------------------
+    class Individual(Base):
+        __tablename__ = "individuals"
 
-    # User-editable
-    name: Mapped[str] = mapped_column(String(128), nullable=False, default="(unnamed)")
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    # Stats
-    visit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+        # User-editable
+        name: Mapped[str] = mapped_column(String(128), nullable=False, default="(unnamed)")
 
-    # Prototype embedding (compressed). Null until first embedding assigned.
-    prototype_blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+        # Stats
+        visit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+        created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+        last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # Optional label hint (not authoritative)
-    last_species_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
+        # Prototype embedding (compressed). Null until first embedding assigned.
+        prototype_blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
-    # Relationships
-    observations: Mapped[list["Observation"]] = relationship(
-        back_populates="individual",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
+        # Optional label hint (not authoritative)
+        last_species_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    # ---------- Convenience ----------
+        # Relationships
+        observations: Mapped[list["Observation"]] = relationship(
+            back_populates="individual",
+            cascade="all, delete-orphan",
+            passive_deletes=True,
+        )
 
-    def set_prototype(self, vec: np.ndarray) -> None:
-        self.prototype_blob = _pack_embedding(vec)
+        # ---------- Convenience ----------
 
-    def get_prototype(self) -> np.ndarray | None:
-        if self.prototype_blob is None:
+        def set_prototype(self, vec: np.ndarray) -> None:
+            self.prototype_blob = _pack_embedding(vec)
+
+        def get_prototype(self) -> np.ndarray | None:
+            if self.prototype_blob is None:
+                return None
+            return _unpack_embedding(self.prototype_blob)
+
+        @property
+        def last_seen_utc(self) -> str | None:
+            if self.last_seen_at is None:
+                return None
+            return self.last_seen_at.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+    class Observation(Base):
+        __tablename__ = "observations"
+
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+        # When it happened (UTC)
+        ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utcnow)
+
+        # Camera info
+        camera_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+        # Species prediction
+        species_label: Mapped[str] = mapped_column(String(128), nullable=False, default="Hummingbird (unknown species)")
+        species_prob: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+        # Individual match
+        individual_id: Mapped[int] = mapped_column(
+            Integer,
+            ForeignKey("individuals.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        )
+        match_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # similarity (1 - dist)
+
+        # Detection bounding box (pixel coords in original frame)
+        bbox_x1: Mapped[int | None] = mapped_column(Integer, nullable=True)
+        bbox_y1: Mapped[int | None] = mapped_column(Integer, nullable=True)
+        bbox_x2: Mapped[int | None] = mapped_column(Integer, nullable=True)
+        bbox_y2: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+        # Media (relative to /media mount)
+        snapshot_path: Mapped[str] = mapped_column(String(512), nullable=False)
+        video_path: Mapped[str] = mapped_column(String(512), nullable=False)
+
+        # Extra JSON metadata (e.g., detector outputs)
+        extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+        # Relationship
+        individual: Mapped["Individual | None"] = relationship(back_populates="observations")
+
+        # ---------- Convenience ----------
+
+        @property
+        def ts_utc(self) -> str:
+            return self.ts.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+        @property
+        def bbox_xyxy(self) -> tuple[int, int, int, int] | None:
+            if None in (self.bbox_x1, self.bbox_y1, self.bbox_x2, self.bbox_y2):
+                return None
+            return (int(self.bbox_x1), int(self.bbox_y1), int(self.bbox_x2), int(self.bbox_y2))
+
+        @property
+        def bbox_str(self) -> str | None:
+            b = self.bbox_xyxy
+            if b is None:
+                return None
+            return f"{b[0]},{b[1]},{b[2]},{b[3]}"
+
+        def set_extra(self, d: dict[str, Any]) -> None:
+            self.extra_json = json.dumps(d, sort_keys=True)
+
+        def get_extra(self) -> dict[str, Any] | None:
+            if not self.extra_json:
+                return None
+            try:
+                obj = json.loads(self.extra_json)
+                if isinstance(obj, dict):
+                    return obj
+            except Exception:
+                return None
             return None
-        return _unpack_embedding(self.prototype_blob)
 
-    @property
-    def last_seen_utc(self) -> str | None:
-        if self.last_seen_at is None:
+
+    class Embedding(Base):
+        """
+        Optional per-observation embeddings (for debugging/split tools).
+
+        These can grow the DB; you may choose to not store them, but the schema
+        supports it.
+        """
+        __tablename__ = "embeddings"
+        __table_args__ = (
+            UniqueConstraint("observation_id", name="uq_embedding_observation"),
+            Index("ix_embeddings_individual_id", "individual_id"),
+        )
+
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+        observation_id: Mapped[int] = mapped_column(
+            Integer,
+            ForeignKey("observations.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+
+        # Redundant for convenience queries
+        individual_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+        # Compressed float32 bytes
+        embedding_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+
+        # Light metadata
+        created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+        def set_vec(self, vec: np.ndarray) -> None:
+            self.embedding_blob = _pack_embedding(vec)
+
+        def get_vec(self) -> np.ndarray:
+            return _unpack_embedding(self.embedding_blob)
+else:
+    # -----------------------------------------------------------------------
+    # Dataclass-based stubs when SQLAlchemy is unavailable
+    # -----------------------------------------------------------------------
+    @dataclass
+    class Individual(Base):
+        """
+        Lightweight stand-in for the ``Individual`` model used when SQLAlchemy
+        is unavailable.  Provides the same public API as the ORM model but does
+        not persist anything.  Relationships are represented as simple lists.
+        """
+        id: int
+        name: str = "(unnamed)"
+        visit_count: int = 0
+        created_at: datetime = field(default_factory=utcnow)
+        last_seen_at: Optional[datetime] = None
+        prototype_blob: Optional[bytes] = None
+        last_species_label: Optional[str] = None
+        observations: List["Observation"] = field(default_factory=list)
+
+        def set_prototype(self, vec: np.ndarray) -> None:
+            self.prototype_blob = _pack_embedding(vec)
+
+        def get_prototype(self) -> Optional[np.ndarray]:
+            if self.prototype_blob is None:
+                return None
+            return _unpack_embedding(self.prototype_blob)
+
+        @property
+        def last_seen_utc(self) -> Optional[str]:
+            if self.last_seen_at is None:
+                return None
+            return self.last_seen_at.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+    @dataclass
+    class Observation(Base):
+        """
+        Lightweight stand-in for the ``Observation`` model used when SQLAlchemy
+        is unavailable.  This class mimics the attribute names of the ORM
+        version but stores data in plain Python fields.
+        """
+        id: int
+        ts: datetime = field(default_factory=utcnow)
+        camera_name: Optional[str] = None
+        species_label: str = "Hummingbird (unknown species)"
+        species_prob: float = 0.0
+        individual_id: Optional[int] = None
+        match_score: float = 0.0
+        bbox_x1: Optional[int] = None
+        bbox_y1: Optional[int] = None
+        bbox_x2: Optional[int] = None
+        bbox_y2: Optional[int] = None
+        snapshot_path: str = ""
+        video_path: str = ""
+        extra_json: Optional[str] = None
+        individual: Optional[Individual] = None
+
+        @property
+        def ts_utc(self) -> str:
+            return self.ts.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+        @property
+        def bbox_xyxy(self) -> Optional[tuple[int, int, int, int]]:
+            if None in (self.bbox_x1, self.bbox_y1, self.bbox_x2, self.bbox_y2):
+                return None
+            return (int(self.bbox_x1), int(self.bbox_y1), int(self.bbox_x2), int(self.bbox_y2))
+
+        @property
+        def bbox_str(self) -> Optional[str]:
+            b = self.bbox_xyxy
+            if b is None:
+                return None
+            return f"{b[0]},{b[1]},{b[2]},{b[3]}"
+
+        def set_extra(self, d: dict[str, Any]) -> None:
+            self.extra_json = json.dumps(d, sort_keys=True)
+
+        def get_extra(self) -> Optional[dict[str, Any]]:
+            if not self.extra_json:
+                return None
+            try:
+                obj = json.loads(self.extra_json)
+                if isinstance(obj, dict):
+                    return obj
+            except Exception:
+                return None
             return None
-        return self.last_seen_at.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-class Observation(Base):
-    __tablename__ = "observations"
+    @dataclass
+    class Embedding(Base):
+        """
+        Lightweight stand-in for the ``Embedding`` model used when SQLAlchemy is
+        unavailable.  Stores embeddings in-memory only.
+        """
+        id: int
+        observation_id: int
+        individual_id: Optional[int] = None
+        embedding_blob: bytes = b""
+        created_at: datetime = field(default_factory=utcnow)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+        def set_vec(self, vec: np.ndarray) -> None:
+            self.embedding_blob = _pack_embedding(vec)
 
-    # When it happened (UTC)
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utcnow)
-
-    # Camera info
-    camera_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
-
-    # Species prediction
-    species_label: Mapped[str] = mapped_column(String(128), nullable=False, default="Hummingbird (unknown species)")
-    species_prob: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-
-    # Individual match
-    individual_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("individuals.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    match_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # similarity (1 - dist)
-
-    # Detection bounding box (pixel coords in original frame)
-    bbox_x1: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    bbox_y1: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    bbox_x2: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    bbox_y2: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-    # Media (relative to /media mount)
-    snapshot_path: Mapped[str] = mapped_column(String(512), nullable=False)
-    video_path: Mapped[str] = mapped_column(String(512), nullable=False)
-
-    # Extra JSON metadata (e.g., detector outputs)
-    extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Relationship
-    individual: Mapped["Individual | None"] = relationship(back_populates="observations")
-
-    # ---------- Convenience ----------
-
-    @property
-    def ts_utc(self) -> str:
-        return self.ts.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-    @property
-    def bbox_xyxy(self) -> tuple[int, int, int, int] | None:
-        if None in (self.bbox_x1, self.bbox_y1, self.bbox_x2, self.bbox_y2):
-            return None
-        return (int(self.bbox_x1), int(self.bbox_y1), int(self.bbox_x2), int(self.bbox_y2))
-
-    @property
-    def bbox_str(self) -> str | None:
-        b = self.bbox_xyxy
-        if b is None:
-            return None
-        return f"{b[0]},{b[1]},{b[2]},{b[3]}"
-
-    def set_extra(self, d: dict[str, Any]) -> None:
-        self.extra_json = json.dumps(d, sort_keys=True)
-
-    def get_extra(self) -> dict[str, Any] | None:
-        if not self.extra_json:
-            return None
-        try:
-            obj = json.loads(self.extra_json)
-            if isinstance(obj, dict):
-                return obj
-        except Exception:
-            return None
-        return None
-
-
-class Embedding(Base):
-    """
-    Optional per-observation embeddings (for debugging/split tools).
-
-    These can grow the DB; you may choose to not store them, but the schema
-    supports it.
-    """
-    __tablename__ = "embeddings"
-    __table_args__ = (
-        UniqueConstraint("observation_id", name="uq_embedding_observation"),
-        Index("ix_embeddings_individual_id", "individual_id"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-
-    observation_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("observations.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-
-    # Redundant for convenience queries
-    individual_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-    # Compressed float32 bytes
-    embedding_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-
-    # Light metadata
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-
-    def set_vec(self, vec: np.ndarray) -> None:
-        self.embedding_blob = _pack_embedding(vec)
-
-    def get_vec(self) -> np.ndarray:
-        return _unpack_embedding(self.embedding_blob)
+        def get_vec(self) -> np.ndarray:
+            return _unpack_embedding(self.embedding_blob)

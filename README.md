@@ -1,5 +1,13 @@
 # Hummingbird Monitor (`hbmon`)
 
+<!-- The coverage badge is generated automatically by the GitHub Actions workflow.
+     The `coverage.svg` file at the repository root is updated after every run of
+     the CI pipeline via the `tj-actions/coverage-badge-py` action.  Referencing
+     the SVG file directly ensures the badge always reflects the latest test
+     coverage without relying on an external badge service. -->
+![Coverage](coverage.svg)
+
+
 LAN-only hummingbird monitoring system designed for a **Linux x64 mini PC**.
 
 It ingests a **Wyze Cam v3** stream via **`wyze-bridge` (RTSP)**, detects birds using **YOLO**, records short clips, classifies hummingbird species using **CLIP/OpenCLIP**, and assigns sightings to **individual birds** via **embedding-based re-identification**.
@@ -318,6 +326,80 @@ A typical `.github/workflows/ci.yml` for this repo:
 - TLS on LAN (optional)
 
 ---
+
+## Testing & Coverage
+
+The `hbmon` package includes a suite of unit tests located in the `tests/` directory.  These
+tests are designed to exercise the core logic of the application without requiring
+heavy optional dependencies such as SQLAlchemy, FastAPI, PyTorch or OpenCV.  To run
+the tests you need to install [pytest](https://pytest.org) and the
+[`pytest‑cov`](https://github.com/pytest-dev/pytest-cov) plugin.  Once installed,
+you can execute the test suite with coverage.  If you’re using [uv](https://github.com/astral-sh/uv)
+to manage your virtual environment (as in the CI pipeline), prefix the command with
+`uv run` so that the correct interpreter and dependencies are used:
+
+```bash
+# Running with uv
+uv run pytest --cov=hbmon --cov-report=term --cov-report=html
+
+# Or, if you installed dependencies with plain pip
+pytest --cov=hbmon --cov-report=term --cov-report=html
+```
+
+These commands print a coverage summary to the terminal and produce an HTML report
+in the `htmlcov/` directory.  The coverage badge displayed at the top of this
+README reflects the percentage of code covered by the tests.  If you modify the
+code or add new tests, be sure to regenerate the coverage report so the badge
+stays accurate.
+
+## Pre‑commit hooks
+
+To make it easy to run the same checks locally that the CI pipeline performs, this repository includes a [pre‑commit](https://pre-commit.com) configuration.  Pre‑commit installs a Git hook that automatically runs a set of commands before each commit.  In this project the hook runs `ruff` (our linter) and the full test suite with coverage, mirroring the steps defined in the CI workflow.  If any of these checks fail, the commit will be aborted so you can fix the issues before pushing.
+
+To set up and use the pre‑commit hooks:
+
+1. Install the development dependencies, including the `pre‑commit` package.  If you’re using [uv](https://github.com/astral-sh/uv) as in the CI pipeline, you can run:
+
+   ```bash
+   uv pip install -e ".[dev]"
+   ```
+
+   Alternatively, with plain Python and pip:
+
+   ```bash
+   python -m pip install -e ".[dev]"
+   ```
+
+2. Install the Git hook scripts.  When using `uv`, run pre‑commit via
+   `uv run` so that it uses the same virtual environment you installed the
+   dependencies into:
+
+   ```bash
+   # With uv
+   uv run pre-commit install
+
+   # Or, with plain pip
+   pre-commit install
+   ```
+
+   This needs to be done once per clone; it configures Git to run the hooks
+   on every commit.
+
+3. (Optional) Run all hooks against the entire repository to check everything at once.  Again,
+   use `uv run` if you installed dependencies via uv:
+
+   ```bash
+   # With uv
+   uv run pre-commit run --all-files
+
+   # Or, with plain pip
+   pre-commit run --all-files
+   ```
+
+The hooks will run automatically before each commit.  They execute
+`ruff` against the changed files and run `pytest --cov=hbmon --cov-report=term` (with
+`PYTHONPATH=src` set in the hook configuration) to ensure the tests still pass.
+Running the hooks locally helps catch issues early and keeps the CI pipeline green.
 
 ## Directory layout
 

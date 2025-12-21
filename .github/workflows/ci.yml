@@ -25,8 +25,57 @@ jobs:
       - name: Ruff
         run: uv run ruff check .
 
-      - name: Pytest
-        run: uv run pytest -q
+      # Run the test suite with coverage enabled.  This command
+      # produces a `.coverage` file in the repository root which is
+      # used by the coverage-badge action below.  The `--cov`
+      # option points at the `hbmon` package and `--cov-report=term` prints
+      # a summary to the console.
+      - name: Tests (with coverage)
+        run: |
+          uv run pytest --cov=hbmon --cov-report=term
+
+      # Generate a coverage badge based on the `.coverage` data file.
+      # This uses the `tj-actions/coverage-badge-py` GitHub Action to
+      # create an SVG file (coverage.svg) at the repository root.  See
+      # https://github.com/tj-actions/coverage-badge-py for details.
+      - name: Generate coverage badge
+        uses: tj-actions/coverage-badge-py@v2
+
+      # Check whether the generated badge file differs from what is
+      # currently committed.  If it has changed, we'll commit the new
+      # badge; otherwise we skip the commit to avoid unnecessary
+      # churn.
+      - name: Verify changed files
+        id: verify-changed-files
+        uses: tj-actions/verify-changed-files@v20
+        with:
+          files: coverage.svg
+
+      # Commit the updated coverage badge.  GitHub actions run in a
+      # detached HEAD state; setting user.name and user.email allows
+      # us to author the commit as the github-actions bot.  The
+      # conditional ensures this step only runs when the badge has
+      # actually changed.
+      - name: Commit coverage badge
+        if: steps.verify-changed-files.outputs.files_changed == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add coverage.svg
+          git commit -m "chore: update coverage badge"
+
+      # Push the commit back to the same branch.  The built-in
+      # `GITHUB_TOKEN` secret is used for authentication.  Again,
+      # this only runs if the badge changed.  If you have branch
+      # protection rules that prevent direct pushes from GitHub
+      # Actions, you may need to adjust your workflow to create a
+      # pull request instead.
+      - name: Push changes
+        if: steps.verify-changed-files.outputs.files_changed == 'true'
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref }}
 
   docker-build:
     runs-on: ubuntu-latest

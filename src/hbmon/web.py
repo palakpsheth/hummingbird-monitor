@@ -37,12 +37,39 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from sqlalchemy import desc, func, select
-from sqlalchemy.orm import Session
+"""
+FastAPI web application for hbmon.
+
+This module defines the web routes and API for the hummingbird monitor.  It
+attempts to import FastAPI and SQLAlchemy at runtime.  If either of those
+dependencies is missing, the :func:`make_app` function will raise a
+``RuntimeError`` when called.  This allows the rest of the package to be
+imported in minimal environments without installing heavy dependencies.
+"""
+
+try:
+    from fastapi import Depends, FastAPI, Form, HTTPException, Request  # type: ignore
+    from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse  # type: ignore
+    from fastapi.staticfiles import StaticFiles  # type: ignore
+    from fastapi.templating import Jinja2Templates  # type: ignore
+    _FASTAPI_AVAILABLE = True
+except Exception:  # pragma: no cover
+    # FastAPI is not available; define stubs to allow import but not use.
+    Depends = FastAPI = Form = HTTPException = Request = object  # type: ignore
+    FileResponse = HTMLResponse = RedirectResponse = StreamingResponse = object  # type: ignore
+    StaticFiles = object  # type: ignore
+    Jinja2Templates = object  # type: ignore
+    _FASTAPI_AVAILABLE = False
+
+try:
+    from sqlalchemy import desc, func, select  # type: ignore
+    from sqlalchemy.orm import Session  # type: ignore
+    _SQLA_AVAILABLE = True
+except Exception:  # pragma: no cover
+    desc = func = select = None  # type: ignore
+    Session = object  # type: ignore
+    _SQLA_AVAILABLE = False
+
 
 from hbmon.config import Roi, ensure_dirs, load_settings, media_dir, roi_to_str, save_settings
 from hbmon.db import get_db, init_db
@@ -110,7 +137,22 @@ def _as_utc_str(dt) -> str | None:
 # App factory
 # ----------------------------
 
-def make_app() -> FastAPI:
+def make_app() -> Any:
+    """
+    Create and return a FastAPI application configured with routes and static
+    file mounts.  This function will raise ``RuntimeError`` if either
+    FastAPI or SQLAlchemy is unavailable.  The return type is ``Any`` to
+    avoid import-time type errors when the dependencies are missing.
+    """
+    if not _FASTAPI_AVAILABLE:
+        raise RuntimeError(
+            "FastAPI is not installed; cannot create the web application."
+        )
+    if not _SQLA_AVAILABLE:
+        raise RuntimeError(
+            "SQLAlchemy is not installed; cannot create the web application."
+        )
+
     ensure_dirs()
     init_db()
 

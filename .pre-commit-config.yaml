@@ -1,0 +1,29 @@
+repos:
+  # Use the official ruff pre-commit hook to perform linting before
+  # committing.  This mirrors the `ruff check .` step in the CI
+  # workflow.  Pinning a specific version ensures consistent
+  # behaviour across machines; update the `rev` as needed.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.3
+    hooks:
+      - id: ruff
+        # The default hook runs `ruff check`.  You can enable
+        # automatic fixes by adding "--fix" to the args list.
+        args: []
+
+  # Define a local hook to run the full test suite with coverage.
+  # This hook uses the system python environment so that it can
+  # leverage the packages already installed via `uv pip install -e
+  # ".[dev]"` or the equivalent.  The `pass_filenames: false`
+  # directive ensures that pytest runs across the entire repo rather
+  # than on individual staged files.
+  - repo: local
+    hooks:
+      - id: pytest
+        name: Run pytest with coverage
+        # Use env to set PYTHONPATH for pytest.  This avoids relying on any
+        # globally installed hbmon package and ensures tests import the local code.
+        entry: uv run pytest --cov=hbmon --cov-report=term
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -40,9 +40,25 @@ from hbmon.config import Settings, ensure_dirs, load_settings, snapshots_dir, cl
 from hbmon.db import init_db, session_scope
 from hbmon.models import Embedding, Individual, Observation
 
-# ultralytics + opencv can be heavy; import lazily where possible
-import cv2
-from ultralytics import YOLO
+# ---------------------------------------------------------------------------
+# Optional heavy dependencies
+# ---------------------------------------------------------------------------
+# opencv-python and ultralytics are optional; wrap imports so the module can
+# still be imported without them.  When missing, functions that rely on
+# these packages will raise at runtime.
+try:
+    import cv2  # type: ignore
+    _CV2_AVAILABLE = True
+except Exception:  # pragma: no cover
+    cv2 = None  # type: ignore
+    _CV2_AVAILABLE = False
+
+try:
+    from ultralytics import YOLO  # type: ignore
+    _YOLO_AVAILABLE = True
+except Exception:  # pragma: no cover
+    YOLO = None  # type: ignore
+    _YOLO_AVAILABLE = False
 
 
 # COCO class id for "bird" in YOLOv8 models trained on COCO
@@ -131,6 +147,13 @@ def _pick_best_bird_det(results: Any, min_box_area: int) -> Det | None:
 
 
 def _write_jpeg(path: Path, frame_bgr: np.ndarray) -> None:
+    """
+    Write a JPEG image to disk.  Requires OpenCV; raises RuntimeError if
+    OpenCV is unavailable.
+    """
+    if not _CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is not installed; cannot write JPEGs")
+    assert cv2 is not None  # for type checkers
     _safe_mkdir(path.parent)
     ok, buf = cv2.imencode(".jpg", frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
     if not ok:
@@ -149,6 +172,13 @@ def _record_clip_opencv(
     Record a short clip from the existing VideoCapture, writing MP4 if possible.
     This blocks while recording (simple + robust for early versions).
     """
+    """
+    Record a short clip from an existing ``cv2.VideoCapture``.  Requires
+    OpenCV; raises RuntimeError if OpenCV is unavailable.
+    """
+    if not _CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is not installed; cannot record clips")
+    assert cv2 is not None  # for type checkers
     _safe_mkdir(out_path.parent)
 
     # Read one frame to get size
@@ -288,16 +318,26 @@ def _match_or_create_individual(
 
 
 def run_worker() -> None:
+    """
+    Main loop for the hummingbird monitoring worker.  Requires OpenCV,
+    ultralytics and the ClipModel dependencies.  If any of these are not
+    available, a ``RuntimeError`` is raised.
+    """
+    if not (_CV2_AVAILABLE and _YOLO_AVAILABLE):
+        raise RuntimeError(
+            "OpenCV and ultralytics must be installed to run the worker"
+        )
+
     ensure_dirs()
     init_db()
 
     # Load models once
     yolo_model_name = os.getenv("HBMON_YOLO_MODEL", "yolov8n.pt")
-    yolo = YOLO(yolo_model_name)
+    yolo = YOLO(yolo_model_name)  # type: ignore[misc]
 
     clip = ClipModel(device=os.getenv("HBMON_DEVICE", "cpu"))
 
-    cap: cv2.VideoCapture | None = None
+    cap: 'cv2.VideoCapture | None' = None  # type: ignore[name-defined]
     last_settings_load = 0.0
     settings: Settings | None = None
 

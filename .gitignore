@@ -7,9 +7,20 @@
 __pycache__/
 *.py[cod]
 *.pyd
+*$py.class
 *.so
 *.egg-info/
 .eggs/
+*.egg
+.Python
+develop-eggs/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
 build/
 dist/
 pip-wheel-metadata/
@@ -19,15 +30,25 @@ pip-wheel-metadata/
 .venv/
 .uv/
 uv.lock
+venv/
+env/
+env.bak/
+venv.bak/
 
 # ---- test / tooling ----
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.pyre/
+prof/
 .coverage
 coverage.xml
 htmlcov/
 *.log
+
+# ---- installer logs ----
+pip-log.txt
+pip-delete-this-directory.txt
 
 # ---- editor / OS ----
 .vscode/
@@ -45,3 +66,6 @@ exports/
 # ---- artifacts ----
 *.tar.gz
 *.zip
+
+# ---- docker overrides ----
+docker-compose.override.yml

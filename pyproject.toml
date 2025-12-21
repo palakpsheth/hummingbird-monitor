@@ -30,6 +30,10 @@ dependencies = [
 dev = [
   "pytest>=8,<9",
   "ruff>=0.6,<1",
+  # coverage reporting
+  "pytest-cov>=4,<5",
+  # pre-commit hooks to run linting and tests locally
+  "pre-commit>=3.6,<4",
 ]
 
 [tool.setuptools]
@@ -41,6 +45,7 @@ where = ["src"]
 [tool.ruff]
 line-length = 110
 target-version = "py311"
+lint.ignore = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -27,18 +27,36 @@ from typing import Any, Mapping
 
 import numpy as np
 
-try:
-    import torch
-    import open_clip
-except Exception as e:  # pragma: no cover
-    raise RuntimeError(
-        "open-clip-torch and torch are required. Install dependencies and retry."
-    ) from e
+"""
+This module wraps the OpenCLIP model for species classification and embedding
+extraction. In order to keep the hbmon package importable on systems where
+heavy optional dependencies (torch, open-clip-torch, Pillow) are not
+available, we avoid importing those libraries at module import time. Instead we
+attempt the imports and, if they fail, defer raising an exception until a
+ClipModel is actually constructed. This means that simply importing
+``hbmon.clip_model`` will not immediately raise an ImportError if the
+dependencies are missing; however attempting to instantiate ``ClipModel`` will.
 
-try:
-    from PIL import Image
-except Exception as e:  # pragma: no cover
-    raise RuntimeError("Pillow is required. Install dependencies and retry.") from e
+During testing on constrained environments where torch or open_clip are not
+installed, you can still import this module and test unrelated helper
+functions. Only the parts of the API that rely on the unavailable libraries
+will raise an error at runtime.
+"""
+
+# Attempt to import heavy optional dependencies.  If unavailable, we set
+# corresponding symbols to ``None`` and defer raising until runtime when
+# constructing a ClipModel.
+try:  # pragma: no cover
+    import torch  # type: ignore[attr-defined]
+    import open_clip  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover
+    torch = None  # type: ignore[assignment]
+    open_clip = None  # type: ignore[assignment]
+
+try:  # pragma: no cover
+    from PIL import Image  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover
+    Image = None  # type: ignore[assignment]
 
 
 # ----------------------------
@@ -154,7 +172,12 @@ def _ensure_rgb_pil(image_bgr: np.ndarray) -> Image.Image:
 
     # BGR -> RGB
     rgb = arr[:, :, ::-1]
-    return Image.fromarray(rgb, mode="RGB")
+    # Construct a PIL image from the RGB array.  Do not pass the deprecated
+    # 'mode' argument; Pillow will infer RGB from the array shape.  See
+    # https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.fromarray
+    img = Image.fromarray(rgb)
+    # Ensure the mode is RGB (convert if necessary)
+    return img.convert("RGB")
 
 
 def crop_bgr(image_bgr: np.ndarray, bbox_xyxy: tuple[int, int, int, int] | None) -> np.ndarray:
@@ -184,10 +207,43 @@ def _load_openclip(model_name: str, pretrained: str, device: str) -> tuple[Any, 
     """
     Returns (model, preprocess, tokenizer)
     """
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        model_name=model_name,
-        pretrained=pretrained,
-    )
+    if open_clip is None or torch is None:  # pragma: no cover
+        raise RuntimeError(
+            "open-clip-torch and torch must be installed to load OpenCLIP models"
+        )
+    # When using pretrained weights, ensure the model config matches the activation used
+    # during training.  Many OpenAI pretrained checkpoints were trained with the
+    # QuickGELU activation even though the base model config uses GELU.  If we detect
+    # that the caller has not explicitly opted into a quickgelu model variant, append
+    # ``-quickgelu`` to the model name to avoid mismatched activations (see
+    # https://github.com/mlfoundations/open_clip for details).  Only adjust the
+    # model name when the ``pretrained`` argument is non-empty and the supplied
+    # name does not already contain ``quickgelu``.  This prevents the user from
+    # inadvertently hitting a runtime warning issued by open_clip.
+    adj_name = model_name
+    try:
+        lower = model_name.lower()
+    except Exception:
+        lower = ""
+    if pretrained and isinstance(pretrained, str):
+        if "quickgelu" not in lower:
+            # Heuristically adjust to the quickgelu variant when using a known
+            # pretrained model.  We avoid appending twice if the suffix is already
+            # present.  This behaviour parallels guidance in the OpenCLIP documentation.
+            adj_name = f"{model_name}-quickgelu"
+    # Suppress user warnings about activation mismatches during model creation.
+    import warnings
+    with warnings.catch_warnings():  # type: ignore[attr-defined]
+        warnings.filterwarnings(
+            "ignore",
+            message=".*QuickGELU.*",
+            category=UserWarning,
+            module="open_clip.*",
+        )
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            model_name=adj_name,
+            pretrained=pretrained,
+        )
     tokenizer = open_clip.get_tokenizer(model_name)
 
     model = model.to(device)
@@ -222,6 +278,14 @@ class ClipModel:
         labels: list[str] | None = None,
         prompts: Mapping[str, list[str]] | None = None,
     ) -> None:
+        # If optional dependencies are missing, raise a clear error now.  We do
+        # this here rather than at module import time so that other parts of
+        # hbmon can still be imported without the ML stack available.
+        if torch is None or open_clip is None or Image is None:  # pragma: no cover
+            raise RuntimeError(
+                "open-clip-torch, torch and Pillow are required to instantiate ClipModel."
+            )
+
         self.device = device or _get_env("HBMON_DEVICE", "cpu")
         self.model_name = model_name or _get_env("HBMON_CLIP_MODEL", "ViT-B-32")
         self.pretrained = pretrained or _get_env("HBMON_CLIP_PRETRAINED", "openai")

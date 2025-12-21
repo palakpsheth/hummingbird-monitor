@@ -197,11 +197,71 @@ def clips_dir() -> Path:
     return media_dir() / "clips"
 
 
+def _ensure_dir(path: Path) -> Path:
+    """
+    Attempt to create a directory and return the path.  If creation fails due
+    to permissions (e.g. `/data` on a system without root access), fall back
+    to a directory with the same basename in the current working directory.
+
+    Parameters
+    ----------
+    path : Path
+        The desired directory path.
+
+    Returns
+    -------
+    Path
+        The path that was successfully created.
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    except PermissionError:
+        # When running under an unprivileged user (e.g. during testing),
+        # attempting to create system-level directories like `/data` or
+        # `/media` may raise a permission error.  In that case, create a
+        # fallback directory named after the basename of the desired path in
+        # the current working directory.  For example, if `path` is `/data`,
+        # the fallback will be `./data`.  This avoids cluttering `/` and
+        # keeps test artifacts within the repository checkout.
+        fallback = Path.cwd() / path.name
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
 def ensure_dirs() -> None:
-    data_dir().mkdir(parents=True, exist_ok=True)
-    media_dir().mkdir(parents=True, exist_ok=True)
-    snapshots_dir().mkdir(parents=True, exist_ok=True)
-    clips_dir().mkdir(parents=True, exist_ok=True)
+    """
+    Ensure that the data/media directories and their subdirectories exist.
+
+    This function attempts to create the configured directories returned by
+    `data_dir()` and `media_dir()`.  If creation fails due to permission
+    issues (e.g. lack of access to `/data` or `/media`), it falls back to
+    creating similarly named directories in the current working directory
+    (`./data` and `./media`) and updates the corresponding environment
+    variables (`HBMON_DATA_DIR` and `HBMON_MEDIA_DIR`) so subsequent calls to
+    `data_dir()` or `media_dir()` return the fallback paths.  This behavior
+    allows the application and tests to run without requiring elevated
+    privileges while still respecting user overrides via environment
+    variables.
+    """
+    # handle data dir
+    dd_original = data_dir()
+    dd = _ensure_dir(dd_original)
+    if dd != dd_original:
+        # update env so that data_dir() returns the fallback on subsequent
+        # calls within this process.  This does not persist across
+        # processes, which is fine for tests.
+        os.environ['HBMON_DATA_DIR'] = str(dd)
+
+    # handle media dir
+    md_original = media_dir()
+    md = _ensure_dir(md_original)
+    if md != md_original:
+        os.environ['HBMON_MEDIA_DIR'] = str(md)
+
+    # create subdirs relative to whatever media_dir() now resolves to
+    _ensure_dir(snapshots_dir())
+    _ensure_dir(clips_dir())
 
 
 # ----------------------------
