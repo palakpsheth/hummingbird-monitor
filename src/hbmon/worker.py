@@ -429,6 +429,11 @@ def run_worker() -> None:
             time.sleep(0.5)
             continue
 
+        if os.getenv("HBMON_DEBUG_YOLO", "0") == "1":
+            r0 = results[0]
+            n = 0 if r0.boxes is None else len(r0.boxes)
+            print(f"[worker] yolo boxes={n}")
+
         det = _pick_best_bird_det(results, int(s.min_box_area))
         if det is None:
             continue
