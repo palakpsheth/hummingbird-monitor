@@ -389,6 +389,24 @@ def run_worker() -> None:
             time.sleep(1.0)
             continue
 
+        # --- Debug: prove we are receiving frames even if YOLO never triggers ---
+        debug_every = float(os.getenv("HBMON_DEBUG_EVERY_SECONDS", "10"))
+        debug_save = os.getenv("HBMON_DEBUG_SAVE_FRAMES", "0") == "1"
+
+        if not hasattr(run_worker, "_last_debug"):
+            run_worker._last_debug = 0.0  # type: ignore[attr-defined]
+
+        now_dbg = time.time()
+        if now_dbg - run_worker._last_debug > debug_every:  # type: ignore[attr-defined]
+            run_worker._last_debug = now_dbg  # type: ignore[attr-defined]
+            print(f"[worker] alive frame_shape={frame.shape} rtsp={s.rtsp_url}")
+
+            if debug_save:
+                from hbmon.config import media_dir
+                p = media_dir() / "debug_latest.jpg"
+                _write_jpeg(p, frame)
+                print(f"[worker] wrote debug frame {p}")
+
         # Throttle overall loop (CPU friendly)
         if s.fps_limit and s.fps_limit > 0:
             time.sleep(max(0.0, 1.0 / float(s.fps_limit)))
@@ -397,11 +415,13 @@ def run_worker() -> None:
 
         # YOLO detect birds
         try:
+            imgsz = int(os.getenv("HBMON_YOLO_IMGSZ", "1280"))
             results = yolo.predict(
                 roi_frame,
                 conf=float(s.detect_conf),
                 iou=float(s.detect_iou),
                 classes=[COCO_BIRD_CLASS],
+                imgsz=imgsz,
                 verbose=False,
             )
         except Exception as e:

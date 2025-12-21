@@ -4,16 +4,23 @@ services:
     container_name: wyze-bridge
     network_mode: "host"
     environment:
-      - WYZE_EMAIL=${WYZE_EMAIL}
-      - WYZE_PASSWORD=${WYZE_PASSWORD}
       - TZ=America/Los_Angeles
       - WB_AUTH=false
       - NET_MODE=LAN
-    ports:
-      - "5000:5000"
-      - "8554:8554"
+
+      - WYZE_EMAIL=${WYZE_EMAIL}
+      - WYZE_PASSWORD=${WYZE_PASSWORD}
+
+      # Optional (empty is fine)
+      - WYZE_API_KEY=${WYZE_API_KEY:-}
+      - WYZE_API_ID=${WYZE_API_ID:-}
+      - WYZE_MFA_TYPE=${WYZE_MFA_TYPE:-}
+      - WYZE_MFA_CODE=${WYZE_MFA_CODE:-}
+      - WYZE_REGION=${WYZE_REGION:-}
+
+    # NOTE: with network_mode: host, "ports:" is ignored by Docker.
+    # Keeping it out avoids confusion.
     volumes:
-      # (optional) also move wyze-bridge persistence under ./data
       - ./data/wyze-bridge/tokens:/tokens
       - ./data/wyze-bridge/img:/img
     restart: unless-stopped
@@ -24,11 +31,15 @@ services:
     command: [ "uvicorn", "hbmon.web:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info" ]
     environment:
       - TZ=America/Los_Angeles
-      - HBMON_DB_PATH=/data/hbmon.sqlite
-      - HBMON_MEDIA_DIR=/data/media
-      - HBMON_CONFIG_PATH=/data/config.json
+
+      - HBMON_TITLE=${HBMON_TITLE}
       - HBMON_RTSP_URL=${HBMON_RTSP_URL}
-      - HBMON_TITLE=Hummingbird Monitor
+
+      - HBMON_DATA_DIR=${HBMON_DATA_DIR}
+      - HBMON_MEDIA_DIR=${HBMON_MEDIA_DIR}
+      - HBMON_DB_PATH=${HBMON_DB_PATH}
+      - HBMON_CONFIG_PATH=${HBMON_CONFIG_PATH}
+
     volumes:
       - ./data:/data
     ports:
@@ -43,25 +54,39 @@ services:
     command: ["python", "-m", "hbmon.worker"]
     environment:
       - TZ=America/Los_Angeles
-      - HBMON_DB_PATH=/data/hbmon.sqlite
-      - HBMON_MEDIA_DIR=/data/media
-      - HBMON_CONFIG_PATH=/data/config.json
+
       - HBMON_RTSP_URL=${HBMON_RTSP_URL}
 
-      - HBMON_CAMERA_NAME=hummingbirdcam
-      - HBMON_FPS_LIMIT=8
-      - HBMON_CLIP_SECONDS=2.5
+      - HBMON_DATA_DIR=${HBMON_DATA_DIR}
+      - HBMON_MEDIA_DIR=${HBMON_MEDIA_DIR}
+      - HBMON_DB_PATH=${HBMON_DB_PATH}
+      - HBMON_CONFIG_PATH=${HBMON_CONFIG_PATH}
 
-      - HBMON_YOLO_MODEL=yolov8n.pt
-      - HBMON_DETECT_CONF=0.35
-      - HBMON_DETECT_IOU=0.50
-      - HBMON_COOLDOWN_SECONDS=6
+      - HBMON_CAMERA_NAME=${HBMON_CAMERA_NAME}
 
-      # put YOLO writable/cache stuff under your repo too
-      - YOLO_CONFIG_DIR=/data/yolo
+      - HBMON_FPS_LIMIT=${HBMON_FPS_LIMIT}
+      - HBMON_CLIP_SECONDS=${HBMON_CLIP_SECONDS}
 
-      - HBMON_MATCH_THRESHOLD=0.28
-      - "HBMON_SPECIES_LIST=Anna's Hummingbird,Allen's Hummingbird,Rufous Hummingbird,Costa's Hummingbird,Black-chinned Hummingbird,Calliope Hummingbird,Broad-billed Hummingbird"
+      - HBMON_YOLO_MODEL=${HBMON_YOLO_MODEL}
+      - HBMON_DETECT_CONF=${HBMON_DETECT_CONF}
+      - HBMON_DETECT_IOU=${HBMON_DETECT_IOU}
+      - HBMON_MIN_BOX_AREA=${HBMON_MIN_BOX_AREA}
+
+      - HBMON_COOLDOWN_SECONDS=${HBMON_COOLDOWN_SECONDS}
+
+      - YOLO_CONFIG_DIR=${YOLO_CONFIG_DIR}
+
+      - HBMON_MIN_SPECIES_PROB=${HBMON_MIN_SPECIES_PROB}
+      - HBMON_MATCH_THRESHOLD=${HBMON_MATCH_THRESHOLD}
+      - HBMON_EMA_ALPHA=${HBMON_EMA_ALPHA}
+
+      - HBMON_DEVICE=${HBMON_DEVICE}
+      - HBMON_SPECIES_LIST=${HBMON_SPECIES_LIST}
+
+      - HBMON_DEBUG_SAVE_FRAMES=1
+      - HBMON_DEBUG_EVERY_SECONDS=10
+      - HBMON_YOLO_IMGSZ=1280
+
     volumes:
       - ./data:/data
     depends_on:
