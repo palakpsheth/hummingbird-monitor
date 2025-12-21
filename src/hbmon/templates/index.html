@@ -40,6 +40,25 @@
   </div>
 
   <h2>Recent observations</h2>
+  <div class="inline" style="justify-content: space-between; align-items: center; gap: 10px; margin: 6px 0 12px 0; flex-wrap: wrap;">
+    <form class="inline" method="get" action="/" style="gap: 6px; flex-wrap: wrap;">
+      <label class="muted">Per page:</label>
+      <select name="page_size">
+        {% for n in recent_page_size_options %}
+          <option value="{{ n }}" {% if recent_page_size == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+      <input type="hidden" name="page" value="1" />
+      <button type="submit">Apply</button>
+    </form>
+
+    <form class="inline" method="get" action="/" style="gap: 6px; flex-wrap: wrap;">
+      <input type="hidden" name="page_size" value="{{ recent_page_size }}" />
+      <button type="submit" name="page" value="{{ recent_page - 1 }}" {% if recent_page <= 1 %}disabled{% endif %}>Prev</button>
+      <div class="muted">Page {{ recent_page }} / {{ recent_total_pages }} ({{ recent_total }} total)</div>
+      <button type="submit" name="page" value="{{ recent_page + 1 }}" {% if recent_page >= recent_total_pages %}disabled{% endif %}>Next</button>
+    </form>
+  </div>
   <div class="gallery">
     {% for o in recent %}
       {% set hue = ((o.individual_id or 0) * 47) % 360 %}

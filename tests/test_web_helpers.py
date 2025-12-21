@@ -49,6 +49,21 @@ def test_species_to_css_variants(monkeypatch):
     assert web.species_to_css("mystery bird") == "species-unknown"
 
 
+def test_paginate_bounds(monkeypatch):
+    """Pagination should clamp page and page_size and compute offsets safely."""
+    web = _import_web(monkeypatch)
+
+    page, size, total_pages, offset = web.paginate(total_count=0, page=3, page_size=500, max_page_size=50)
+    assert (page, size, total_pages, offset) == (1, 50, 1, 0)
+
+    page, size, total_pages, offset = web.paginate(total_count=95, page=3, page_size=10)
+    assert (page, size, total_pages, offset) == (3, 10, 10, 20)
+
+    # page should clamp to last page when requesting beyond range
+    page, size, total_pages, offset = web.paginate(total_count=15, page=5, page_size=4)
+    assert (page, total_pages, offset) == (4, 4, 12)
+
+
 def test_build_hour_heatmap_levels(monkeypatch):
     """
     Construct a simple heatmap and verify level assignments based on counts.
