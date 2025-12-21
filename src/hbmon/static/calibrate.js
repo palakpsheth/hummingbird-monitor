@@ -38,12 +38,17 @@
     const ely1 = document.getElementById("y1");
     const elx2 = document.getElementById("x2");
     const ely2 = document.getElementById("y2");
+    const label = document.getElementById("proposed-roi-label");
     if (!elx1 || !ely1 || !elx2 || !ely2) return;
 
     elx1.value = x1.toFixed(6);
     ely1.value = y1.toFixed(6);
     elx2.value = x2.toFixed(6);
     ely2.value = y2.toFixed(6);
+
+    if (label) {
+      label.textContent = `New ROI: ${elx1.value}, ${ely1.value}, ${elx2.value}, ${ely2.value}`;
+    }
   }
 
   function drawBox(element, r) {
@@ -66,11 +71,15 @@
     const ely1 = document.getElementById("y1");
     const elx2 = document.getElementById("x2");
     const ely2 = document.getElementById("y2");
+    const label = document.getElementById("proposed-roi-label");
     if (elx1 && ely1 && elx2 && ely2) {
       elx1.value = "";
       ely1.value = "";
       elx2.value = "";
       ely2.value = "";
+    }
+    if (label) {
+      label.textContent = "";
     }
   }
 
