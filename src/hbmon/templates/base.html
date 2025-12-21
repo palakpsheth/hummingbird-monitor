@@ -1,0 +1,35 @@
+<!doctype html>
+<html data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">{{ title }}</div>
+
+    <nav class="nav">
+      <a href="/">Dashboard</a>
+      <a href="/observations">Observations</a>
+      <a href="/individuals">Individuals</a>
+      <a href="/calibrate">Calibrate ROI</a>
+      <a href="/export/observations.csv">Obs CSV</a>
+      <a href="/export/individuals.csv">Ind CSV</a>
+      <a href="/export/media_bundle.tar.gz">Bundle tar.gz</a>
+    </nav>
+
+    <div class="nav-right">
+      <button id="themeToggle" class="theme-btn" type="button">Light mode</button>
+    </div>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="/static/theme.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

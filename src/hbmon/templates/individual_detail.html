@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Individual #{{ individual.id }}</h1>
+
+  <div class="card">
+    <form method="post" action="/individuals/{{ individual.id }}/rename" class="inline">
+      <label>Rename:</label>
+      <input name="name" value="{{ individual.name }}" />
+      <button type="submit">Save</button>
+    </form>
+
+    <form method="post" action="/individuals/{{ individual.id }}/refresh_embedding" class="inline" style="margin-top:10px;">
+      <button type="submit">Refresh embedding now</button>
+    </form>
+
+    <form method="get" action="/individuals/{{ individual.id }}/split_review" class="inline" style="margin-top:10px;">
+      <button type="submit">Split into A/B (review)</button>
+    </form>
+
+    <p class="muted">Total visits: {{ total }} · Last seen (UTC): {{ last_seen or "" }}</p>
+
+    <h3>Visits by hour (UTC)</h3>
+    <div class="heatmap">
+      {% for cell in heatmap %}
+        <div class="heat level-{{ cell.level }}">
+          <div class="hh">{{ "%02d"|format(cell.hour) }}</div>
+          <div class="cnt">{{ cell.count }}</div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <h2>Observations</h2>
+  <div class="gallery">
+    {% for o in observations %}
+      <div class="thumb">
+        <a href="/observations/{{ o.id }}"><img src="/media/{{ o.snapshot_path }}" /></a>
+        <div class="meta">
+          <div>
+            <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
+            <span class="muted">({{ "%.2f"|format(o.species_prob) }})</span>
+          </div>
+          <div>{{ o.ts_utc }}</div>
+          <div><a href="/media/{{ o.video_path }}">Video</a> · <a href="/observations/{{ o.id }}">Details</a></div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% endblock %}

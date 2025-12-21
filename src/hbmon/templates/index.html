@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Dashboard</h1>
+
+  <div class="card">
+    <div class="inline" style="justify-content: space-between;">
+      <h2 style="margin:0;">Top individuals</h2>
+      <div class="muted">Sorted by visits</div>
+    </div>
+
+    <div class="table" style="margin-top:10px;">
+      <div class="row head">
+        <div>ID</div><div>Name</div><div>Visits</div><div>Last seen (UTC)</div>
+      </div>
+
+      {% for r in top_inds %}
+        {# r = (id, name, visits, last_seen_utc) #}
+        {% set hue = (r[0] * 47) % 360 %}
+        <div class="row">
+          <div>{{ r[0] }}</div>
+          <div>
+            <a href="/individuals/{{ r[0] }}">
+              <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ r[1] }}</span>
+            </a>
+          </div>
+          <div>{{ r[2] }}</div>
+          <div>{{ r[3] or "" }}</div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0;">System</h2>
+    <div class="stack">
+      <div class="muted">RTSP: {{ rtsp_url or "(not set)" }}</div>
+      <div class="muted">ROI: {{ roi_str or "(not set)" }}</div>
+      <div class="muted">Last capture: {{ last_capture_utc or "(none yet)" }}</div>
+    </div>
+  </div>
+
+  <h2>Recent observations</h2>
+  <div class="gallery">
+    {% for o in recent %}
+      {% set hue = ((o.individual_id or 0) * 47) % 360 %}
+      <div class="thumb">
+        <a href="/observations/{{ o.id }}"><img src="/media/{{ o.snapshot_path }}" /></a>
+        <div class="meta">
+          <div>
+            <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
+            <span class="muted">({{ "%.2f"|format(o.species_prob) }})</span>
+          </div>
+
+          <div>
+            Ind:
+            <a href="/individuals/{{ o.individual_id }}">
+              <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
+            </a>
+            · sim {{ "%.3f"|format(o.match_score) }}
+          </div>
+
+          <div>{{ o.ts_utc }}</div>
+
+          <div>
+            <a href="/media/{{ o.video_path }}">Video</a>
+            · <a href="/observations/{{ o.id }}">Details</a>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% endblock %}

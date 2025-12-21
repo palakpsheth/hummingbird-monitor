@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Observation #{{ o.id }}</h1>
+
+  <div class="grid2">
+    <div class="card">
+      <img class="bigimg" src="/media/{{ o.snapshot_path }}" alt="snapshot" />
+
+      <div class="meta2">
+        <div>
+          <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
+          <span class="muted">p={{ "%.3f"|format(o.species_prob) }}</span>
+        </div>
+
+        <div style="margin-top:8px;">
+          {% set hue = ((o.individual_id or 0) * 47) % 360 %}
+          Individual:
+          <a href="/individuals/{{ o.individual_id }}">
+            <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
+          </a>
+          <span class="muted">match={{ "%.3f"|format(o.match_score) }}</span>
+        </div>
+
+        <div style="margin-top:8px;">
+          Timestamp (UTC): <span class="muted">{{ o.ts_utc }}</span>
+        </div>
+
+        <div style="margin-top:10px;" class="inline">
+          <a href="/media/{{ o.video_path }}">Open video</a>
+          <span class="muted">·</span>
+          <a href="/observations">Back to observations</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Details</h2>
+
+      <div class="stack">
+        <div class="muted">snapshot: /media/{{ o.snapshot_path }}</div>
+        <div class="muted">video: /media/{{ o.video_path }}</div>
+        <div class="muted">bbox: {{ o.bbox_str or "(none)" }}</div>
+        <div class="muted">camera: {{ o.camera_name or "(unknown)" }}</div>
+      </div>
+
+      {% if o.extra_json %}
+        <h3>Raw metadata</h3>
+        <pre class="pre">{{ o.extra_json }}</pre>
+      {% else %}
+        <p class="muted">No extra metadata captured for this observation.</p>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

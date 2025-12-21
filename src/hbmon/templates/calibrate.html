@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Calibrate ROI</h1>
+
+  <div class="card">
+    <p class="muted">
+      Drag a rectangle over the feeder area. The ROI helps reduce false detections and speeds up processing.
+      Coordinates are saved as normalized values (0–1) so they work across resolutions.
+    </p>
+
+    <div class="inline">
+      <button id="refresh" type="button">Refresh frame</button>
+      <span class="muted">Current ROI: {{ roi_str or "(not set)" }}</span>
+    </div>
+
+    <div class="cal-wrap">
+      <img id="frame" src="/api/frame.jpg?ts={{ ts }}" alt="latest frame" />
+      <div id="box"></div>
+    </div>
+
+    <form method="post" action="/api/roi" class="inline" style="margin-top:12px;">
+      <input type="hidden" id="x1" name="x1" value="{{ roi.x1 if roi else '' }}" />
+      <input type="hidden" id="y1" name="y1" value="{{ roi.y1 if roi else '' }}" />
+      <input type="hidden" id="x2" name="x2" value="{{ roi.x2 if roi else '' }}" />
+      <input type="hidden" id="y2" name="y2" value="{{ roi.y2 if roi else '' }}" />
+
+      <button type="submit">Save ROI</button>
+      <a class="muted" href="/">Back to dashboard</a>
+    </form>
+
+    <p class="muted" style="margin-top:10px;">
+      If you save an ROI and later want to change it, just drag a new rectangle and hit Save again.
+    </p>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script src="/static/calibrate.js"></script>
+{% endblock %}

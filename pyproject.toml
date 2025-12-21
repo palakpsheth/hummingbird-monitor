@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hbmon"
+version = "0.1.0"
+description = "LAN hummingbird monitoring: YOLO detection + CLIP species + individual re-id + web UI"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110,<1",
+  "uvicorn[standard]>=0.27,<1",
+  "jinja2>=3.1,<4",
+  "python-multipart>=0.0.9,<1",
+  "SQLAlchemy>=2.0,<3",
+  "opencv-python-headless>=4.8,<5",
+  "numpy>=1.26,<2.0",
+
+  # ML stack
+  "scikit-learn>=1.4,<2",
+  "ultralytics>=8.2,<9",
+  "torch>=2.2,<3",
+  "torchvision>=0.17,<1",
+  "open-clip-torch>=2.20,<3",
+  "pillow>=10,<12",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "ruff>=0.6,<1",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,47 @@
+# ---- secrets / local config ----
+.env
+.env.*
+!.env.example
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+*.whl
+
+# ---- uv / venvs ----
+.venv/
+.uv/
+uv.lock
+
+# ---- test / tooling ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.log
+
+# ---- editor / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- runtime data (docker volumes) ----
+data/
+media/
+exports/
+*.sqlite
+*.sqlite3
+
+# ---- artifacts ----
+*.tar.gz
+*.zip

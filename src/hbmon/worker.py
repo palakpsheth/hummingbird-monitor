@@ -1,0 +1,476 @@
+# src/hbmon/worker.py
+"""
+RTSP worker: detect hummingbird visits, record snapshot + short clip,
+classify species (CLIP) and assign individual (embedding re-ID), then write to DB.
+
+High-level pipeline per loop:
+- Read frame from RTSP
+- Apply ROI crop (if configured)
+- Run YOLO (ultralytics) to detect "bird" class (COCO class 14)
+- Pick best detection (largest area)
+- If not in cooldown: save snapshot + record clip
+- Crop around bbox for CLIP classification + embedding
+- Match embedding to an Individual prototype (cosine distance threshold)
+- Insert Observation + (optional) Embedding, update Individual stats/prototype
+
+This is CPU-friendly by default. You can tune via config.json or env vars.
+
+Expected env vars (common):
+- HBMON_RTSP_URL=rtsp://...
+- HBMON_CAMERA_NAME=hummingbirdcam
+- HBMON_FPS_LIMIT=8
+- HBMON_CLIP_SECONDS=2.0
+"""
+
+from __future__ import annotations
+
+import os
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from hbmon.clip_model import ClipModel
+from hbmon.clustering import MatchResult, l2_normalize, update_prototype_ema, cosine_distance
+from hbmon.config import Settings, ensure_dirs, load_settings, snapshots_dir, clips_dir
+from hbmon.db import init_db, session_scope
+from hbmon.models import Embedding, Individual, Observation
+
+# ultralytics + opencv can be heavy; import lazily where possible
+import cv2
+from ultralytics import YOLO
+
+
+# COCO class id for "bird" in YOLOv8 models trained on COCO
+COCO_BIRD_CLASS = 14
+
+
+@dataclass
+class Det:
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    conf: float
+
+    @property
+    def area(self) -> int:
+        return max(0, self.x2 - self.x1) * max(0, self.y2 - self.y1)
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _safe_mkdir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
+
+
+def _apply_roi(frame_bgr: np.ndarray, s: Settings) -> tuple[np.ndarray, tuple[int, int]]:
+    """
+    Return (roi_frame, (x_off, y_off)) where offsets map ROI coords to original.
+    """
+    if s.roi is None:
+        return frame_bgr, (0, 0)
+
+    h, w = frame_bgr.shape[:2]
+    r = s.roi.clamp()
+    x1 = int(r.x1 * w)
+    y1 = int(r.y1 * h)
+    x2 = int(r.x2 * w)
+    y2 = int(r.y2 * h)
+
+    x1 = max(0, min(w - 1, x1))
+    y1 = max(0, min(h - 1, y1))
+    x2 = max(1, min(w, x2))
+    y2 = max(1, min(h, y2))
+
+    if x2 <= x1 or y2 <= y1:
+        return frame_bgr, (0, 0)
+
+    return frame_bgr[y1:y2, x1:x2], (x1, y1)
+
+
+def _pick_best_bird_det(results: Any, min_box_area: int) -> Det | None:
+    """
+    Extract best detection from ultralytics results (largest area bird).
+    """
+    if not results:
+        return None
+    r0 = results[0]
+    if r0.boxes is None:
+        return None
+
+    boxes = r0.boxes
+    if len(boxes) == 0:
+        return None
+
+    best: Det | None = None
+    for b in boxes:
+        try:
+            cls = int(b.cls.item()) if hasattr(b.cls, "item") else int(b.cls)
+            conf = float(b.conf.item()) if hasattr(b.conf, "item") else float(b.conf)
+            if cls != COCO_BIRD_CLASS:
+                continue
+
+            xyxy = b.xyxy[0].detach().cpu().numpy()
+            x1, y1, x2, y2 = [int(v) for v in xyxy.tolist()]
+            d = Det(x1=x1, y1=y1, x2=x2, y2=y2, conf=conf)
+            if d.area < min_box_area:
+                continue
+            if best is None or d.area > best.area:
+                best = d
+        except Exception:
+            continue
+
+    return best
+
+
+def _write_jpeg(path: Path, frame_bgr: np.ndarray) -> None:
+    _safe_mkdir(path.parent)
+    ok, buf = cv2.imencode(".jpg", frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+    if not ok:
+        raise RuntimeError("cv2.imencode failed for jpeg")
+    path.write_bytes(buf.tobytes())
+
+
+def _record_clip_opencv(
+    cap: cv2.VideoCapture,
+    out_path: Path,
+    seconds: float,
+    *,
+    max_fps: float = 20.0,
+) -> None:
+    """
+    Record a short clip from the existing VideoCapture, writing MP4 if possible.
+    This blocks while recording (simple + robust for early versions).
+    """
+    _safe_mkdir(out_path.parent)
+
+    # Read one frame to get size
+    ok, frame = cap.read()
+    if not ok or frame is None:
+        raise RuntimeError("Unable to read frame for clip start")
+
+    h, w = frame.shape[:2]
+
+    # Try MP4V; fall back to AVI/XVID if needed
+    fourcc_mp4 = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(out_path), fourcc_mp4, float(max_fps), (w, h))
+
+    if not writer.isOpened():
+        # fallback
+        out_path = out_path.with_suffix(".avi")
+        fourcc = cv2.VideoWriter_fourcc(*"XVID")
+        writer = cv2.VideoWriter(str(out_path), fourcc, float(max_fps), (w, h))
+        if not writer.isOpened():
+            raise RuntimeError("Unable to open VideoWriter for clip")
+
+    start = time.time()
+    writer.write(frame)
+
+    # Best-effort write frames for `seconds`
+    while time.time() - start < seconds:
+        ok, fr = cap.read()
+        if not ok or fr is None:
+            break
+        writer.write(fr)
+
+        # Throttle a bit (don’t hammer CPU)
+        time.sleep(max(0.0, (1.0 / max_fps) * 0.2))
+
+    writer.release()
+
+
+def _bbox_with_padding(det: Det, frame_shape: tuple[int, int], pad_frac: float = 0.18) -> tuple[int, int, int, int]:
+    """
+    Expand bbox by pad_frac in each direction, clamped to frame.
+    """
+    h, w = frame_shape
+    bw = det.x2 - det.x1
+    bh = det.y2 - det.y1
+    pad_x = int(bw * pad_frac)
+    pad_y = int(bh * pad_frac)
+
+    x1 = max(0, det.x1 - pad_x)
+    y1 = max(0, det.y1 - pad_y)
+    x2 = min(w, det.x2 + pad_x)
+    y2 = min(h, det.y2 + pad_y)
+
+    return x1, y1, x2, y2
+
+
+def _load_individuals_for_matching(db: Any) -> list[tuple[int, np.ndarray, int]]:
+    """
+    Returns [(id, prototype_vec, visit_count), ...] for individuals that have prototypes.
+    """
+    rows = db.query(Individual).all()
+    out: list[tuple[int, np.ndarray, int]] = []
+    for ind in rows:
+        proto = ind.get_prototype()
+        if proto is None:
+            continue
+        out.append((int(ind.id), l2_normalize(proto), int(ind.visit_count)))
+    return out
+
+
+def _match_or_create_individual(
+    db: Any,
+    emb: np.ndarray,
+    *,
+    species_label: str | None,
+    match_threshold: float,
+    ema_alpha: float,
+) -> tuple[int, float]:
+    """
+    Match embedding to existing Individual prototype, else create new Individual.
+
+    Returns (individual_id, similarity_score)
+    """
+    emb = l2_normalize(emb)
+
+    candidates = _load_individuals_for_matching(db)
+    if not candidates:
+        ind = Individual(name="(unnamed)", visit_count=0, last_seen_at=None, last_species_label=species_label)
+        ind.set_prototype(emb)
+        ind.visit_count = 1
+        ind.last_seen_at = utcnow()
+        db.add(ind)
+        db.flush()
+        return int(ind.id), 0.0
+
+    best_id = None
+    best_dist = 9.0
+    best_visits = 0
+
+    for iid, proto, visits in candidates:
+        d = cosine_distance(emb, proto)
+        if d < best_dist:
+            best_dist = d
+            best_id = iid
+            best_visits = visits
+
+    assert best_id is not None
+
+    sim = float(1.0 - best_dist)
+
+    if best_dist <= match_threshold:
+        ind = db.get(Individual, best_id)
+        assert ind is not None
+        proto = ind.get_prototype()
+        if proto is None:
+            ind.set_prototype(emb)
+        else:
+            # more conservative once there are many visits
+            alpha_eff = ema_alpha if best_visits < 5 else min(ema_alpha, 0.05)
+            new_proto = update_prototype_ema(l2_normalize(proto), emb, alpha=alpha_eff)
+            ind.set_prototype(new_proto)
+
+        ind.visit_count = int(ind.visit_count or 0) + 1
+        ind.last_seen_at = utcnow()
+        if species_label:
+            ind.last_species_label = species_label
+
+        return int(ind.id), sim
+
+    # create new
+    ind = Individual(name="(unnamed)", visit_count=0, last_seen_at=None, last_species_label=species_label)
+    ind.set_prototype(emb)
+    ind.visit_count = 1
+    ind.last_seen_at = utcnow()
+    db.add(ind)
+    db.flush()
+    return int(ind.id), 0.0
+
+
+def run_worker() -> None:
+    ensure_dirs()
+    init_db()
+
+    # Load models once
+    yolo_model_name = os.getenv("HBMON_YOLO_MODEL", "yolov8n.pt")
+    yolo = YOLO(yolo_model_name)
+
+    clip = ClipModel(device=os.getenv("HBMON_DEVICE", "cpu"))
+
+    cap: cv2.VideoCapture | None = None
+    last_settings_load = 0.0
+    settings: Settings | None = None
+
+    last_trigger = 0.0
+
+    def get_settings() -> Settings:
+        nonlocal last_settings_load, settings
+        now = time.time()
+        if settings is None or (now - last_settings_load) > 3.0:
+            settings = load_settings()
+            last_settings_load = now
+        return settings
+
+    while True:
+        s = get_settings()
+        if not s.rtsp_url:
+            print("[worker] HBMON_RTSP_URL not set. Sleeping...")
+            time.sleep(2.0)
+            continue
+
+        # Ensure capture
+        if cap is None or not cap.isOpened():
+            print(f"[worker] Opening RTSP: {s.rtsp_url}")
+            cap = cv2.VideoCapture(s.rtsp_url)
+            # Small buffer helps reduce lag
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+            except Exception:
+                pass
+
+            # Give it a moment
+            time.sleep(0.5)
+
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            print("[worker] Frame read failed; reconnecting in 1s...")
+            try:
+                cap.release()
+            except Exception:
+                pass
+            cap = None
+            time.sleep(1.0)
+            continue
+
+        # Throttle overall loop (CPU friendly)
+        if s.fps_limit and s.fps_limit > 0:
+            time.sleep(max(0.0, 1.0 / float(s.fps_limit)))
+
+        roi_frame, (xoff, yoff) = _apply_roi(frame, s)
+
+        # YOLO detect birds
+        try:
+            results = yolo.predict(
+                roi_frame,
+                conf=float(s.detect_conf),
+                iou=float(s.detect_iou),
+                classes=[COCO_BIRD_CLASS],
+                verbose=False,
+            )
+        except Exception as e:
+            print(f"[worker] YOLO error: {e}")
+            time.sleep(0.5)
+            continue
+
+        det = _pick_best_bird_det(results, int(s.min_box_area))
+        if det is None:
+            continue
+
+        # cooldown to avoid repeated triggers for the same visit
+        now = time.time()
+        if (now - last_trigger) < float(s.cooldown_seconds):
+            continue
+
+        # Translate ROI bbox to full-frame coords
+        det_full = Det(
+            x1=det.x1 + xoff,
+            y1=det.y1 + yoff,
+            x2=det.x2 + xoff,
+            y2=det.y2 + yoff,
+            conf=det.conf,
+        )
+
+        # Snapshot path (relative under /media)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        snap_rel = f"snapshots/{stamp}/{uuid.uuid4().hex}.jpg"
+        clip_rel = f"clips/{stamp}/{uuid.uuid4().hex}.mp4"
+
+        snap_path = snapshots_dir().parent / snap_rel  # snapshots_dir() == /media/snapshots
+        clip_path = clips_dir().parent / clip_rel
+
+        # Save snapshot immediately
+        try:
+            _write_jpeg(snap_path, frame)
+        except Exception as e:
+            print(f"[worker] snapshot write failed: {e}")
+            continue
+
+        # Record clip (best effort)
+        try:
+            _record_clip_opencv(cap, clip_path, float(s.clip_seconds), max_fps=20.0)
+        except Exception as e:
+            print(f"[worker] clip record failed: {e}")
+            # allow observation without clip (use snapshot only)
+            # keep video_path pointing to a non-existent file? better to keep empty placeholder
+            clip_rel = ""
+
+        # Crop around bbox for CLIP
+        h, w = frame.shape[:2]
+        x1, y1, x2, y2 = _bbox_with_padding(det_full, (h, w))
+        crop = frame[y1:y2, x1:x2].copy()
+
+        # Species + embedding
+        try:
+            species_label, species_prob = clip.predict_species_label_prob(crop)
+            emb = clip.encode_embedding(crop)
+        except Exception as e:
+            print(f"[worker] CLIP error: {e}")
+            species_label, species_prob = "Hummingbird (unknown species)", 0.0
+            emb = None
+
+        if species_prob < float(s.min_species_prob):
+            species_label = "Hummingbird (unknown species)"
+
+        # Write DB
+        with session_scope() as db:
+            individual_id = None
+            match_score = 0.0
+
+            if emb is not None:
+                individual_id, match_score = _match_or_create_individual(
+                    db,
+                    emb,
+                    species_label=species_label,
+                    match_threshold=float(s.match_threshold),
+                    ema_alpha=float(s.ema_alpha),
+                )
+
+            obs = Observation(
+                ts=utcnow(),
+                camera_name=s.camera_name,
+                species_label=species_label,
+                species_prob=float(species_prob),
+                individual_id=individual_id,
+                match_score=float(match_score),
+                bbox_x1=int(det_full.x1),
+                bbox_y1=int(det_full.y1),
+                bbox_x2=int(det_full.x2),
+                bbox_y2=int(det_full.y2),
+                snapshot_path=snap_rel,
+                video_path=clip_rel if clip_rel else "clips/none.mp4",
+                extra_json=None,
+            )
+            db.add(obs)
+            db.flush()  # get obs.id
+
+            if emb is not None:
+                e = Embedding(observation_id=int(obs.id), individual_id=individual_id)
+                e.set_vec(emb)
+                db.add(e)
+
+        last_trigger = time.time()
+
+        print(
+            f"[worker] {utcnow().isoformat(timespec='seconds')} "
+            f"species={species_label} p={species_prob:.2f} "
+            f"ind={individual_id} sim={match_score:.3f} "
+            f"bbox=({det_full.x1},{det_full.y1},{det_full.x2},{det_full.y2})"
+        )
+
+
+def main() -> None:
+    run_worker()
+
+
+if __name__ == "__main__":
+    main()

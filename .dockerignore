@@ -1,0 +1,43 @@
+# ---- secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- VCS ----
+.git
+.gitignore
+
+# ---- python caches / venv ----
+__pycache__
+*.py[cod]
+*.pyd
+*.so
+*.egg-info
+.eggs
+.venv
+.uv
+uv.lock
+build
+dist
+
+# ---- tests / docs you may not need in image ----
+tests
+docs
+*.md
+
+# ---- editor / OS ----
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# ---- local runtime data ----
+data
+media
+exports
+*.sqlite
+*.sqlite3
+
+# ---- large archives ----
+*.tar.gz
+*.zip

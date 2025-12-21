@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Observations</h1>
+
+  <div class="card">
+    <form class="inline" method="get" action="/observations">
+      <label>Filter by individual:</label>
+      <select name="individual_id">
+        <option value="">(all)</option>
+        {% for ind in individuals %}
+          <option value="{{ ind.id }}" {% if selected_individual == ind.id %}selected{% endif %}>
+            {{ ind.id }} — {{ ind.name }}
+          </option>
+        {% endfor %}
+      </select>
+
+      <label style="margin-left:8px;">Limit:</label>
+      <select name="limit">
+        {% for n in [50, 100, 200, 500, 1000] %}
+          <option value="{{ n }}" {% if selected_limit == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+
+      <button type="submit">Apply</button>
+
+      <span class="muted" style="margin-left:auto;">
+        Total shown: {{ count_shown }}{% if count_total is not none %} / {{ count_total }}{% endif %}
+      </span>
+    </form>
+  </div>
+
+  <div class="gallery">
+    {% for o in observations %}
+      {% set hue = ((o.individual_id or 0) * 47) % 360 %}
+      <div class="thumb">
+        <a href="/observations/{{ o.id }}"><img src="/media/{{ o.snapshot_path }}" /></a>
+        <div class="meta">
+          <div>
+            <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
+            <span class="muted">({{ "%.2f"|format(o.species_prob) }})</span>
+          </div>
+
+          <div>
+            Individual:
+            <a href="/individuals/{{ o.individual_id }}">
+              <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
+            </a>
+            | sim {{ "%.3f"|format(o.match_score) }}
+          </div>
+
+          <div>{{ o.ts_utc }}</div>
+
+          <div>
+            <a href="/media/{{ o.video_path }}">Video</a>
+            · <a href="/observations/{{ o.id }}">Details</a>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% endblock %}
