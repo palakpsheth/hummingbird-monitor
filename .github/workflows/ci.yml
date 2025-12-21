@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   test:
@@ -35,7 +36,14 @@ jobs:
       # a summary to the console.
       - name: Tests (with coverage)
         run: |
-          uv run pytest --cov=hbmon --cov-report=term
+          uv run pytest --cov=hbmon --cov-report=term --cov-report=xml
+
+      # Post coverage report as a PR comment
+      - name: Coverage comment
+        if: github.event_name == 'pull_request'
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
 
       # Generate a coverage badge based on the `.coverage` data file.
       # This uses the `tj-actions/coverage-badge-py` GitHub Action to
