@@ -61,8 +61,17 @@
   function clearProposedRoi() {
     proposedRect = null;
     hideBox(proposedRoiBox);
-    // Clear hidden inputs
-    setHiddenInputs(0, 0, 0, 0);
+    // Clear hidden inputs by setting them to empty strings
+    const elx1 = document.getElementById("x1");
+    const ely1 = document.getElementById("y1");
+    const elx2 = document.getElementById("x2");
+    const ely2 = document.getElementById("y2");
+    if (elx1 && ely1 && elx2 && ely2) {
+      elx1.value = "";
+      ely1.value = "";
+      elx2.value = "";
+      ely2.value = "";
+    }
   }
 
   // Draw current ROI on page load (red dashed box)
