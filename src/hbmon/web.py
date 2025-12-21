@@ -142,7 +142,7 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
     errors: list[str] = []
 
     def parse_float(key: str, label: str, lo: float, hi: float) -> None:
-        text = (raw.get(key) or "").strip()
+        text = str(raw.get(key, "")).strip()
         try:
             val = float(text)
         except Exception:
@@ -154,7 +154,7 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
         parsed[key] = val
 
     def parse_int(key: str, label: str, lo: int, hi: int) -> None:
-        text = (raw.get(key) or "").strip()
+        text = str(raw.get(key, "")).strip()
         try:
             val_float = float(text)
         except Exception:
