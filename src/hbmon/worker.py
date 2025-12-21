@@ -368,6 +368,12 @@ def run_worker() -> None:
         print(f'[worker] Resolved bird_class_id={bird_class_id} from model names')
 
     clip = ClipModel(device=os.getenv("HBMON_DEVICE", "cpu"))
+    env = os.getenv("HBMON_SPECIES_LIST", "").strip()
+    if env:
+        import re
+        labels = [s.strip() for s in re.split(r",\s*", env) if s.strip()]
+        if labels:
+            clip.set_label_space(labels)
 
     cap: 'cv2.VideoCapture | None' = None  # type: ignore[name-defined]
     last_settings_load = 0.0
