@@ -1,7 +1,6 @@
 # tests/test_ringbuffer.py
 from __future__ import annotations
 
-import time
 
 import numpy as np
 

@@ -14,7 +14,6 @@ Environment:
 from __future__ import annotations
 
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import create_engine

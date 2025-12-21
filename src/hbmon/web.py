@@ -45,10 +45,10 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from hbmon.config import Roi, ensure_dirs, load_settings, media_dir, roi_to_str, save_settings
-from hbmon.db import get_db, init_db, session_scope
+from hbmon.db import get_db, init_db
 from hbmon.models import Embedding, Individual, Observation
 from hbmon.schema import HealthOut, RoiOut
-from hbmon.clustering import l2_normalize, suggest_split_two_groups, assign_to_centroid
+from hbmon.clustering import l2_normalize, suggest_split_two_groups
 
 
 # ----------------------------
