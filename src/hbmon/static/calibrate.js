@@ -79,9 +79,9 @@
     const x2 = parseFloat(elx2.value);
     const y2 = parseFloat(ely2.value);
     
-    // Only draw if we have valid ROI coordinates
+    // Only draw if we have valid ROI coordinates with non-zero area
     if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && 
-        x1 > 0 && y1 > 0 && x2 > 0 && y2 > 0) {
+        x2 > x1 && y2 > y1) {
       const r = {
         x: x1,
         y: y1,

@@ -251,14 +251,6 @@ a:hover { text-decoration: underline; }
   -ms-user-select: none;
 }
 
-#box {
-  position: absolute;
-  border: 2px dashed var(--accent);
-  border-radius: 10px;
-  pointer-events: none;
-  display: none;
-}
-
 #current-roi-box {
   position: absolute;
   border: 2px dashed #ff4444;
