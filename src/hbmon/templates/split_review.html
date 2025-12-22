@@ -46,7 +46,7 @@
               <span class="muted">sim={{ "%.3f"|format(o.match_score) }}</span>
             </div>
 
-            <div class="muted" style="margin-top:8px;">{{ o.ts_utc }}</div>
+            <div class="muted" style="margin-top:8px;"><span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span></div>
             <div style="margin-top:6px;">
               <a href="/media/{{ o.video_path }}">Video</a> · <a href="/observations/{{ o.id }}">Details</a>
             </div>

@@ -17,7 +17,10 @@
       <button type="submit">Split into A/B (review)</button>
     </form>
 
-    <p class="muted">Total visits: {{ total }} · Last seen (UTC): {{ last_seen or "" }}</p>
+    <p class="muted">
+      Total visits: {{ total }} · Last seen (local):
+      <span data-utc-ts="{{ last_seen or '' }}">{{ last_seen or "" }}</span>
+    </p>
 
     <h3>Visits by hour (UTC)</h3>
     <div class="heatmap">
@@ -40,7 +43,7 @@
             <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
             <span class="muted">({{ "%.2f"|format(o.species_prob) }})</span>
           </div>
-          <div>{{ o.ts_utc }}</div>
+          <div><span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span></div>
           <div><a href="/media/{{ o.video_path }}">Video</a> · <a href="/observations/{{ o.id }}">Details</a></div>
         </div>
       </div>

@@ -10,7 +10,7 @@
 
     <div class="table" style="margin-top:10px;">
       <div class="row head">
-        <div>ID</div><div>Name</div><div>Visits</div><div>Last seen (UTC)</div>
+        <div>ID</div><div>Name</div><div>Visits</div><div>Last seen (local)</div>
       </div>
 
       {% for r in top_inds %}
@@ -24,7 +24,7 @@
             </a>
           </div>
           <div>{{ r[2] }}</div>
-          <div>{{ r[3] or "" }}</div>
+          <div><span data-utc-ts="{{ r[3] or '' }}">{{ r[3] or "" }}</span></div>
         </div>
       {% endfor %}
     </div>
@@ -35,7 +35,14 @@
     <div class="stack">
       <div class="muted">RTSP: {{ rtsp_url or "(not set)" }}</div>
       <div class="muted">ROI: {{ roi_str or "(not set)" }}</div>
-      <div class="muted">Last capture: {{ last_capture_utc or "(none yet)" }}</div>
+      <div class="muted">
+        Last capture:
+        {% if last_capture_utc %}
+          <span data-utc-ts="{{ last_capture_utc }}">{{ last_capture_utc }}</span>
+        {% else %}
+          (none yet)
+        {% endif %}
+      </div>
     </div>
   </div>
 
@@ -78,7 +85,7 @@
             · sim {{ "%.3f"|format(o.match_score) }}
           </div>
 
-          <div>{{ o.ts_utc }}</div>
+          <div><span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span></div>
 
           <div>
             <a href="/media/{{ o.video_path }}">Video</a>
