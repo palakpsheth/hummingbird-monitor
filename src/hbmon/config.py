@@ -263,13 +263,36 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
     return s
 
 
-def load_settings() -> Settings:
+def _settings_from_env() -> Settings:
+    """
+    Build Settings using environment variables as defaults.
+    This is used when no config file exists or when a fallback is needed.
+    """
+    return Settings(
+        rtsp_url=env_str("HBMON_RTSP_URL", ""),
+        camera_name=env_str("HBMON_CAMERA_NAME", "camera"),
+        fps_limit=env_float("HBMON_FPS_LIMIT", 8.0),
+        clip_seconds=env_float("HBMON_CLIP_SECONDS", 2.0),
+        detect_conf=env_float("HBMON_DETECT_CONF", 0.25),
+        detect_iou=env_float("HBMON_DETECT_IOU", 0.45),
+        min_box_area=env_int("HBMON_MIN_BOX_AREA", 600),
+        cooldown_seconds=env_float("HBMON_COOLDOWN_SECONDS", 2.0),
+        min_species_prob=env_float("HBMON_MIN_SPECIES_PROB", 0.35),
+        match_threshold=env_float("HBMON_MATCH_THRESHOLD", 0.25),
+        ema_alpha=env_float("HBMON_EMA_ALPHA", 0.10),
+        roi=None,
+        last_updated_utc=0.0,
+    )
+
+
+def load_settings(*, apply_env_overrides: bool = True) -> Settings:
     ensure_dirs()
     p = config_path()
     if not p.exists():
-        s = Settings(last_updated_utc=time.time())
+        s = _settings_from_env()
+        s.last_updated_utc = time.time()
         save_settings(s)
-        return s.with_env_overrides()
+        return s.with_env_overrides() if apply_env_overrides else s
 
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
@@ -277,9 +300,10 @@ def load_settings() -> Settings:
             raise ValueError("config.json root is not an object")
         s = _settings_from_dict(data)
     except Exception:
-        s = Settings(last_updated_utc=time.time())
+        s = _settings_from_env()
+        s.last_updated_utc = time.time()
 
-    return s.with_env_overrides()
+    return s.with_env_overrides() if apply_env_overrides else s
 
 
 def save_settings(s: Settings) -> None:

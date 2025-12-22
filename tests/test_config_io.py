@@ -31,6 +31,21 @@ def test_save_and_load_settings_roundtrip(monkeypatch, tmp_path):
     monkeypatch.setenv("HBMON_RTSP_URL", "override")
     s3 = config.load_settings()
     assert s3.rtsp_url == "override"
+    # Explicitly opt out of env overrides to pick up persisted config values
+    s4 = config.load_settings(apply_env_overrides=False)
+    assert s4.rtsp_url == "rtsptest"
+
+
+def test_load_settings_bootstrap_uses_env(monkeypatch, tmp_path):
+    """When no config file exists, load_settings seeds values from env even without overrides."""
+    monkeypatch.setenv("HBMON_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HBMON_MEDIA_DIR", str(tmp_path / "media"))
+    monkeypatch.setenv("HBMON_RTSP_URL", "env_rtsp_url")
+    cfg = config.config_path()
+    if cfg.exists():
+        cfg.unlink()
+    s = config.load_settings(apply_env_overrides=False)
+    assert s.rtsp_url == "env_rtsp_url"
 
 
 def test_load_settings_corrupted_file(monkeypatch, tmp_path):

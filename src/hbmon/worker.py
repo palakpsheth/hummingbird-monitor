@@ -389,7 +389,7 @@ def run_worker() -> None:
         nonlocal last_settings_load, settings
         now = time.time()
         if settings is None or (now - last_settings_load) > 3.0:
-            settings = load_settings()
+            settings = load_settings(apply_env_overrides=False)
             last_settings_load = now
         return settings
 
