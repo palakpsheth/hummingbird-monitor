@@ -134,6 +134,68 @@ def _as_utc_str(dt) -> str | None:
     return dt.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
+    """
+    Validate and coerce detection/ML tuning inputs from the config form.
+
+    Parameters
+    ----------
+    raw: dict[str, str]
+        Form values keyed by the expected field names. Values are parsed as:
+        - detect_conf, detect_iou: float in [0.05, 0.95]
+        - min_box_area: int in [1, 200000]
+        - cooldown_seconds: float in [0.0, 120.0]
+        - min_species_prob, match_threshold, ema_alpha: float in [0.0, 1.0]
+
+    Returns
+    -------
+    tuple[dict[str, Any], list[str]]
+        Parsed numeric values (floats/ints) and a list of validation error
+        messages such as "Detection confidence must be a number." or
+        "Minimum box area must be between 1 and 200000.".
+    """
+    parsed: dict[str, Any] = {}
+    errors: list[str] = []
+
+    def parse_float(key: str, label: str, lo: float, hi: float) -> None:
+        text = str(raw.get(key, "")).strip()
+        try:
+            val = float(text)
+        except ValueError:
+            errors.append(f"{label} must be a number.")
+            return
+        if not (lo <= val <= hi):
+            errors.append(f"{label} must be between {lo} and {hi}.")
+            return
+        parsed[key] = val
+
+    def parse_int(key: str, label: str, lo: int, hi: int) -> None:
+        text = str(raw.get(key, "")).strip()
+        try:
+            val_float = float(text)
+        except ValueError:
+            errors.append(f"{label} must be a whole number.")
+            return
+        if not val_float.is_integer():
+            errors.append(f"{label} must be a whole number.")
+            return
+        val = int(val_float)
+        if not (lo <= val <= hi):
+            errors.append(f"{label} must be between {lo} and {hi}.")
+            return
+        parsed[key] = val
+
+    parse_float("detect_conf", "Detection confidence", 0.05, 0.95)
+    parse_float("detect_iou", "IOU threshold", 0.05, 0.95)
+    parse_int("min_box_area", "Minimum box area", 1, 200000)
+    parse_float("cooldown_seconds", "Cooldown seconds", 0.0, 120.0)
+    parse_float("min_species_prob", "Minimum species probability", 0.0, 1.0)
+    parse_float("match_threshold", "Match threshold", 0.0, 1.0)
+    parse_float("ema_alpha", "EMA alpha", 0.0, 1.0)
+
+    return parsed, errors
+
+
 def paginate(total_count: int, page: int, page_size: int, max_page_size: int = 100) -> tuple[int, int, int, int]:
     """
     Clamp page/page_size and return (page, page_size, total_pages, offset).
@@ -186,6 +248,22 @@ def make_app() -> Any:
     # ----------------------------
     # UI routes
     # ----------------------------
+
+    def _config_form_values(settings, raw: dict[str, str] | None = None) -> dict[str, str]:
+        vals = {
+            "detect_conf": f"{float(settings.detect_conf):.2f}",
+            "detect_iou": f"{float(settings.detect_iou):.2f}",
+            "min_box_area": str(int(settings.min_box_area)),
+            "cooldown_seconds": f"{float(settings.cooldown_seconds):.2f}",
+            "min_species_prob": f"{float(settings.min_species_prob):.2f}",
+            "match_threshold": f"{float(settings.match_threshold):.2f}",
+            "ema_alpha": f"{float(settings.ema_alpha):.2f}",
+        }
+        if raw:
+            for k, v in raw.items():
+                if k in vals:
+                    vals[k] = str(v)
+        return vals
 
     @app.get("/", response_class=HTMLResponse)
     def index(
@@ -557,6 +635,61 @@ def make_app() -> Any:
         db.commit()
 
         return RedirectResponse(url=f"/individuals/{ind_b.id}", status_code=303)
+
+    @app.get("/config", response_class=HTMLResponse)
+    def config_page(request: Request) -> HTMLResponse:
+        s = load_settings()
+        saved = request.query_params.get("saved") == "1"
+        return templates.TemplateResponse(
+            "config.html",
+            {
+                "request": request,
+                "title": "Config",
+                "form_values": _config_form_values(s),
+                "errors": [],
+                "saved": saved,
+            },
+        )
+
+    @app.post("/config", response_class=HTMLResponse)
+    async def config_save(request: Request) -> HTMLResponse:
+        s = load_settings()
+        form = await request.form()
+        field_names = (
+            "detect_conf",
+            "detect_iou",
+            "min_box_area",
+            "cooldown_seconds",
+            "min_species_prob",
+            "match_threshold",
+            "ema_alpha",
+        )
+        raw = {name: str(form.get(name, "") or "").strip() for name in field_names}
+        parsed, errors = _validate_detection_inputs(raw)
+
+        if errors:
+            return templates.TemplateResponse(
+                "config.html",
+                {
+                    "request": request,
+                    "title": "Config",
+                    "form_values": _config_form_values(s, raw),
+                    "errors": errors,
+                    "saved": False,
+                },
+                status_code=400,
+            )
+
+        s.detect_conf = parsed["detect_conf"]
+        s.detect_iou = parsed["detect_iou"]
+        s.min_box_area = parsed["min_box_area"]
+        s.cooldown_seconds = parsed["cooldown_seconds"]
+        s.min_species_prob = parsed["min_species_prob"]
+        s.match_threshold = parsed["match_threshold"]
+        s.ema_alpha = parsed["ema_alpha"]
+        save_settings(s)
+
+        return RedirectResponse(url="/config?saved=1", status_code=303)
 
     @app.get("/calibrate", response_class=HTMLResponse)
     def calibrate(request: Request) -> HTMLResponse:
