@@ -80,10 +80,7 @@ def get_engine() -> Engine:
     connect_args = {}
     if url.startswith("sqlite:"):
         # Required for SQLite + threads (FastAPI/uvicorn)
-        connect_args = {
-            "check_same_thread": False,
-            "timeout": max(1.0, float(busy_timeout_ms) / 1000.0),
-        }
+        connect_args = {"check_same_thread": False}
 
     assert create_engine is not None  # for mypy
     _ENGINE = create_engine(
@@ -99,8 +96,8 @@ def get_engine() -> Engine:
                 cursor = dbapi_connection.cursor()
                 cursor.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
                 cursor.close()
-            except Exception:
-                pass
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"[db] failed to set PRAGMA busy_timeout: {exc}")
 
         event.listen(_ENGINE, "connect", _set_sqlite_pragmas)
 

@@ -38,8 +38,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-ALLOWED_REVIEW_LABELS = ["true_positive", "false_positive", "false_negative"]
-
 """
 FastAPI web application for hbmon.
 
@@ -70,12 +68,16 @@ except Exception:  # pragma: no cover
 
 try:
     from sqlalchemy import delete, desc, func, select  # type: ignore
+    from sqlalchemy.exc import OperationalError  # type: ignore
     from sqlalchemy.orm import Session  # type: ignore
     _SQLA_AVAILABLE = True
 except Exception:  # pragma: no cover
     desc = func = select = None  # type: ignore
     Session = object  # type: ignore
+    OperationalError = Exception  # type: ignore
     _SQLA_AVAILABLE = False
+
+ALLOWED_REVIEW_LABELS = ["true_positive", "false_positive", "false_negative"]
 
 
 from hbmon.config import Roi, ensure_dirs, load_settings, media_dir, roi_to_str, save_settings
@@ -278,7 +280,7 @@ def make_app() -> Any:
             try:
                 db.commit()
                 return
-            except Exception as e:  # pragma: no cover
+            except OperationalError as e:  # pragma: no cover
                 msg = str(e).lower()
                 if "database is locked" in msg and i < retries - 1:
                     time.sleep(delay)
@@ -447,22 +449,24 @@ def make_app() -> Any:
         allowed = set(ALLOWED_REVIEW_LABELS)
         review_label = clean if clean in allowed else ""
 
-        extra = o.get_extra() or {}
-        if not isinstance(extra, dict):
-            extra = {}
-        review = extra.get("review")
-        if not isinstance(review, dict):
-            review = {}
-
         if review_label:
-            review["label"] = review_label
-            review["labeled_at_utc"] = _as_utc_str(datetime.now(timezone.utc))
+            o.merge_extra(
+                {
+                    "review": {
+                        "label": review_label,
+                        "labeled_at_utc": _as_utc_str(datetime.now(timezone.utc)),
+                    }
+                }
+            )
         else:
-            review.pop("label", None)
-            review.pop("labeled_at_utc", None)
-        extra["review"] = review
-        o.set_extra(extra)
-        db.commit()
+            extra = o.get_extra() or {}
+            if isinstance(extra, dict):
+                review = extra.get("review") if isinstance(extra.get("review"), dict) else {}
+                review.pop("label", None)
+                review.pop("labeled_at_utc", None)
+                extra["review"] = review
+                o.set_extra(extra)
+        _commit_with_retry(db)
 
         return RedirectResponse(url=f"/observations/{obs_id}", status_code=303)
 
@@ -478,16 +482,13 @@ def make_app() -> Any:
         _safe_unlink_media(o.snapshot_path)
         _safe_unlink_media(o.video_path)
 
-        embs = db.execute(select(Embedding).where(Embedding.observation_id == obs_id)).scalars().all()
-        for e in embs:
-            db.delete(e)
-
+        db.execute(delete(Embedding).where(Embedding.observation_id == obs_id))
         db.delete(o)
-        db.commit()
+        _commit_with_retry(db)
 
         if ind_id is not None:
             _recompute_individual_stats(db, int(ind_id))
-            db.commit()
+            _commit_with_retry(db)
 
         return RedirectResponse(url="/observations", status_code=303)
 

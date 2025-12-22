@@ -76,6 +76,32 @@ __all__ = [
 # Base
 # ----------------------------
 
+
+def _deep_merge(base: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    """
+    Return a new dict containing a deep merge of ``base`` and ``new``.
+    Neither input dict is mutated.
+    """
+    merged: dict[str, Any] = dict(base)
+    for k, v in new.items():
+        if k in merged and isinstance(merged[k], dict) and isinstance(v, dict):
+            merged[k] = _deep_merge(merged[k], v)
+        else:
+            merged[k] = v
+    return merged
+
+
+def _extract_review_label(extra: Any) -> str | None:
+    if not extra or not isinstance(extra, dict):
+        return None
+    review = extra.get("review")
+    if not isinstance(review, dict):
+        return None
+    label = review.get("label")
+    if not label:
+        return None
+    return str(label)
+
 # ---------------------------------------------------------------------------
 # SQLAlchemy base or stub
 # ---------------------------------------------------------------------------
@@ -252,33 +278,16 @@ if _SQLALCHEMY_AVAILABLE:
             Deep-merge ``updates`` into existing extra metadata and persist.
             Nested dicts are merged recursively; other values overwrite.
             """
-
-            def _deep_merge(base: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
-                for k, v in new.items():
-                    if k in base and isinstance(base[k], dict) and isinstance(v, dict):
-                        base[k] = _deep_merge(base[k], v)
-                    else:
-                        base[k] = v
-                return base
-
-            base: dict[str, Any] = self.get_extra() or {}
-            if not isinstance(base, dict):
-                base = {}
-            merged = _deep_merge(base, updates)
+            base_dict: dict[str, Any] = self.get_extra() or {}
+            if not isinstance(base_dict, dict):
+                base_dict = {}
+            merged = _deep_merge(base_dict, updates)
             self.set_extra(merged)
             return merged
 
         @property
         def review_label(self) -> str | None:
-            extra = self.get_extra() or {}
-            if not isinstance(extra, dict):
-                return None
-            review = extra.get("review")
-            if isinstance(review, dict):
-                label = review.get("label")
-                if label:
-                    return str(label)
-            return None
+            return _extract_review_label(self.get_extra())
 
 
     class Embedding(Base):
@@ -411,33 +420,16 @@ else:
             Deep-merge ``updates`` into existing extra metadata and persist.
             Nested dicts are merged recursively; other values overwrite.
             """
-
-            def _deep_merge(base: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
-                for k, v in new.items():
-                    if k in base and isinstance(base[k], dict) and isinstance(v, dict):
-                        base[k] = _deep_merge(base[k], v)
-                    else:
-                        base[k] = v
-                return base
-
-            base: dict[str, Any] = self.get_extra() or {}
-            if not isinstance(base, dict):
-                base = {}
-            merged = _deep_merge(base, updates)
+            base_dict: dict[str, Any] = self.get_extra() or {}
+            if not isinstance(base_dict, dict):
+                base_dict = {}
+            merged = _deep_merge(base_dict, updates)
             self.set_extra(merged)
             return merged
 
         @property
         def review_label(self) -> str | None:
-            extra = self.get_extra() or {}
-            if not isinstance(extra, dict):
-                return None
-            review = extra.get("review")
-            if isinstance(review, dict):
-                label = review.get("label")
-                if label:
-                    return str(label)
-            return None
+            return _extract_review_label(self.get_extra())
 
 
     @dataclass

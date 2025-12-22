@@ -21,8 +21,10 @@
       <button type="submit">Delete individual</button>
     </form>
 
-    <p class="muted">Total visits: {{ total }} · Last seen (UTC): {{ last_seen or "" }}</p>
-    <p class="muted">Total visits: {{ total }} · Last seen (local): <span data-utc-ts="{{ last_seen or '' }}">{{ last_seen or "" }}</span></p>
+    <p class="muted">
+      Total visits: {{ total }} · Last seen:
+      <span data-utc-ts="{{ last_seen or '' }}">{{ last_seen or "" }}</span> (local) · {{ last_seen or "" }} (UTC)
+    </p>
 
     <h3>Visits by hour (local)</h3>
     <div class="heatmap">
