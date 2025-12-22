@@ -241,6 +241,8 @@ a:hover { text-decoration: underline; }
 
 .cal-wrap img {
   max-width: 100%;
+  touch-action: none;
+  cursor: crosshair;
   border-radius: 14px;
   border: 1px solid var(--border);
   display: block;
@@ -253,6 +255,7 @@ a:hover { text-decoration: underline; }
 
 #current-roi-box {
   position: absolute;
+  z-index: 2;
   border: 2px dashed #ff4444;
   border-radius: 10px;
   pointer-events: none;
@@ -261,6 +264,7 @@ a:hover { text-decoration: underline; }
 
 #proposed-roi-box {
   position: absolute;
+  z-index: 2;
   border: 2px dashed #44ff44;
   border-radius: 10px;
   pointer-events: none;
