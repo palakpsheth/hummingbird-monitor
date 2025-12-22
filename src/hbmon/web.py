@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import tarfile
 import time
 from datetime import timezone
@@ -133,6 +134,19 @@ def _as_utc_str(dt) -> str | None:
     return dt.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def paginate(total_count: int, page: int, page_size: int, max_page_size: int = 100) -> tuple[int, int, int, int]:
+    """
+    Clamp page/page_size and return (page, page_size, total_pages, offset).
+    total_pages is at least 1 even when there are zero rows.
+    """
+    safe_total = max(0, int(total_count))
+    size = max(1, min(int(page_size), max_page_size))
+    total_pages = max(1, math.ceil(safe_total / size))
+    current = max(1, min(int(page), total_pages))
+    offset = (current - 1) * size
+    return current, size, total_pages, offset
+
+
 # ----------------------------
 # App factory
 # ----------------------------
@@ -174,7 +188,12 @@ def make_app() -> Any:
     # ----------------------------
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    def index(
+        request: Request,
+        page: int = 1,
+        page_size: int = 10,
+        db: Session = Depends(get_db),
+    ) -> HTMLResponse:
         s = load_settings()
         title = "Hummingbird Monitor"
 
@@ -189,15 +208,30 @@ def make_app() -> Any:
         for iid, name, visits, last_seen in top_inds:
             top_inds_out.append((int(iid), str(name), int(visits), _as_utc_str(last_seen)))
 
-        recent = db.execute(
-            select(Observation).order_by(desc(Observation.ts)).limit(24)
-        ).scalars().all()
+        total_recent = db.execute(select(func.count(Observation.id))).scalar_one()
+        current_page, clamped_page_size, total_pages, offset = paginate(
+            total_recent, page=page, page_size=page_size, max_page_size=200
+        )
+
+        recent = (
+            db.execute(
+                select(Observation)
+                .order_by(desc(Observation.ts))
+                .offset(offset)
+                .limit(clamped_page_size)
+            )
+            .scalars()
+            .all()
+        )
 
         for o in recent:
             # attach computed presentation attrs (not in DB)
             o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
 
-        last_capture_utc = recent[0].ts_utc if recent else None
+        latest_ts = db.execute(
+            select(Observation.ts).order_by(desc(Observation.ts)).limit(1)
+        ).scalar_one_or_none()
+        last_capture_utc = _as_utc_str(latest_ts) if latest_ts else None
 
         roi_str = roi_to_str(s.roi) if s.roi else ""
         rtsp = s.rtsp_url or ""
@@ -209,6 +243,11 @@ def make_app() -> Any:
                 "title": title,
                 "top_inds": top_inds_out,
                 "recent": recent,
+                "recent_page": current_page,
+                "recent_page_size": clamped_page_size,
+                "recent_total_pages": total_pages,
+                "recent_total": int(total_recent),
+                "recent_page_size_options": [10, 20, 50, 100],
                 "roi_str": roi_str,
                 "rtsp_url": rtsp,
                 "last_capture_utc": last_capture_utc,
