@@ -61,7 +61,7 @@ def test_paginate_bounds(monkeypatch):
 
     # page should clamp to last page when requesting beyond range
     page, size, total_pages, offset = web.paginate(total_count=15, page=5, page_size=4)
-    assert (page, total_pages, offset) == (4, 4, 12)
+    assert (page, size, total_pages, offset) == (4, 4, 4, 12)
 
 
 def test_build_hour_heatmap_levels(monkeypatch):
