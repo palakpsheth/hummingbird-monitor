@@ -136,8 +136,23 @@ def _as_utc_str(dt) -> str | None:
 
 def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
     """
-    Validate and coerce detection sensitivity inputs from the config form.
-    Returns (parsed_values, errors).
+    Validate and coerce detection/ML tuning inputs from the config form.
+
+    Parameters
+    ----------
+    raw: dict[str, str]
+        Form values keyed by the expected field names. Values are parsed as:
+        - detect_conf, detect_iou: float in [0.05, 0.95]
+        - min_box_area: int in [1, 200000]
+        - cooldown_seconds: float in [0.0, 120.0]
+        - min_species_prob, match_threshold, ema_alpha: float in [0.0, 1.0]
+
+    Returns
+    -------
+    tuple[dict[str, Any], list[str]]
+        Parsed numeric values (floats/ints) and a list of validation error
+        messages such as "Detection confidence must be a number." or
+        "Minimum box area must be between 1 and 200000.".
     """
     parsed: dict[str, Any] = {}
     errors: list[str] = []
@@ -179,6 +194,8 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
     parse_float("ema_alpha", "EMA alpha", 0.0, 1.0)
 
     return parsed, errors
+
+
 def paginate(total_count: int, page: int, page_size: int, max_page_size: int = 100) -> tuple[int, int, int, int]:
     """
     Clamp page/page_size and return (page, page_size, total_pages, offset).
@@ -232,15 +249,15 @@ def make_app() -> Any:
     # UI routes
     # ----------------------------
 
-    def _config_form_values(s, raw: dict[str, str] | None = None) -> dict[str, str]:
+    def _config_form_values(settings, raw: dict[str, str] | None = None) -> dict[str, str]:
         vals = {
-            "detect_conf": f"{float(s.detect_conf):.2f}",
-            "detect_iou": f"{float(s.detect_iou):.2f}",
-            "min_box_area": str(int(s.min_box_area)),
-            "cooldown_seconds": f"{float(s.cooldown_seconds):.2f}",
-            "min_species_prob": f"{float(s.min_species_prob):.2f}",
-            "match_threshold": f"{float(s.match_threshold):.2f}",
-            "ema_alpha": f"{float(s.ema_alpha):.2f}",
+            "detect_conf": f"{float(settings.detect_conf):.2f}",
+            "detect_iou": f"{float(settings.detect_iou):.2f}",
+            "min_box_area": str(int(settings.min_box_area)),
+            "cooldown_seconds": f"{float(settings.cooldown_seconds):.2f}",
+            "min_species_prob": f"{float(settings.min_species_prob):.2f}",
+            "match_threshold": f"{float(settings.match_threshold):.2f}",
+            "ema_alpha": f"{float(settings.ema_alpha):.2f}",
         }
         if raw:
             for k, v in raw.items():
