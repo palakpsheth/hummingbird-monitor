@@ -72,7 +72,7 @@ try:
     from sqlalchemy.orm import Session  # type: ignore
     _SQLA_AVAILABLE = True
 except Exception:  # pragma: no cover
-    desc = func = select = None  # type: ignore
+    delete = desc = func = select = None  # type: ignore
     Session = object  # type: ignore
     OperationalError = Exception  # type: ignore
     _SQLA_AVAILABLE = False
