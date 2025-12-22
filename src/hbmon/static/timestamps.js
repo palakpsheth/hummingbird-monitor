@@ -5,7 +5,7 @@
   function formatLocal(iso) {
     if (!iso) return "";
     let txt = String(iso).trim();
-    if (!/[zZ]|[+-]\d{2}:?\d{2}$/.test(txt)) {
+    if (!/[zZ]$|[+-]\d{2}:\d{2}$|[+-]\d{4}$/.test(txt)) {
       txt = txt.replace(" ", "T") + "Z";
     }
     const d = new Date(txt);
