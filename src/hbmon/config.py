@@ -289,6 +289,7 @@ def load_settings(*, apply_env_overrides: bool = True, seed_env_if_missing: bool
         save_settings(s)
         if apply_env_overrides and not env_applied:
             s = s.with_env_overrides()
+        # when env_applied is True, overrides are already reflected
         return s
 
     try:
@@ -301,6 +302,7 @@ def load_settings(*, apply_env_overrides: bool = True, seed_env_if_missing: bool
         s = _settings_from_env(last_updated_utc=time.time(), use_env=env_applied)
         if apply_env_overrides and not env_applied:
             s = s.with_env_overrides()
+        # when env_applied is True, overrides are already reflected
         return s
 
     if apply_env_overrides:
