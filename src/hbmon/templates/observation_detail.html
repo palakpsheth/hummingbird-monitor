@@ -4,7 +4,14 @@
 
   <div class="grid2">
     <div class="card">
-      <img class="bigimg" src="/media/{{ o.snapshot_path }}" alt="snapshot" />
+      <div class="zoom-frame" data-zoom-container>
+        <div class="zoom-controls">
+          <button type="button" data-zoom-out aria-label="Zoom out">−</button>
+          <button type="button" data-zoom-in aria-label="Zoom in">+</button>
+          <button type="button" data-zoom-reset aria-label="Reset zoom">Reset</button>
+        </div>
+        <img class="bigimg" data-zoom-target src="/media/{{ o.snapshot_path }}" alt="snapshot" />
+      </div>
 
       <div class="meta2">
         <div>
