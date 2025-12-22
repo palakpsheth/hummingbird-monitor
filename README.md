@@ -6,6 +6,8 @@
      the SVG file directly ensures the badge always reflects the latest test
      coverage without relying on an external badge service. -->
 ![Coverage](coverage.svg)
+[![CI](https://github.com/palakpsheth/hummingbird-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/palakpsheth/hummingbird-monitor/actions/workflows/ci.yml)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 
 
 LAN-only hummingbird monitoring system designed for a **Linux x64 mini PC**.
