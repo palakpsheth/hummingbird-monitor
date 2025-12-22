@@ -23,7 +23,7 @@
 
     <p class="muted">
       Total visits: {{ total }} · Last seen:
-      <span data-utc-ts="{{ last_seen or '' }}">{{ last_seen or "" }}</span> (local) · {{ last_seen or "" }} (UTC)
+      <span data-utc-ts="{{ last_seen or '' }}">{{ last_seen or "" }}</span> (local) · {{ (last_seen|replace(' ', 'T') ~ 'Z') if last_seen else "" }} (UTC)
     </p>
 
     <h3>Visits by hour (local)</h3>
