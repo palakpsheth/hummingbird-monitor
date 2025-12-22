@@ -441,6 +441,22 @@ def make_app() -> Any:
         label: str = Form(...),
         db: Session = Depends(get_db),
     ) -> RedirectResponse:
+        """Update the review label for a single observation and redirect to its detail page.
+
+        This endpoint is intended for the observation detail UI. It accepts a form field
+        ``label`` for the review label, normalizes it (strip + lower-case), and only
+        persists it if it is contained in :data:`ALLOWED_REVIEW_LABELS`. Labels longer
+        than 64 characters are rejected with HTTP 400.
+
+        If a valid review label is provided, the observation's ``extra`` JSON is updated
+        to include a ``"review"`` section with the label and a ``"labeled_at_utc"``
+        timestamp. If the provided label is empty or not allowed, any existing review
+        label and timestamp are removed from ``extra`` (and the ``"review"`` section is
+        dropped entirely if it becomes empty).
+
+        On success, the change is committed and the client is redirected (HTTP 303) back
+        to ``/observations/{obs_id}``.
+        """
         o = db.get(Observation, obs_id)
         if o is None:
             raise HTTPException(status_code=404, detail="Observation not found")
