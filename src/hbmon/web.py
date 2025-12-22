@@ -30,6 +30,7 @@ Notes:
 from __future__ import annotations
 
 import csv
+import json
 import io
 import math
 import tarfile
@@ -126,6 +127,24 @@ def build_hour_heatmap(hours_rows: list[tuple[int, int]]) -> list[dict[str, int]
         return 5
 
     return [{"hour": h, "count": counts.get(h, 0), "level": lvl(counts.get(h, 0))} for h in range(24)]
+
+
+def pretty_json(text: str | None) -> str | None:
+    """
+    Best-effort pretty formatting of a JSON string.
+
+    Returns the original text if parsing fails.
+    """
+    if not text:
+        return None
+    try:
+        obj = json.loads(text)
+    except Exception:
+        return text
+    try:
+        return json.dumps(obj, indent=4, sort_keys=True)
+    except Exception:
+        return text
 
 
 def _as_utc_str(dt) -> str | None:
@@ -379,6 +398,7 @@ def make_app() -> Any:
             raise HTTPException(status_code=404, detail="Observation not found")
 
         o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
+        o.extra_json_pretty = pretty_json(o.extra_json)  # type: ignore[attr-defined]
         return templates.TemplateResponse(
             "observation_detail.html",
             {"request": request, "title": f"Observation {o.id}", "o": o},

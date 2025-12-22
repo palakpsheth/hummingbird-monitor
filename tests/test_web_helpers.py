@@ -95,3 +95,16 @@ def test_build_hour_heatmap_levels(monkeypatch):
     # Hours not provided default to level 0
     for h in range(6, 24):
         assert level_map[h] == 0
+
+
+def test_pretty_json(monkeypatch):
+    web = _import_web(monkeypatch)
+    pretty = web.pretty_json('{"b":2,"a":1}')
+    assert pretty is not None
+    assert "\n" in pretty
+    # Indent should add 4 spaces
+    assert "    \"a\": 1" in pretty
+
+    # Fallback to original on parse errors
+    bad = web.pretty_json("{not-json}")
+    assert bad == "{not-json}"

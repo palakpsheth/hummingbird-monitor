@@ -14,25 +14,24 @@
       </div>
 
       <div class="meta2">
-        <div>
+        <div class="inline" style="gap: 8px; flex-wrap: wrap;">
           <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
           <span class="muted">p={{ "%.3f"|format(o.species_prob) }}</span>
-        </div>
-
-        <div style="margin-top:8px;">
           {% set hue = ((o.individual_id or 0) * 47) % 360 %}
-          Individual:
-          <a href="/individuals/{{ o.individual_id }}">
-            <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
-          </a>
-          <span class="muted">match={{ "%.3f"|format(o.match_score) }}</span>
+          <span class="inline" style="align-items:center; gap:6px;">
+            <span class="muted">Ind:</span>
+            <a href="/individuals/{{ o.individual_id }}">
+              <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
+            </a>
+            <span class="muted">match={{ "%.3f"|format(o.match_score) }}</span>
+          </span>
         </div>
 
         <div style="margin-top:8px;">
           Timestamp (local): <span class="muted" data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span>
         </div>
 
-        <div style="margin-top:10px;" class="inline">
+        <div class="inline" style="margin-top:10px;">
           <a href="/media/{{ o.video_path }}">Open video</a>
           <span class="muted">·</span>
           <a href="/observations">Back to observations</a>
@@ -50,9 +49,9 @@
         <div class="muted">camera: {{ o.camera_name or "(unknown)" }}</div>
       </div>
 
-      {% if o.extra_json %}
+      {% if o.extra_json_pretty %}
         <h3>Raw metadata</h3>
-        <pre class="pre">{{ o.extra_json }}</pre>
+        <pre class="pre">{{ o.extra_json_pretty }}</pre>
       {% else %}
         <p class="muted">No extra metadata captured for this observation.</p>
       {% endif %}
