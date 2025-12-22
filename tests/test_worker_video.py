@@ -8,7 +8,13 @@ import hbmon.worker as worker
 
 
 def _setup_writer(monkeypatch, open_map: dict[str, bool], writes: list[tuple[Path, str]]):
-    """Configure dummy cv2 VideoWriter; open_map controls isOpened per fourcc and records writes."""
+    """
+    Configure dummy cv2 VideoWriter.
+
+    monkeypatch: pytest monkeypatch fixture used to patch cv2 references.
+    open_map: map of fourcc string -> isOpened return value.
+    writes: list collecting (Path, fourcc) tuples for each frame write.
+    """
     class DummyWriter:
         def __init__(self, path, fourcc, fps, size) -> None:
             self.path = Path(path)
@@ -35,7 +41,11 @@ def _setup_writer(monkeypatch, open_map: dict[str, bool], writes: list[tuple[Pat
 
 
 def _dummy_cap(frames: list[np.ndarray]):
-    """Return a dummy VideoCapture that yields provided frames then stops."""
+    """
+    Return a dummy VideoCapture that yields provided frames then stops.
+
+    frames: list of numpy frames to emit.
+    """
     class DummyCap:
         def __init__(self) -> None:
             self.idx = 0
