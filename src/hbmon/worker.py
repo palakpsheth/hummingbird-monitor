@@ -36,7 +36,7 @@ import numpy as np
 
 from hbmon.clip_model import ClipModel
 from hbmon.clustering import l2_normalize, update_prototype_ema, cosine_distance
-from hbmon.config import Settings, ensure_dirs, load_settings, snapshots_dir, clips_dir
+from hbmon.config import Settings, ensure_dirs, load_settings, snapshots_dir
 from hbmon.db import init_db, session_scope
 from hbmon.models import Embedding, Individual, Observation
 
