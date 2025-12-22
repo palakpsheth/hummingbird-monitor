@@ -69,7 +69,7 @@ except Exception:  # pragma: no cover
     _FASTAPI_AVAILABLE = False
 
 try:
-    from sqlalchemy import desc, func, select  # type: ignore
+    from sqlalchemy import delete, desc, func, select  # type: ignore
     from sqlalchemy.orm import Session  # type: ignore
     _SQLA_AVAILABLE = True
 except Exception:  # pragma: no cover

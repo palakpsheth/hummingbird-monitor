@@ -41,7 +41,7 @@ except Exception:  # pragma: no cover
     sessionmaker = None  # type: ignore
     _SQLALCHEMY_AVAILABLE = False
 
-from hbmon.config import db_path, env_str, ensure_dirs
+from hbmon.config import db_path, env_int, env_str, ensure_dirs
 
 
 # Session factory is initialized lazily to allow env overrides before first use.
