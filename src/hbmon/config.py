@@ -280,17 +280,34 @@ def _settings_from_env(
     return s
 
 
+def _apply_env_overrides_if_needed(
+    s: Settings,
+    *,
+    apply_env_overrides: bool,
+    env_applied: bool,
+) -> Settings:
+    if apply_env_overrides and not env_applied:
+        return s.with_env_overrides()
+    return s
+
+
+def _seed_settings(seed_env_if_missing: bool) -> tuple[Settings, bool]:
+    env_applied = seed_env_if_missing
+    s = _settings_from_env(last_updated_utc=time.time(), use_env=env_applied)
+    return s, env_applied
+
+
 def load_settings(*, apply_env_overrides: bool = True, seed_env_if_missing: bool = True) -> Settings:
     ensure_dirs()
     p = config_path()
     if not p.exists():
-        env_applied = seed_env_if_missing
-        s = _settings_from_env(last_updated_utc=time.time(), use_env=env_applied)
+        s, env_applied = _seed_settings(seed_env_if_missing)
         save_settings(s)
-        if apply_env_overrides and not env_applied:
-            s = s.with_env_overrides()
-        # when env_applied is True, overrides are already reflected
-        return s
+        return _apply_env_overrides_if_needed(
+            s,
+            apply_env_overrides=apply_env_overrides,
+            env_applied=env_applied,
+        )
 
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
@@ -298,12 +315,12 @@ def load_settings(*, apply_env_overrides: bool = True, seed_env_if_missing: bool
             raise ValueError("config.json root is not an object")
         s = _settings_from_dict(data)
     except Exception:
-        env_applied = seed_env_if_missing
-        s = _settings_from_env(last_updated_utc=time.time(), use_env=env_applied)
-        if apply_env_overrides and not env_applied:
-            s = s.with_env_overrides()
-        # when env_applied is True, overrides are already reflected
-        return s
+        s, env_applied = _seed_settings(seed_env_if_missing)
+        return _apply_env_overrides_if_needed(
+            s,
+            apply_env_overrides=apply_env_overrides,
+            env_applied=env_applied,
+        )
 
     if apply_env_overrides:
         s = s.with_env_overrides()
