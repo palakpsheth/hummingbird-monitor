@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import csv
 import json
+from json import JSONDecodeError
 import io
 import math
 import tarfile
@@ -139,11 +140,11 @@ def pretty_json(text: str | None) -> str | None:
         return None
     try:
         obj = json.loads(text)
-    except Exception:
+    except JSONDecodeError:
         return text
     try:
         return json.dumps(obj, indent=4, sort_keys=True)
-    except Exception:
+    except (TypeError, ValueError):
         return text
 
 
