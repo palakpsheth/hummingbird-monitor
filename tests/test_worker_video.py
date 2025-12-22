@@ -8,7 +8,7 @@ import hbmon.worker as worker
 
 
 def _setup_writer(monkeypatch, open_map: dict[str, bool], writes: list[tuple[Path, str]]):
-    """Configure dummy cv2 VideoWriter that opens based on fourcc map."""
+    """Configure dummy cv2 VideoWriter; open_map controls isOpened per fourcc and records writes."""
     class DummyWriter:
         def __init__(self, path, fourcc, fps, size) -> None:
             self.path = Path(path)
@@ -63,7 +63,7 @@ def test_record_clip_prefers_avc1(monkeypatch, tmp_path):
     assert writes[0][1] == "avc1"
 
 
-def test_record_clip_fallbacks_to_mp4v(monkeypatch, tmp_path):
+def test_record_clip_falls_back_to_mp4v(monkeypatch, tmp_path):
     frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
     writes: list[tuple[Path, str]] = []
     _setup_writer(monkeypatch, {"avc1": False, "mp4v": True}, writes)
@@ -76,7 +76,7 @@ def test_record_clip_fallbacks_to_mp4v(monkeypatch, tmp_path):
     assert writes[0][1] == "mp4v"
 
 
-def test_record_clip_fallbacks_to_avi(monkeypatch, tmp_path):
+def test_record_clip_falls_back_to_avi(monkeypatch, tmp_path):
     frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
     writes: list[tuple[Path, str]] = []
     _setup_writer(monkeypatch, {"avc1": False, "mp4v": False, "XVID": True}, writes)
