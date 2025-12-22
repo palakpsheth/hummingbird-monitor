@@ -22,7 +22,7 @@
       <span data-utc-ts="{{ last_seen or '' }}">{{ last_seen or "" }}</span>
     </p>
 
-    <h3>Visits by hour (UTC)</h3>
+    <h3>Visits by hour (local)</h3>
     <div class="heatmap">
       {% for cell in heatmap %}
         <div class="heat level-{{ cell.level }}">
