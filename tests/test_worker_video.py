@@ -8,6 +8,7 @@ import hbmon.worker as worker
 
 
 def _setup_writer(monkeypatch, open_map: dict[str, bool], writes: list[tuple[Path, str]]):
+    """Configure dummy cv2 VideoWriter that opens based on fourcc map."""
     class DummyWriter:
         def __init__(self, path, fourcc, fps, size) -> None:
             self.path = Path(path)
@@ -34,6 +35,7 @@ def _setup_writer(monkeypatch, open_map: dict[str, bool], writes: list[tuple[Pat
 
 
 def _dummy_cap(frames: list[np.ndarray]):
+    """Return a dummy VideoCapture that yields provided frames then stops."""
     class DummyCap:
         def __init__(self) -> None:
             self.idx = 0
