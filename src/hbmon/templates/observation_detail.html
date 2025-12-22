@@ -41,18 +41,12 @@
             {% endif %}
           </div>
           <div class="inline">
-            <form method="post" action="/observations/{{ o.id }}/label">
-              <input type="hidden" name="label" value="true_positive" />
-              <button type="submit">Mark true positive</button>
-            </form>
-            <form method="post" action="/observations/{{ o.id }}/label">
-              <input type="hidden" name="label" value="false_positive" />
-              <button type="submit">Mark false positive</button>
-            </form>
-            <form method="post" action="/observations/{{ o.id }}/label">
-              <input type="hidden" name="label" value="false_negative" />
-              <button type="submit">Mark false negative</button>
-            </form>
+            {% for lab in allowed_review_labels %}
+              <form method="post" action="/observations/{{ o.id }}/label">
+                <input type="hidden" name="label" value="{{ lab }}" />
+                <button type="submit">Mark {{ lab.replace('_', ' ') }}</button>
+              </form>
+            {% endfor %}
             <form method="post" action="/observations/{{ o.id }}/label">
               <input type="hidden" name="label" value="" />
               <button type="submit">Clear label</button>

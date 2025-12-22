@@ -38,6 +38,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+ALLOWED_REVIEW_LABELS = ["true_positive", "false_positive", "false_negative"]
+
 """
 FastAPI web application for hbmon.
 
@@ -188,7 +190,7 @@ def make_app() -> Any:
             return
         p = media_dir() / rel_path
         try:
-            p.unlink(missing_ok=True)  # type: ignore[arg-type]
+            p.unlink(missing_ok=True)
         except Exception:
             try:
                 if p.exists():
@@ -328,7 +330,13 @@ def make_app() -> Any:
         extra = o.get_extra() or {}
         return templates.TemplateResponse(
             "observation_detail.html",
-            {"request": request, "title": f"Observation {o.id}", "o": o, "extra": extra},
+            {
+                "request": request,
+                "title": f"Observation {o.id}",
+                "o": o,
+                "extra": extra,
+                "allowed_review_labels": ALLOWED_REVIEW_LABELS,
+            },
         )
 
     @app.post("/observations/{obs_id}/label")
@@ -342,7 +350,7 @@ def make_app() -> Any:
             raise HTTPException(status_code=404, detail="Observation not found")
 
         clean = (label or "").strip().lower()
-        allowed = {"true_positive", "false_positive", "false_negative"}
+        allowed = set(ALLOWED_REVIEW_LABELS)
         review_label = clean if clean in allowed else ""
 
         extra = o.get_extra() or {}

@@ -407,7 +407,7 @@ else:
             return base
 
         @property
-        def review_label(self) -> Optional[str]:
+        def review_label(self) -> str | None:
             extra = self.get_extra() or {}
             if not isinstance(extra, dict):
                 return None
