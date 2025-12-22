@@ -30,6 +30,38 @@
           <span class="muted">·</span>
           <a href="/observations">Back to observations</a>
         </div>
+
+        <div class="stack" style="margin-top:12px;">
+          <div class="muted">
+            Human label:
+            {% if o.review_label %}
+              <span class="badge">{{ o.review_label.replace("_", " ") }}</span>
+            {% else %}
+              not set
+            {% endif %}
+          </div>
+          <div class="inline">
+            <form method="post" action="/observations/{{ o.id }}/label">
+              <input type="hidden" name="label" value="true_positive" />
+              <button type="submit">Mark true positive</button>
+            </form>
+            <form method="post" action="/observations/{{ o.id }}/label">
+              <input type="hidden" name="label" value="false_positive" />
+              <button type="submit">Mark false positive</button>
+            </form>
+            <form method="post" action="/observations/{{ o.id }}/label">
+              <input type="hidden" name="label" value="false_negative" />
+              <button type="submit">Mark false negative</button>
+            </form>
+            <form method="post" action="/observations/{{ o.id }}/label">
+              <input type="hidden" name="label" value="" />
+              <button type="submit">Clear label</button>
+            </form>
+          </div>
+          <form method="post" action="/observations/{{ o.id }}/delete" onsubmit="return confirm('Delete this observation?');">
+            <button type="submit">Delete this observation</button>
+          </form>
+        </div>
       </div>
     </div>
 
@@ -43,7 +75,31 @@
         <div class="muted">camera: {{ o.camera_name or "(unknown)" }}</div>
       </div>
 
-      {% if o.extra_json %}
+      {% if extra %}
+        {% if extra.sensitivity %}
+          <h3>Sensitivity parameters</h3>
+          <div class="stack">
+            {% for k, v in extra.sensitivity.items() %}
+              <div class="muted">{{ k }}: <strong>{{ v }}</strong></div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        {% if extra.detection %}
+          <h3>Detection metadata</h3>
+          <div class="stack">
+            {% if extra.detection.box_confidence is defined %}
+              <div class="muted">Detector confidence: {{ "%.3f"|format(extra.detection.box_confidence) }}</div>
+            {% endif %}
+            {% if extra.detection.bbox_xyxy is defined %}
+              <div class="muted">BBox (xyxy): {{ extra.detection.bbox_xyxy }}</div>
+            {% endif %}
+            {% if extra.detection.roi_offset_xy is defined %}
+              <div class="muted">ROI offset: {{ extra.detection.roi_offset_xy }}</div>
+            {% endif %}
+          </div>
+        {% endif %}
+
         <h3>Raw metadata</h3>
         <pre class="pre">{{ o.extra_json }}</pre>
       {% else %}

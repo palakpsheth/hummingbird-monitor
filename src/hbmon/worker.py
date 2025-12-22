@@ -538,6 +538,24 @@ def run_worker() -> None:
                     ema_alpha=float(s.ema_alpha),
                 )
 
+            extra_data = {
+                "sensitivity": {
+                    "detect_conf": float(s.detect_conf),
+                    "detect_iou": float(s.detect_iou),
+                    "min_box_area": int(s.min_box_area),
+                    "cooldown_seconds": float(s.cooldown_seconds),
+                    "min_species_prob": float(s.min_species_prob),
+                    "match_threshold": float(s.match_threshold),
+                    "ema_alpha": float(s.ema_alpha),
+                },
+                "detection": {
+                    "box_confidence": float(det_full.conf),
+                    "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
+                    "roi_offset_xy": [int(xoff), int(yoff)],
+                },
+                "review": {"label": None},
+            }
+
             obs = Observation(
                 ts=utcnow(),
                 camera_name=s.camera_name,
@@ -553,6 +571,7 @@ def run_worker() -> None:
                 video_path=clip_rel if clip_rel else "clips/none.mp4",
                 extra_json=None,
             )
+            obs.set_extra(extra_data)
             db.add(obs)
             db.flush()  # get obs.id
 

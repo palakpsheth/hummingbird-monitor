@@ -34,7 +34,7 @@ import io
 import math
 import tarfile
 import time
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -183,6 +183,30 @@ def make_app() -> Any:
     mdir.mkdir(parents=True, exist_ok=True)
     app.mount("/media", StaticFiles(directory=str(mdir)), name="media")
 
+    def _safe_unlink_media(rel_path: str | None) -> None:
+        if not rel_path:
+            return
+        p = media_dir() / rel_path
+        try:
+            p.unlink(missing_ok=True)  # type: ignore[arg-type]
+        except Exception:
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                pass
+
+    def _recompute_individual_stats(db: Session, individual_id: int) -> None:
+        ind = db.get(Individual, individual_id)
+        if ind is None:
+            return
+        rows = db.execute(
+            select(func.count(Observation.id), func.max(Observation.ts))
+            .where(Observation.individual_id == individual_id)
+        ).one()
+        ind.visit_count = int(rows[0] or 0)
+        ind.last_seen_at = rows[1]
+
     # ----------------------------
     # UI routes
     # ----------------------------
@@ -301,10 +325,69 @@ def make_app() -> Any:
             raise HTTPException(status_code=404, detail="Observation not found")
 
         o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
+        extra = o.get_extra() or {}
         return templates.TemplateResponse(
             "observation_detail.html",
-            {"request": request, "title": f"Observation {o.id}", "o": o},
+            {"request": request, "title": f"Observation {o.id}", "o": o, "extra": extra},
         )
+
+    @app.post("/observations/{obs_id}/label")
+    def label_observation(
+        obs_id: int,
+        label: str = Form(...),
+        db: Session = Depends(get_db),
+    ) -> RedirectResponse:
+        o = db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        clean = (label or "").strip().lower()
+        allowed = {"true_positive", "false_positive", "false_negative"}
+        review_label = clean if clean in allowed else ""
+
+        extra = o.get_extra() or {}
+        if not isinstance(extra, dict):
+            extra = {}
+        review = extra.get("review")
+        if not isinstance(review, dict):
+            review = {}
+
+        if review_label:
+            review["label"] = review_label
+            review["labeled_at_utc"] = _as_utc_str(datetime.now(timezone.utc))
+        else:
+            review.pop("label", None)
+            review.pop("labeled_at_utc", None)
+        extra["review"] = review
+        o.set_extra(extra)
+        db.commit()
+
+        return RedirectResponse(url=f"/observations/{obs_id}", status_code=303)
+
+    @app.post("/observations/{obs_id}/delete")
+    def delete_observation(obs_id: int, db: Session = Depends(get_db)) -> RedirectResponse:
+        o = db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        ind_id = o.individual_id
+
+        # Clean up media
+        _safe_unlink_media(o.snapshot_path)
+        _safe_unlink_media(o.video_path)
+
+        embs = db.execute(select(Embedding).where(Embedding.observation_id == obs_id)).scalars().all()
+        for e in embs:
+            db.delete(e)
+
+        db.delete(o)
+        db.commit()
+
+        if ind_id is not None:
+            _recompute_individual_stats(db, int(ind_id))
+            db.commit()
+
+        return RedirectResponse(url="/observations", status_code=303)
 
     @app.get("/individuals", response_class=HTMLResponse)
     def individuals(
@@ -407,6 +490,34 @@ def make_app() -> Any:
         db.commit()
 
         return RedirectResponse(url=f"/individuals/{individual_id}", status_code=303)
+
+    @app.post("/individuals/{individual_id}/delete")
+    def delete_individual(individual_id: int, db: Session = Depends(get_db)) -> RedirectResponse:
+        ind = db.get(Individual, individual_id)
+        if ind is None:
+            raise HTTPException(status_code=404, detail="Individual not found")
+
+        obs_rows = db.execute(
+            select(Observation.id, Observation.snapshot_path, Observation.video_path)
+            .where(Observation.individual_id == individual_id)
+        ).all()
+        obs_ids = [int(r[0]) for r in obs_rows]
+        for _, snap, vid in obs_rows:
+            _safe_unlink_media(snap)
+            _safe_unlink_media(vid)
+
+        if obs_ids:
+            embs = db.execute(select(Embedding).where(Embedding.observation_id.in_(obs_ids))).scalars().all()
+            for e in embs:
+                db.delete(e)
+            obs_to_delete = db.execute(select(Observation).where(Observation.id.in_(obs_ids))).scalars().all()
+            for o in obs_to_delete:
+                db.delete(o)
+
+        db.delete(ind)
+        db.commit()
+
+        return RedirectResponse(url="/individuals", status_code=303)
 
     @app.post("/individuals/{individual_id}/refresh_embedding")
     def refresh_embedding(individual_id: int, db: Session = Depends(get_db)) -> RedirectResponse:

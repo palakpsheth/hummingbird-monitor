@@ -247,6 +247,30 @@ if _SQLALCHEMY_AVAILABLE:
                 return None
             return None
 
+        def merge_extra(self, updates: dict[str, Any]) -> dict[str, Any]:
+            """
+            Merge ``updates`` into existing extra metadata and persist.
+            """
+            base = self.get_extra() or {}
+            if isinstance(base, dict):
+                base.update(updates)
+            else:
+                base = updates
+            self.set_extra(base)
+            return base
+
+        @property
+        def review_label(self) -> str | None:
+            extra = self.get_extra() or {}
+            if not isinstance(extra, dict):
+                return None
+            review = extra.get("review")
+            if isinstance(review, dict):
+                label = review.get("label")
+                if label:
+                    return str(label)
+            return None
+
 
     class Embedding(Base):
         """
@@ -371,6 +395,27 @@ else:
                     return obj
             except Exception:
                 return None
+            return None
+
+        def merge_extra(self, updates: dict[str, Any]) -> dict[str, Any]:
+            base = self.get_extra() or {}
+            if isinstance(base, dict):
+                base.update(updates)
+            else:
+                base = updates
+            self.set_extra(base)
+            return base
+
+        @property
+        def review_label(self) -> Optional[str]:
+            extra = self.get_extra() or {}
+            if not isinstance(extra, dict):
+                return None
+            review = extra.get("review")
+            if isinstance(review, dict):
+                label = review.get("label")
+                if label:
+                    return str(label)
             return None
 
 

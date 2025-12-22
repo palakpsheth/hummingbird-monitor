@@ -17,6 +17,10 @@
       <button type="submit">Split into A/B (review)</button>
     </form>
 
+    <form method="post" action="/individuals/{{ individual.id }}/delete" class="inline" style="margin-top:10px;" onsubmit="return confirm('Delete this individual and all related observations?');">
+      <button type="submit">Delete individual</button>
+    </form>
+
     <p class="muted">Total visits: {{ total }} · Last seen (UTC): {{ last_seen or "" }}</p>
 
     <h3>Visits by hour (UTC)</h3>
