@@ -14,7 +14,7 @@ Environment:
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Iterator, Optional, Callable
+from typing import Iterator, Optional, Callable, Any
 
 """
 Database helpers for hbmon.
@@ -91,7 +91,7 @@ def get_engine() -> Engine:
     )  # type: ignore[assignment]
 
     if url.startswith("sqlite:"):
-        def _set_sqlite_pragmas(dbapi_connection, connection_record):  # type: ignore[override]
+        def _set_sqlite_pragmas(dbapi_connection: Any, connection_record: Any) -> None:  # type: ignore[override]
             try:
                 cursor = dbapi_connection.cursor()
                 cursor.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")

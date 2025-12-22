@@ -264,6 +264,7 @@ def make_app() -> Any:
             print(f"[web] failed to remove media file {p}")
 
     def _recompute_individual_stats(db: Session, individual_id: int) -> None:
+        """Update visit_count/last_seen_at for an individual. Caller must commit."""
         ind = db.get(Individual, individual_id)
         if ind is None:
             print(f"[web] individual {individual_id} not found while recomputing stats")
@@ -283,6 +284,7 @@ def make_app() -> Any:
             except OperationalError as e:  # pragma: no cover
                 msg = str(e).lower()
                 if "database is locked" in msg and i < retries - 1:
+                    print(f"[web] commit retry due to lock (attempt {i + 1}/{retries})")
                     time.sleep(delay)
                     continue
                 raise

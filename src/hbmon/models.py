@@ -80,6 +80,7 @@ __all__ = [
 def _deep_merge(base: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     """
     Return a new dict containing a deep merge of ``base`` and ``new``.
+    Nested dicts are merged recursively; non-dict values overwrite existing ones.
     Neither input dict is mutated.
     """
     merged: dict[str, Any] = dict(base)
@@ -92,6 +93,15 @@ def _deep_merge(base: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_review_label(extra: Any) -> str | None:
+    """
+    Pull the review label from ``extra`` if present.
+
+    Args:
+        extra: Parsed extra metadata (expected dict).
+
+    Returns:
+        The review label string or ``None`` if missing/invalid.
+    """
     if not extra or not isinstance(extra, dict):
         return None
     review = extra.get("review")
