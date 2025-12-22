@@ -2,36 +2,17 @@ from pathlib import Path
 import types
 
 import numpy as np
+import pytest
 
 import hbmon.worker as worker
 
 
-def test_record_clip_prefers_avc1(monkeypatch, tmp_path):
-    """
-    Ensure clip recording prefers an AVC1/MP4 writer when available so
-    browser playback works without downloading the entire file first.
-    """
-
-    frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
-
-    class DummyCap:
-        def __init__(self) -> None:
-            self.idx = 0
-
-        def read(self):
-            if self.idx < len(frames):
-                f = frames[self.idx]
-                self.idx += 1
-                return True, f
-            return False, None
-
-    writes: list[tuple[Path, str]] = []
-
+def _setup_writer(monkeypatch, open_map: dict[str, bool], writes: list[tuple[Path, str]]):
     class DummyWriter:
         def __init__(self, path, fourcc, fps, size) -> None:
             self.path = Path(path)
             self.fourcc = fourcc
-            self._opened = True
+            self._opened = open_map.get(fourcc, True)
 
         def isOpened(self) -> bool:  # noqa: N802 (OpenCV style)
             return self._opened
@@ -51,10 +32,66 @@ def test_record_clip_prefers_avc1(monkeypatch, tmp_path):
     monkeypatch.setattr(worker, "cv2", fake_cv2)
     monkeypatch.setattr(worker.time, "sleep", lambda _: None)
 
+
+def _dummy_cap(frames: list[np.ndarray]):
+    class DummyCap:
+        def __init__(self) -> None:
+            self.idx = 0
+
+        def read(self):
+            if self.idx < len(frames):
+                f = frames[self.idx]
+                self.idx += 1
+                return True, f
+            return False, None
+
+    return DummyCap()
+
+
+def test_record_clip_prefers_avc1(monkeypatch, tmp_path):
+    frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
+    writes: list[tuple[Path, str]] = []
+    _setup_writer(monkeypatch, {"avc1": True}, writes)
+
     out_path = tmp_path / "clip.mp4"
-    result_path = worker._record_clip_opencv(DummyCap(), out_path, seconds=0.01, max_fps=5.0)
+    result_path = worker._record_clip_opencv(_dummy_cap(frames), out_path, seconds=0.01, max_fps=5.0)
 
     assert result_path.suffix == ".mp4"
-    # First writer should use avc1 for streaming-friendly MP4 files
     assert writes and writes[0][0].suffix == ".mp4"
     assert writes[0][1] == "avc1"
+
+
+def test_record_clip_fallbacks_to_mp4v(monkeypatch, tmp_path):
+    frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
+    writes: list[tuple[Path, str]] = []
+    _setup_writer(monkeypatch, {"avc1": False, "mp4v": True}, writes)
+
+    out_path = tmp_path / "clip.mp4"
+    result_path = worker._record_clip_opencv(_dummy_cap(frames), out_path, seconds=0.01, max_fps=5.0)
+
+    assert result_path.suffix == ".mp4"
+    assert writes and writes[0][0].suffix == ".mp4"
+    assert writes[0][1] == "mp4v"
+
+
+def test_record_clip_fallbacks_to_avi(monkeypatch, tmp_path):
+    frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
+    writes: list[tuple[Path, str]] = []
+    _setup_writer(monkeypatch, {"avc1": False, "mp4v": False, "XVID": True}, writes)
+
+    out_path = tmp_path / "clip.mp4"
+    result_path = worker._record_clip_opencv(_dummy_cap(frames), out_path, seconds=0.01, max_fps=5.0)
+
+    assert result_path.suffix == ".avi"
+    assert writes and writes[0][0].suffix == ".avi"
+    assert writes[0][1] == "XVID"
+
+
+def test_record_clip_raises_when_all_codecs_fail(monkeypatch, tmp_path):
+    frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
+    writes: list[tuple[Path, str]] = []
+    _setup_writer(monkeypatch, {"avc1": False, "mp4v": False, "XVID": False}, writes)
+
+    out_path = tmp_path / "clip.mp4"
+    with pytest.raises(RuntimeError):
+        worker._record_clip_opencv(_dummy_cap(frames), out_path, seconds=0.01, max_fps=5.0)
