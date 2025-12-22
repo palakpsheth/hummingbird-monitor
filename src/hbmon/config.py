@@ -263,20 +263,22 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
     return s
 
 
-def _settings_from_env() -> Settings:
+def _settings_from_env(*, last_updated_utc: float | None = None) -> Settings:
     """
     Build Settings using environment variables as defaults.
     This is used when no config file exists or when a fallback is needed.
     """
-    return Settings().with_env_overrides()
+    s = Settings().with_env_overrides()
+    if last_updated_utc is not None:
+        s.last_updated_utc = float(last_updated_utc)
+    return s
 
 
 def load_settings(*, apply_env_overrides: bool = True) -> Settings:
     ensure_dirs()
     p = config_path()
     if not p.exists():
-        s = _settings_from_env()
-        s.last_updated_utc = time.time()
+        s = _settings_from_env(last_updated_utc=time.time())
         save_settings(s)
         return s.with_env_overrides() if apply_env_overrides else s
 
@@ -286,8 +288,7 @@ def load_settings(*, apply_env_overrides: bool = True) -> Settings:
             raise ValueError("config.json root is not an object")
         s = _settings_from_dict(data)
     except Exception:
-        s = _settings_from_env()
-        s.last_updated_utc = time.time()
+        s = _settings_from_env(last_updated_utc=time.time())
 
     return s.with_env_overrides() if apply_env_overrides else s
 
