@@ -209,7 +209,7 @@ def make_app() -> Any:
             top_inds_out.append((int(iid), str(name), int(visits), _as_utc_str(last_seen)))
 
         total_recent = db.execute(select(func.count(Observation.id))).scalar_one()
-        current_page, page_size, total_pages, offset = paginate(
+        current_page, clamped_page_size, total_pages, offset = paginate(
             total_recent, page=page, page_size=page_size, max_page_size=200
         )
 
@@ -218,7 +218,7 @@ def make_app() -> Any:
                 select(Observation)
                 .order_by(desc(Observation.ts))
                 .offset(offset)
-                .limit(page_size)
+                .limit(clamped_page_size)
             )
             .scalars()
             .all()
@@ -244,7 +244,7 @@ def make_app() -> Any:
                 "top_inds": top_inds_out,
                 "recent": recent,
                 "recent_page": current_page,
-                "recent_page_size": page_size,
+                "recent_page_size": clamped_page_size,
                 "recent_total_pages": total_pages,
                 "recent_total": int(total_recent),
                 "recent_page_size_options": [10, 20, 50, 100],
