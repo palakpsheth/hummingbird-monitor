@@ -23,7 +23,7 @@
     const nodes = document.querySelectorAll("[data-utc-ts]");
     nodes.forEach((el) => {
       const iso = el.getAttribute("data-utc-ts");
-      if (!iso) return;
+      if (!iso || iso === "") return;
       el.textContent = formatLocal(iso);
     });
   }
