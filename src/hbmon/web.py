@@ -443,9 +443,10 @@ def make_app() -> Any:
         if o is None:
             raise HTTPException(status_code=404, detail="Observation not found")
 
-        clean = (label or "").strip().lower()
-        if len(clean) > 64:
+        raw_label = label or ""
+        if len(raw_label) > 64:
             raise HTTPException(status_code=400, detail="Label too long")
+        clean = raw_label.strip().lower()
         allowed = set(ALLOWED_REVIEW_LABELS)
         review_label = clean if clean in allowed else ""
 
