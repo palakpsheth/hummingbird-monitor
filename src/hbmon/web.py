@@ -461,11 +461,18 @@ def make_app() -> Any:
         else:
             extra = o.get_extra() or {}
             if isinstance(extra, dict):
-                review = extra.get("review") if isinstance(extra.get("review"), dict) else {}
+                # Work on a copy to avoid mutating the dict returned by get_extra() in place.
+                extra_copy = dict(extra)
+                raw_review = extra_copy.get("review")
+                review = dict(raw_review) if isinstance(raw_review, dict) else {}
                 review.pop("label", None)
                 review.pop("labeled_at_utc", None)
-                extra["review"] = review
-                o.set_extra(extra)
+                if review:
+                    extra_copy["review"] = review
+                else:
+                    # Drop the review section entirely if it's now empty.
+                    extra_copy.pop("review", None)
+                o.set_extra(extra_copy)
         _commit_with_retry(db)
 
         return RedirectResponse(url=f"/observations/{obs_id}", status_code=303)
