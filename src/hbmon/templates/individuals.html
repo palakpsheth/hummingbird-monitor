@@ -29,7 +29,7 @@
   <div class="card">
     <div class="table">
       <div class="row head">
-        <div>ID</div><div>Name</div><div>Visits</div><div>Last seen (UTC)</div>
+        <div>ID</div><div>Name</div><div>Visits</div><div>Last seen (local)</div>
       </div>
 
       {% for ind in individuals %}
@@ -42,7 +42,7 @@
             </a>
           </div>
           <div>{{ ind.visit_count }}</div>
-          <div>{{ ind.last_seen_utc or "" }}</div>
+          <div><span data-utc-ts="{{ ind.last_seen_utc or '' }}">{{ ind.last_seen_utc or "" }}</span></div>
         </div>
       {% endfor %}
     </div>
