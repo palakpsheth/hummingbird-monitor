@@ -6,7 +6,33 @@
     <div class="card">
       <img class="bigimg" src="/media/{{ o.snapshot_path }}" alt="snapshot" />
 
-      <div class="meta2">
+      <div class="stack" style="margin-top:12px;">
+        <div class="muted">
+          Human label:
+          {% if o.review_label %}
+            <span class="badge">{{ o.review_label.replace("_", " ") }}</span>
+          {% else %}
+            not set
+          {% endif %}
+        </div>
+        <div style="display:grid; gap:10px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
+          {% for lab in allowed_review_labels %}
+            <form method="post" action="/observations/{{ o.id }}/label">
+              <input type="hidden" name="label" value="{{ lab }}" />
+              <button type="submit">Mark {{ lab.replace('_', ' ') }}</button>
+            </form>
+          {% endfor %}
+          <form method="post" action="/observations/{{ o.id }}/label">
+            <input type="hidden" name="label" value="" />
+            <button type="submit">Clear label</button>
+          </form>
+        </div>
+        <form method="post" action="/observations/{{ o.id }}/delete" onsubmit="return confirm('Delete this observation?');">
+          <button type="submit">Delete this observation</button>
+        </form>
+      </div>
+
+      <div class="meta2" style="margin-top:12px;">
         <div>
           <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
           <span class="muted">p={{ "%.3f"|format(o.species_prob) }}</span>
@@ -29,32 +55,6 @@
           <a href="/media/{{ o.video_path }}">Open video</a>
           <span class="muted">·</span>
           <a href="/observations">Back to observations</a>
-        </div>
-
-        <div class="stack" style="margin-top:12px;">
-          <div class="muted">
-            Human label:
-            {% if o.review_label %}
-              <span class="badge">{{ o.review_label.replace("_", " ") }}</span>
-            {% else %}
-              not set
-            {% endif %}
-          </div>
-          <div class="inline">
-            {% for lab in allowed_review_labels %}
-              <form method="post" action="/observations/{{ o.id }}/label">
-                <input type="hidden" name="label" value="{{ lab }}" />
-                <button type="submit">Mark {{ lab.replace('_', ' ') }}</button>
-              </form>
-            {% endfor %}
-            <form method="post" action="/observations/{{ o.id }}/label">
-              <input type="hidden" name="label" value="" />
-              <button type="submit">Clear label</button>
-            </form>
-          </div>
-          <form method="post" action="/observations/{{ o.id }}/delete" onsubmit="return confirm('Delete this observation?');">
-            <button type="submit">Delete this observation</button>
-          </form>
         </div>
       </div>
     </div>
