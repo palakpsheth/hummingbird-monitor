@@ -249,15 +249,24 @@ if _SQLALCHEMY_AVAILABLE:
 
         def merge_extra(self, updates: dict[str, Any]) -> dict[str, Any]:
             """
-            Merge ``updates`` into existing extra metadata and persist.
+            Deep-merge ``updates`` into existing extra metadata and persist.
+            Nested dicts are merged recursively; other values overwrite.
             """
-            base = self.get_extra() or {}
-            if isinstance(base, dict):
-                base.update(updates)
-            else:
-                base = updates
-            self.set_extra(base)
-            return base
+
+            def _deep_merge(base: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+                for k, v in new.items():
+                    if k in base and isinstance(base[k], dict) and isinstance(v, dict):
+                        base[k] = _deep_merge(base[k], v)
+                    else:
+                        base[k] = v
+                return base
+
+            base: dict[str, Any] = self.get_extra() or {}
+            if not isinstance(base, dict):
+                base = {}
+            merged = _deep_merge(base, updates)
+            self.set_extra(merged)
+            return merged
 
         @property
         def review_label(self) -> str | None:
@@ -398,13 +407,25 @@ else:
             return None
 
         def merge_extra(self, updates: dict[str, Any]) -> dict[str, Any]:
-            base = self.get_extra() or {}
-            if isinstance(base, dict):
-                base.update(updates)
-            else:
-                base = updates
-            self.set_extra(base)
-            return base
+            """
+            Deep-merge ``updates`` into existing extra metadata and persist.
+            Nested dicts are merged recursively; other values overwrite.
+            """
+
+            def _deep_merge(base: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+                for k, v in new.items():
+                    if k in base and isinstance(base[k], dict) and isinstance(v, dict):
+                        base[k] = _deep_merge(base[k], v)
+                    else:
+                        base[k] = v
+                return base
+
+            base: dict[str, Any] = self.get_extra() or {}
+            if not isinstance(base, dict):
+                base = {}
+            merged = _deep_merge(base, updates)
+            self.set_extra(merged)
+            return merged
 
         @property
         def review_label(self) -> str | None:

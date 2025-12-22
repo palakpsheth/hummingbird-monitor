@@ -58,7 +58,11 @@ try:
     _FASTAPI_AVAILABLE = True
 except Exception:  # pragma: no cover
     # FastAPI is not available; define stubs to allow import but not use.
-    Depends = FastAPI = Form = HTTPException = Request = object  # type: ignore
+    class _StubExc(Exception):
+        pass
+
+    Depends = FastAPI = Form = Request = object  # type: ignore
+    HTTPException = _StubExc  # type: ignore
     FileResponse = HTMLResponse = RedirectResponse = StreamingResponse = object  # type: ignore
     StaticFiles = object  # type: ignore
     Jinja2Templates = object  # type: ignore
@@ -254,15 +258,13 @@ def make_app() -> Any:
         try:
             p.unlink(missing_ok=True)
         except Exception:
-            try:
-                if p.exists():
-                    p.unlink()
-            except Exception:
-                pass
+            # Best-effort cleanup; log for visibility but do not block user action.
+            print(f"[web] failed to remove media file {p}")
 
     def _recompute_individual_stats(db: Session, individual_id: int) -> None:
         ind = db.get(Individual, individual_id)
         if ind is None:
+            print(f"[web] individual {individual_id} not found while recomputing stats")
             return
         rows = db.execute(
             select(func.count(Observation.id), func.max(Observation.ts))
@@ -428,6 +430,8 @@ def make_app() -> Any:
             raise HTTPException(status_code=404, detail="Observation not found")
 
         clean = (label or "").strip().lower()
+        if len(clean) > 64:
+            raise HTTPException(status_code=400, detail="Label too long")
         allowed = set(ALLOWED_REVIEW_LABELS)
         review_label = clean if clean in allowed else ""
 
