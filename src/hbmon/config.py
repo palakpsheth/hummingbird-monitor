@@ -284,10 +284,11 @@ def load_settings(*, apply_env_overrides: bool = True, seed_env_if_missing: bool
     ensure_dirs()
     p = config_path()
     if not p.exists():
-        s = _settings_from_env(last_updated_utc=time.time(), use_env=seed_env_if_missing)
+        env_applied = seed_env_if_missing
+        s = _settings_from_env(last_updated_utc=time.time(), use_env=env_applied)
         save_settings(s)
-        if apply_env_overrides and not seed_env_if_missing:
-            return s.with_env_overrides()
+        if apply_env_overrides and not env_applied:
+            s = s.with_env_overrides()
         return s
 
     try:
@@ -296,12 +297,15 @@ def load_settings(*, apply_env_overrides: bool = True, seed_env_if_missing: bool
             raise ValueError("config.json root is not an object")
         s = _settings_from_dict(data)
     except Exception:
-        s = _settings_from_env(last_updated_utc=time.time(), use_env=seed_env_if_missing)
-        if apply_env_overrides and not seed_env_if_missing:
-            return s.with_env_overrides()
+        env_applied = seed_env_if_missing
+        s = _settings_from_env(last_updated_utc=time.time(), use_env=env_applied)
+        if apply_env_overrides and not env_applied:
+            s = s.with_env_overrides()
         return s
 
-    return s.with_env_overrides() if apply_env_overrides else s
+    if apply_env_overrides:
+        s = s.with_env_overrides()
+    return s
 
 
 def save_settings(s: Settings) -> None:
