@@ -29,7 +29,7 @@ the database layer is usable.
 """
 
 try:
-    from sqlalchemy import create_engine  # type: ignore
+    from sqlalchemy import create_engine, event  # type: ignore
     from sqlalchemy.engine import Engine  # type: ignore
     from sqlalchemy.orm import Session, sessionmaker  # type: ignore
     _SQLALCHEMY_AVAILABLE = True
@@ -76,10 +76,14 @@ def get_engine() -> Engine:
 
     url = get_db_url()
 
+    busy_timeout_ms = env_int("HBMON_SQLITE_BUSY_TIMEOUT_MS", 5000)
     connect_args = {}
     if url.startswith("sqlite:"):
         # Required for SQLite + threads (FastAPI/uvicorn)
-        connect_args = {"check_same_thread": False}
+        connect_args = {
+            "check_same_thread": False,
+            "timeout": max(1.0, float(busy_timeout_ms) / 1000.0),
+        }
 
     assert create_engine is not None  # for mypy
     _ENGINE = create_engine(
@@ -88,6 +92,17 @@ def get_engine() -> Engine:
         pool_pre_ping=True,
         connect_args=connect_args,
     )  # type: ignore[assignment]
+
+    if url.startswith("sqlite:"):
+        def _set_sqlite_pragmas(dbapi_connection, connection_record):  # type: ignore[override]
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+                cursor.close()
+            except Exception:
+                pass
+
+        event.listen(_ENGINE, "connect", _set_sqlite_pragmas)
 
     assert sessionmaker is not None  # for mypy
     _SessionLocal = sessionmaker(

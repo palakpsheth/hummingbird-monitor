@@ -273,6 +273,18 @@ def make_app() -> Any:
         ind.visit_count = int(rows[0] or 0)
         ind.last_seen_at = rows[1]
 
+    def _commit_with_retry(db: Session, retries: int = 3, delay: float = 0.5) -> None:
+        for i in range(max(1, retries)):
+            try:
+                db.commit()
+                return
+            except Exception as e:  # pragma: no cover
+                msg = str(e).lower()
+                if "database is locked" in msg and i < retries - 1:
+                    time.sleep(delay)
+                    continue
+                raise
+
     # ----------------------------
     # UI routes
     # ----------------------------
@@ -597,15 +609,13 @@ def make_app() -> Any:
             _safe_unlink_media(vid)
 
         if obs_ids:
-            embs = db.execute(select(Embedding).where(Embedding.observation_id.in_(obs_ids))).scalars().all()
-            for e in embs:
-                db.delete(e)
-            obs_to_delete = db.execute(select(Observation).where(Observation.id.in_(obs_ids))).scalars().all()
-            for o in obs_to_delete:
-                db.delete(o)
+            db.execute(
+                delete(Embedding).where(Embedding.observation_id.in_(obs_ids))
+            )
+            db.execute(delete(Observation).where(Observation.id.in_(obs_ids)))
 
         db.delete(ind)
-        db.commit()
+        _commit_with_retry(db, retries=5, delay=0.6)
 
         return RedirectResponse(url="/individuals", status_code=303)
 
