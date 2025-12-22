@@ -168,14 +168,11 @@ def _record_clip_opencv(
     seconds: float,
     *,
     max_fps: float = 20.0,
-) -> None:
+) -> Path:
     """
-    Record a short clip from the existing VideoCapture, writing MP4 if possible.
+    Record a short clip from the existing VideoCapture, preferring AVC1 MP4 and
+    falling back to MP4V or AVI. Returns the actual path used for the clip.
     This blocks while recording (simple + robust for early versions).
-    """
-    """
-    Record a short clip from an existing ``cv2.VideoCapture``.  Requires
-    OpenCV; raises RuntimeError if OpenCV is unavailable.
     """
     if not _CV2_AVAILABLE:
         raise RuntimeError("OpenCV (cv2) is not installed; cannot record clips")
@@ -189,17 +186,23 @@ def _record_clip_opencv(
 
     h, w = frame.shape[:2]
 
-    # Try MP4V; fall back to AVI/XVID if needed
-    fourcc_mp4 = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(out_path), fourcc_mp4, float(max_fps), (w, h))
+    # Prefer H.264/AVC for browser compatibility; fall back to MP4V then AVI.
+    writer = None
+    final_path = out_path
+    for suffix, fourcc_str in [(".mp4", "avc1"), (".mp4", "mp4v"), (".avi", "XVID")]:
+        candidate_path = out_path.with_suffix(suffix)
+        fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
+        candidate = cv2.VideoWriter(str(candidate_path), fourcc, float(max_fps), (w, h))
+        if not candidate.isOpened():
+            candidate.release()
+            continue
 
-    if not writer.isOpened():
-        # fallback
-        out_path = out_path.with_suffix(".avi")
-        fourcc = cv2.VideoWriter_fourcc(*"XVID")
-        writer = cv2.VideoWriter(str(out_path), fourcc, float(max_fps), (w, h))
-        if not writer.isOpened():
-            raise RuntimeError("Unable to open VideoWriter for clip")
+        writer = candidate
+        final_path = candidate_path
+        break
+
+    if writer is None:
+        raise RuntimeError("Unable to open VideoWriter for clip")
 
     start = time.time()
     writer.write(frame)
@@ -215,6 +218,7 @@ def _record_clip_opencv(
         time.sleep(max(0.0, (1.0 / max_fps) * 0.2))
 
     writer.release()
+    return final_path
 
 
 def _bbox_with_padding(det: Det, frame_shape: tuple[int, int], pad_frac: float = 0.18) -> tuple[int, int, int, int]:
@@ -488,8 +492,9 @@ def run_worker() -> None:
         snap_rel = f"snapshots/{stamp}/{uuid.uuid4().hex}.jpg"
         clip_rel = f"clips/{stamp}/{uuid.uuid4().hex}.mp4"
 
-        snap_path = snapshots_dir().parent / snap_rel  # snapshots_dir() == /media/snapshots
-        clip_path = clips_dir().parent / clip_rel
+        media_root = snapshots_dir().parent  # /media
+        snap_path = media_root / snap_rel
+        clip_path = media_root / clip_rel
 
         # Save snapshot immediately
         try:
@@ -500,7 +505,8 @@ def run_worker() -> None:
 
         # Record clip (best effort)
         try:
-            _record_clip_opencv(cap, clip_path, float(s.clip_seconds), max_fps=20.0)
+            recorded_path = _record_clip_opencv(cap, clip_path, float(s.clip_seconds), max_fps=20.0)
+            clip_rel = str(recorded_path.relative_to(media_root))
         except Exception as e:
             print(f"[worker] clip record failed: {e}")
             # allow observation without clip (use snapshot only)
