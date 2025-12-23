@@ -34,11 +34,15 @@ import json
 from json import JSONDecodeError
 import io
 import math
+import os
+import subprocess
+import shutil
 import tarfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 """
 FastAPI web application for hbmon.
@@ -82,11 +86,52 @@ except Exception:  # pragma: no cover
 ALLOWED_REVIEW_LABELS = ["true_positive", "false_positive", "false_negative"]
 
 
+from hbmon import __version__
 from hbmon.config import Roi, ensure_dirs, load_settings, media_dir, roi_to_str, save_settings
 from hbmon.db import get_db, init_db
 from hbmon.models import Embedding, Individual, Observation
 from hbmon.schema import HealthOut, RoiOut
 from hbmon.clustering import l2_normalize, suggest_split_two_groups
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+# Derived from this module path; not user-controlled, safe for git cwd.
+_GIT_PATH = shutil.which("git")
+
+
+def _normalize_timezone(tz: str | None) -> str:
+    txt = (tz or "").strip()
+    return txt or "local"
+
+
+def _timezone_label(tz: str | None) -> str:
+    clean = _normalize_timezone(tz)
+    return "Browser local" if clean.lower() == "local" else clean
+
+
+def _get_git_commit() -> str:
+    env_commit = os.getenv("HBMON_GIT_COMMIT")
+    if env_commit:
+        return env_commit
+    if not _REPO_ROOT.is_dir():
+        return "unknown"
+    if _GIT_PATH is None:
+        return "unknown"
+    try:
+        commit = subprocess.check_output(
+            [_GIT_PATH, "rev-parse", "--short", "HEAD"],
+            cwd=_REPO_ROOT,
+            timeout=1.0,
+            shell=False,
+            text=True,
+        )
+        return commit.strip() or "unknown"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
+_GIT_COMMIT = _get_git_commit()
 
 
 # ----------------------------
@@ -221,6 +266,20 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
     parse_float("match_threshold", "Match threshold", 0.0, 1.0)
     parse_float("ema_alpha", "EMA alpha", 0.0, 1.0)
 
+    tz_text = str(raw.get("timezone", "")).strip()
+    if not tz_text:
+        parsed["timezone"] = "local"
+    else:
+        tz_clean = _normalize_timezone(tz_text)
+        if tz_clean.lower() == "local":
+            parsed["timezone"] = "local"
+        else:
+            try:
+                ZoneInfo(tz_clean)
+                parsed["timezone"] = tz_clean
+            except ZoneInfoNotFoundError:
+                errors.append("Timezone must be a valid IANA name (e.g., America/Los_Angeles) or 'local'.")
+
     return parsed, errors
 
 
@@ -322,12 +381,27 @@ def make_app() -> Any:
             "min_species_prob": f"{float(settings.min_species_prob):.2f}",
             "match_threshold": f"{float(settings.match_threshold):.2f}",
             "ema_alpha": f"{float(settings.ema_alpha):.2f}",
+            "timezone": str(getattr(settings, "timezone", "local")),
         }
         if raw:
             for k, v in raw.items():
                 if k in vals:
                     vals[k] = str(v)
         return vals
+
+    def _context(request: Request, title: str, settings=None, **extra: Any) -> dict[str, Any]:
+        s_local = settings or load_settings()
+        tz_value = _normalize_timezone(getattr(s_local, "timezone", "local"))
+        base = {
+            "request": request,
+            "title": title,
+            "timezone": tz_value,
+            "timezone_label": _timezone_label(tz_value),
+            "app_version": __version__,
+            "git_commit": _GIT_COMMIT,
+        }
+        base.update(extra)
+        return base
 
     @app.get("/", response_class=HTMLResponse)
     def index(
@@ -380,20 +454,21 @@ def make_app() -> Any:
 
         return templates.TemplateResponse(
             "index.html",
-            {
-                "request": request,
-                "title": title,
-                "top_inds": top_inds_out,
-                "recent": recent,
-                "recent_page": current_page,
-                "recent_page_size": clamped_page_size,
-                "recent_total_pages": total_pages,
-                "recent_total": int(total_recent),
-                "recent_page_size_options": [10, 20, 50, 100],
-                "roi_str": roi_str,
-                "rtsp_url": rtsp,
-                "last_capture_utc": last_capture_utc,
-            },
+            _context(
+                request,
+                title,
+                settings=s,
+                top_inds=top_inds_out,
+                recent=recent,
+                recent_page=current_page,
+                recent_page_size=clamped_page_size,
+                recent_total_pages=total_pages,
+                recent_total=int(total_recent),
+                recent_page_size_options=[10, 20, 50, 100],
+                roi_str=roi_str,
+                rtsp_url=rtsp,
+                last_capture_utc=last_capture_utc,
+            ),
         )
 
     @app.get("/observations", response_class=HTMLResponse)
@@ -423,17 +498,18 @@ def make_app() -> Any:
 
         return templates.TemplateResponse(
             "observations.html",
-            {
-                "request": request,
-                "title": "Observations",
-                "observations": obs,
-                "individuals": inds,
-                "selected_individual": individual_id,
-                "selected_limit": limit,
-                "count_shown": len(obs),
-                "count_total": int(total),
-                "rtsp_url": s.rtsp_url,
-            },
+            _context(
+                request,
+                "Observations",
+                settings=s,
+                observations=obs,
+                individuals=inds,
+                selected_individual=individual_id,
+                selected_limit=limit,
+                count_shown=len(obs),
+                count_total=int(total),
+                rtsp_url=s.rtsp_url,
+            ),
         )
 
     @app.get("/observations/{obs_id}", response_class=HTMLResponse)
@@ -447,13 +523,13 @@ def make_app() -> Any:
         o.extra_json_pretty = pretty_json(o.extra_json)  # type: ignore[attr-defined]
         return templates.TemplateResponse(
             "observation_detail.html",
-            {
-                "request": request,
-                "title": f"Observation {o.id}",
-                "o": o,
-                "extra": extra,
-                "allowed_review_labels": ALLOWED_REVIEW_LABELS,
-            },
+            _context(
+                request,
+                f"Observation {o.id}",
+                o=o,
+                extra=extra,
+                allowed_review_labels=ALLOWED_REVIEW_LABELS,
+            ),
         )
 
     @app.post("/observations/{obs_id}/label")
@@ -562,15 +638,15 @@ def make_app() -> Any:
 
         return templates.TemplateResponse(
             "individuals.html",
-            {
-                "request": request,
-                "title": "Individuals",
-                "individuals": inds,
-                "sort": sort,
-                "limit": limit,
-                "count_shown": len(inds),
-                "count_total": int(total),
-            },
+            _context(
+                request,
+                "Individuals",
+                individuals=inds,
+                sort=sort,
+                limit=limit,
+                count_shown=len(inds),
+                count_total=int(total),
+            ),
         )
 
     @app.get("/individuals/{individual_id}", response_class=HTMLResponse)
@@ -612,15 +688,15 @@ def make_app() -> Any:
 
         return templates.TemplateResponse(
             "individual_detail.html",
-            {
-                "request": request,
-                "title": f"Individual {ind.id}",
-                "individual": ind,
-                "observations": obs,
-                "heatmap": heatmap,
-                "total": total,
-                "last_seen": last_seen,
-            },
+            _context(
+                request,
+                f"Individual {ind.id}",
+                individual=ind,
+                observations=obs,
+                heatmap=heatmap,
+                total=total,
+                last_seen=last_seen,
+            ),
         )
 
     @app.post("/individuals/{individual_id}/rename")
@@ -738,13 +814,13 @@ def make_app() -> Any:
 
         return templates.TemplateResponse(
             "split_review.html",
-            {
-                "request": request,
-                "title": f"Split review {ind.id}",
-                "individual": ind,
-                "observations": obs,
-                "suggestion_reason": suggestion.reason,
-            },
+            _context(
+                request,
+                f"Split review {ind.id}",
+                individual=ind,
+                observations=obs,
+                suggestion_reason=suggestion.reason,
+            ),
         )
 
     @app.post("/individuals/{individual_id}/split_apply")
@@ -823,13 +899,14 @@ def make_app() -> Any:
         saved = request.query_params.get("saved") == "1"
         return templates.TemplateResponse(
             "config.html",
-            {
-                "request": request,
-                "title": "Config",
-                "form_values": _config_form_values(s),
-                "errors": [],
-                "saved": saved,
-            },
+            _context(
+                request,
+                "Config",
+                settings=s,
+                form_values=_config_form_values(s),
+                errors=[],
+                saved=saved,
+            ),
         )
 
     @app.post("/config", response_class=HTMLResponse)
@@ -846,18 +923,20 @@ def make_app() -> Any:
             "ema_alpha",
         )
         raw = {name: str(form.get(name, "") or "").strip() for name in field_names}
+        raw["timezone"] = str(form.get("timezone", "") or "").strip()
         parsed, errors = _validate_detection_inputs(raw)
 
         if errors:
             return templates.TemplateResponse(
                 "config.html",
-                {
-                    "request": request,
-                    "title": "Config",
-                    "form_values": _config_form_values(s, raw),
-                    "errors": errors,
-                    "saved": False,
-                },
+                _context(
+                    request,
+                    "Config",
+                    settings=s,
+                    form_values=_config_form_values(s, raw),
+                    errors=errors,
+                    saved=False,
+                ),
                 status_code=400,
             )
 
@@ -868,6 +947,7 @@ def make_app() -> Any:
         s.min_species_prob = parsed["min_species_prob"]
         s.match_threshold = parsed["match_threshold"]
         s.ema_alpha = parsed["ema_alpha"]
+        s.timezone = parsed["timezone"]
         save_settings(s)
 
         return RedirectResponse(url="/config?saved=1", status_code=303)
@@ -878,13 +958,14 @@ def make_app() -> Any:
         roi_str = roi_to_str(s.roi) if s.roi else ""
         return templates.TemplateResponse(
             "calibrate.html",
-            {
-                "request": request,
-                "title": "Calibrate ROI",
-                "roi": s.roi,
-                "roi_str": roi_str,
-                "ts": int(time.time()),
-            },
+            _context(
+                request,
+                "Calibrate ROI",
+                settings=s,
+                roi=s.roi,
+                roi_str=roi_str,
+                ts=int(time.time()),
+            ),
         )
 
     # ----------------------------

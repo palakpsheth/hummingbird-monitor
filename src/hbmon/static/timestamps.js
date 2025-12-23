@@ -2,6 +2,46 @@
 //
 // Convert UTC ISO timestamps in data-utc-ts attributes to the user's local time.
 (function () {
+  const body = document.body || document.documentElement;
+
+  let cachedTz;
+  let tzChecked = false;
+  function getConfiguredTimezone() {
+    if (tzChecked) return cachedTz;
+    tzChecked = true;
+    const tz = (body?.dataset?.hbmonTz || "").trim();
+    if (!tz || tz.toLowerCase() === "local") {
+      cachedTz = null;
+      return cachedTz;
+    }
+    try {
+      // Validate timezone; Intl may throw if the time zone is invalid
+      new Intl.DateTimeFormat(undefined, { timeZone: tz });
+      cachedTz = tz;
+      return cachedTz;
+    } catch (err) {
+      cachedTz = null;
+      return cachedTz;
+    }
+  }
+
+  function formatWithOptions(date, options) {
+    try {
+      return date.toLocaleString(undefined, options);
+    } catch (err) {
+      if (options && options.timeZone) {
+        const fallback = { ...options };
+        delete fallback.timeZone;
+        try {
+          return date.toLocaleString(undefined, fallback);
+        } catch (err2) {
+          return date.toString();
+        }
+      }
+      return date.toString();
+    }
+  }
+
   function formatLocal(iso) {
     if (!iso) return "";
     let txt = String(iso).trim();
@@ -12,7 +52,8 @@
     if (Number.isNaN(d.getTime())) {
       return iso;
     }
-    return d.toLocaleString(undefined, {
+    const tz = getConfiguredTimezone();
+    return formatWithOptions(d, {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -20,6 +61,7 @@
       minute: "2-digit",
       second: "2-digit",
       timeZoneName: "short",
+      timeZone: tz || undefined,
     });
   }
 
@@ -32,9 +74,34 @@
     });
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", applyLocalTimestamps);
-  } else {
-    applyLocalTimestamps();
+  function updateCurrentTime() {
+    const node = document.getElementById("footer-current-time");
+    if (!node) return;
+    const tz = getConfiguredTimezone();
+    const now = new Date();
+    node.textContent = formatWithOptions(now, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZoneName: "short",
+      timeZone: tz || undefined,
+    });
+  }
+
+  function onReady(fn) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", fn);
+    } else {
+      fn();
+    }
+  }
+
+  onReady(applyLocalTimestamps);
+  onReady(updateCurrentTime);
+  if (!window._hbmonTimeIntervalId) {
+    window._hbmonTimeIntervalId = setInterval(updateCurrentTime, 1000);
   }
 })();

@@ -12,6 +12,7 @@ def test_validate_detection_inputs_ok(monkeypatch):
             "min_species_prob": "0.40",
             "match_threshold": "0.20",
             "ema_alpha": "0.15",
+            "timezone": "America/Los_Angeles",
         }
     )
     assert errors == []
@@ -22,6 +23,7 @@ def test_validate_detection_inputs_ok(monkeypatch):
     assert parsed["min_species_prob"] == 0.40
     assert parsed["match_threshold"] == 0.20
     assert parsed["ema_alpha"] == 0.15
+    assert parsed["timezone"] == "America/Los_Angeles"
 
 
 def test_validate_detection_inputs_errors(monkeypatch):
@@ -35,6 +37,7 @@ def test_validate_detection_inputs_errors(monkeypatch):
             "min_species_prob": "2",
             "match_threshold": "-0.1",
             "ema_alpha": "abc",
+            "timezone": "Not_A_TimeZone",
         }
     )
     assert any("between 0.05 and 0.95" in e for e in errors)
@@ -44,3 +47,4 @@ def test_validate_detection_inputs_errors(monkeypatch):
     assert any("Minimum species probability" in e for e in errors)
     assert any("Match threshold" in e for e in errors)
     assert any("EMA alpha" in e for e in errors)
+    assert any("Timezone" in e for e in errors)

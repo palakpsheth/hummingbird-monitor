@@ -23,10 +23,10 @@
 
     <p class="muted">
       Total visits: {{ total }} · Last seen:
-      <span data-utc-ts="{{ last_seen or '' }}">{{ last_seen or "" }}</span> (local) · {{ (last_seen|replace(' ', 'T') ~ 'Z') if last_seen else "" }} (UTC)
+      <span data-utc-ts="{{ last_seen or '' }}">{{ last_seen or "" }}</span> ({{ timezone_label }}) · {{ (last_seen|replace(' ', 'T') ~ 'Z') if last_seen else "" }} (UTC)
     </p>
 
-    <h3>Visits by hour (local)</h3>
+    <h3>Visits by hour ({{ timezone_label }})</h3>
     <div class="heatmap">
       {% for cell in heatmap %}
         <div class="heat level-{{ cell.level }}">

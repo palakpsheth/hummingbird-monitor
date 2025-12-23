@@ -17,7 +17,7 @@ def test_save_and_load_settings_roundtrip(monkeypatch, tmp_path):
     monkeypatch.setenv("HBMON_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("HBMON_MEDIA_DIR", str(tmp_path / "media"))
     # Create a settings object with custom values
-    s = config.Settings(rtsp_url="rtsptest", fps_limit=12.34)
+    s = config.Settings(rtsp_url="rtsptest", fps_limit=12.34, timezone="America/New_York")
     # Save to config.json
     config.save_settings(s)
     # After saving, config.json should exist
@@ -27,13 +27,17 @@ def test_save_and_load_settings_roundtrip(monkeypatch, tmp_path):
     s2 = config.load_settings()
     assert s2.rtsp_url == "rtsptest"
     assert abs(s2.fps_limit - 12.34) < 1e-6
+    assert s2.timezone == "America/New_York"
     # Override via environment
     monkeypatch.setenv("HBMON_RTSP_URL", "override")
+    monkeypatch.setenv("HBMON_TIMEZONE", "UTC")
     s3 = config.load_settings()
     assert s3.rtsp_url == "override"
+    assert s3.timezone == "UTC"
     # Explicitly opt out of env overrides to pick up persisted config values
     s4 = config.load_settings(apply_env_overrides=False)
     assert s4.rtsp_url == "rtsptest"
+    assert s4.timezone == "America/New_York"
 
 
 def test_load_settings_bootstrap_uses_env(monkeypatch, tmp_path):

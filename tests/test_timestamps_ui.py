@@ -11,6 +11,8 @@ TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "src" / "hbmon" / "template
 def test_base_includes_timestamp_script():
     base = (TEMPLATE_DIR / "base.html").read_text()
     assert "timestamps.js" in base
+    assert "data-hbmon-tz" in base
+    assert "footer-current-time" in base
 
 
 def test_ts_utc_lines_have_data_attribute():

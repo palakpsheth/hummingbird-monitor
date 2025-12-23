@@ -108,3 +108,21 @@ def test_pretty_json(monkeypatch):
     # Fallback to original on parse errors
     bad = web.pretty_json("{not-json}")
     assert bad == "{not-json}"
+
+
+def test_timezone_helpers(monkeypatch):
+    web = _import_web(monkeypatch)
+    assert web._normalize_timezone(None) == "local"
+    assert web._normalize_timezone("") == "local"
+    assert web._normalize_timezone(" local ") == "local"
+    assert web._normalize_timezone("America/Denver") == "America/Denver"
+
+    assert web._timezone_label(None) == "Browser local"
+    assert web._timezone_label("LOCAL") == "Browser local"
+    assert web._timezone_label("Europe/Paris") == "Europe/Paris"
+
+
+def test_get_git_commit_without_git(monkeypatch):
+    web = _import_web(monkeypatch)
+    monkeypatch.setattr(web, "_GIT_PATH", None)
+    assert web._get_git_commit() == "unknown"
