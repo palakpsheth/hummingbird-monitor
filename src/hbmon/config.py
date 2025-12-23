@@ -298,6 +298,29 @@ def _seed_settings(seed_env_if_missing: bool) -> tuple[Settings, bool]:
 
 
 def load_settings(*, apply_env_overrides: bool = True, seed_env_if_missing: bool = True) -> Settings:
+    """
+    Load the persisted Settings from config.json, optionally applying environment overrides.
+
+    Parameters
+    ----------
+    apply_env_overrides:
+        Controls whether environment variables override values loaded from the persisted config file.
+        When True (default), any relevant HBMON_* environment variables are applied on top of the
+        loaded Settings. This is appropriate for the web UI and other components that should respect
+        operator-level environment overrides even if the user changes settings via the UI.
+
+        When False, the returned Settings reflect only the persisted configuration (plus any
+        seeding behavior controlled by ``seed_env_if_missing``). Use this for runtime components
+        (e.g., workers) that need to pick up user-configured changes written by the web UI without
+        having those values masked by current environment variables.
+
+    seed_env_if_missing:
+        Controls how a fresh Settings instance is bootstrapped when no valid config file is
+        available (missing or corrupted). When True (default), environment variables are used as
+        the initial source of values for a new Settings object, which is then persisted to
+        config.json. When False, a new Settings object is created using only code defaults, ignoring
+        environment variables during this initial seeding step.
+    """
     ensure_dirs()
     p = config_path()
     if not p.exists():
