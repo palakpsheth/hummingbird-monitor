@@ -95,27 +95,13 @@ When adding code that uses optional dependencies:
 - Test core logic, configuration parsing, helper functions, and edge cases
 - Aim for broad coverage of non-ML code paths
 
-### **CRITICAL: Always Run Ruff and Full Pytest**
+### CRITICAL: Always Run Ruff and Full Pytest
 
-**Before committing ANY changes to this repository, you MUST:**
+**Before committing ANY changes to this repository, you MUST run Ruff and the full pytest suite.**
 
-1. **Run Ruff linter:**
-   ```bash
-   uv run ruff check .
-   ```
-   - Fix all linting issues before proceeding
-   - Use `uv run ruff check . --fix` for auto-fixable issues
-
-2. **Run the full test suite:**
-   ```bash
-   uv run pytest --cov=hbmon --cov-report=term
-   ```
-   - All tests must pass
-   - Verify coverage is maintained or improved
-   - Do not commit if tests fail
-
-**This is a mandatory requirement for all code changes, regardless of size.**
-
+The exact commands and options you are required to run are documented once in the
+**“Before Every Commit”** section later in this file. Treat that checklist as the
+single source of truth and follow it for **all** code changes, regardless of size.
 ### Pre-commit Hooks
 
 The repository uses **pre-commit** to run checks before commits:
