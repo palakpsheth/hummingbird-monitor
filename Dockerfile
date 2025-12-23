@@ -18,11 +18,11 @@ ARG GIT_COMMIT=unknown
 ENV HBMON_GIT_COMMIT=${GIT_COMMIT}
 
 # Optionally copy lightweight git metadata when available (no-op outside git repos)
-RUN --mount=type=bind,source=.git,target=/tmp/git,ro \
-    if [ -f /tmp/git/HEAD ]; then \
-        mkdir -p /app/.git && cp /tmp/git/HEAD /app/.git/HEAD; \
-        if [ -d /tmp/git/refs ]; then mkdir -p /app/.git && cp -r /tmp/git/refs /app/.git/ 2>/dev/null || true; fi; \
-        if [ -f /tmp/git/packed-refs ]; then cp /tmp/git/packed-refs /app/.git/packed-refs; fi; \
+RUN --mount=type=bind,source=.,target=/tmp/src,ro \
+    if [ -f /tmp/src/.git/HEAD ]; then \
+        mkdir -p /app/.git && cp /tmp/src/.git/HEAD /app/.git/HEAD; \
+        if [ -d /tmp/src/.git/refs ]; then mkdir -p /app/.git && cp -r /tmp/src/.git/refs /app/.git/ 2>/dev/null || true; fi; \
+        if [ -f /tmp/src/.git/packed-refs ]; then cp /tmp/src/.git/packed-refs /app/.git/packed-refs; fi; \
     fi
 
 RUN pip install --no-cache-dir -e .
