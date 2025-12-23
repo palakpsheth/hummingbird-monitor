@@ -163,8 +163,8 @@ def _timezone_label(tz: str | None) -> str:
 
 def _get_git_commit() -> str:
     env_commit = os.getenv("HBMON_GIT_COMMIT")
-    # Treat "unknown" as unset so fallback methods are tried during Docker builds
-    if env_commit and env_commit != "unknown":
+    # Treat "unknown" (any casing) as unset so fallback methods are tried during Docker builds
+    if env_commit and env_commit.lower() != "unknown":
         return env_commit
     if _REPO_ROOT.is_dir() and _GIT_PATH is not None:
         try:
