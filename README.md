@@ -8,6 +8,7 @@
 ![Coverage](coverage.svg)
 [![CI](https://github.com/palakpsheth/hummingbird-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/palakpsheth/hummingbird-monitor/actions/workflows/ci.yml)
 ![Python 3.11 | 3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 
 LAN-only hummingbird monitoring system designed for a **Linux x64 mini PC**.
@@ -259,6 +260,12 @@ A typical `.github/workflows/ci.yml` for this repo:
 - uses `uv`
 - runs `ruff` + `pytest`
 - (optional) builds Docker images as a smoke test
+
+---
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](./LICENSE) for details.
 
 ---
 
