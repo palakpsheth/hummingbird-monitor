@@ -30,6 +30,7 @@ Notes:
 from __future__ import annotations
 
 import csv
+import json
 from json import JSONDecodeError
 import io
 import math
