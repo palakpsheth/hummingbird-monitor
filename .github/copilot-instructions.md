@@ -95,6 +95,27 @@ When adding code that uses optional dependencies:
 - Test core logic, configuration parsing, helper functions, and edge cases
 - Aim for broad coverage of non-ML code paths
 
+### **CRITICAL: Always Run Ruff and Full Pytest**
+
+**Before committing ANY changes to this repository, you MUST:**
+
+1. **Run Ruff linter:**
+   ```bash
+   uv run ruff check .
+   ```
+   - Fix all linting issues before proceeding
+   - Use `uv run ruff check . --fix` for auto-fixable issues
+
+2. **Run the full test suite:**
+   ```bash
+   uv run pytest --cov=hbmon --cov-report=term
+   ```
+   - All tests must pass
+   - Verify coverage is maintained or improved
+   - Do not commit if tests fail
+
+**This is a mandatory requirement for all code changes, regardless of size.**
+
 ### Pre-commit Hooks
 
 The repository uses **pre-commit** to run checks before commits:
@@ -238,6 +259,27 @@ User settings are stored in `/data/config.json` and include:
 
 ## Common Tasks
 
+### Before Every Commit
+
+**MANDATORY VALIDATION STEPS:**
+
+1. **Run Ruff:**
+   ```bash
+   uv run ruff check .
+   ```
+
+2. **Run Full Test Suite:**
+   ```bash
+   uv run pytest --cov=hbmon --cov-report=term
+   ```
+
+3. **Verify:**
+   - All linting errors are fixed
+   - All tests pass
+   - Coverage is maintained or improved
+
+**Do not proceed with commit if either check fails.**
+
 ### Adding New Features
 
 1. Ensure code follows existing style conventions
@@ -245,7 +287,7 @@ User settings are stored in `/data/config.json` and include:
 3. Handle optional dependencies gracefully
 4. Write tests for new functionality
 5. Update documentation (README, docstrings)
-6. Run linter and tests before committing
+6. **Run ruff and full pytest before committing (MANDATORY)**
 
 ### Modifying ML Pipeline
 
@@ -254,6 +296,7 @@ User settings are stored in `/data/config.json` and include:
 3. Add tuning guidance to README if needed
 4. Ensure CPU-friendly defaults (GPU optional)
 5. Test with and without GPU availability
+6. **Run ruff and full pytest before committing (MANDATORY)**
 
 ### Database Changes
 
@@ -261,6 +304,7 @@ User settings are stored in `/data/config.json` and include:
 2. Maintain dataclass stubs for testing
 3. Update schema documentation
 4. Consider migration path for existing databases
+5. **Run ruff and full pytest before committing (MANDATORY)**
 
 ## Security Considerations
 
@@ -322,5 +366,6 @@ When in doubt:
 - Follow existing code patterns in the repository
 - Check the README for setup and usage guidance
 - Review test files for examples
-- Use `uv run pytest --cov=hbmon` to ensure changes don't break tests
-- Run `uv run ruff check .` to verify code style
+- **ALWAYS run `uv run ruff check .` before committing**
+- **ALWAYS run `uv run pytest --cov=hbmon` before committing**
+- Use these commands to ensure changes don't break tests or violate code style
