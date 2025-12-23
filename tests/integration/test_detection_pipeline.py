@@ -71,6 +71,19 @@ def integration_test_data_dir() -> Path:
     return Path(__file__).parent / "test_data"
 
 
+# Module-level cached YOLO model to avoid reloading for each test
+_yolo_model = None
+
+
+def get_yolo_model():
+    """Get or load the YOLO model (cached at module level)."""
+    global _yolo_model
+    if _yolo_model is None:
+        from ultralytics import YOLO
+        _yolo_model = YOLO("yolo11n.pt")
+    return _yolo_model
+
+
 class TestDetectionPipeline:
     """Integration tests for the YOLO detection pipeline."""
 
@@ -88,12 +101,13 @@ class TestDetectionPipeline:
         # Import dependencies only when running integration tests
         try:
             import cv2
-            from ultralytics import YOLO
         except ImportError as e:
             pytest.skip(f"ML dependencies not available: {e}")
 
-        # Load YOLO model
-        yolo = YOLO("yolo11n.pt")
+        try:
+            yolo = get_yolo_model()
+        except ImportError as e:
+            pytest.skip(f"YOLO not available: {e}")
 
         for test_dir, metadata in test_cases:
             snapshot_path = test_dir / "snapshot.jpg"
@@ -205,11 +219,13 @@ class TestSensitivityParameters:
 
         try:
             import cv2
-            from ultralytics import YOLO
         except ImportError as e:
             pytest.skip(f"ML dependencies not available: {e}")
 
-        yolo = YOLO("yolo11n.pt")
+        try:
+            yolo = get_yolo_model()
+        except ImportError as e:
+            pytest.skip(f"YOLO not available: {e}")
 
         for test_dir, metadata in test_cases:
             snapshot_path = test_dir / "snapshot.jpg"

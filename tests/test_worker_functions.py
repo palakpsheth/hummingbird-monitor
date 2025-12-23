@@ -150,6 +150,38 @@ class TestBboxWithPadding:
         assert y2 == 100
 
 
+
+# Helper classes for mocking YOLO output
+class MockTensor:
+    """Mock tensor class that simulates YOLO tensor behavior."""
+    def __init__(self, val):
+        self.val = val
+
+    def item(self):
+        return self.val
+
+
+class MockXyxy:
+    """Mock xyxy class that simulates YOLO bounding box behavior."""
+    def __init__(self, coords):
+        self.coords = coords
+
+    def __getitem__(self, idx):
+        return self
+
+    def detach(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return np.array(self.coords)
+
+    def tolist(self):
+        return self.coords
+
+
 class TestPickBestBirdDet:
     """Tests for the _pick_best_bird_det function."""
 
@@ -170,33 +202,6 @@ class TestPickBestBirdDet:
 
     def test_pick_best_with_valid_detection(self, monkeypatch):
         """Test with a valid bird detection."""
-        # Create a mock box object that simulates YOLO output
-        class MockTensor:
-            def __init__(self, val):
-                self.val = val
-
-            def item(self):
-                return self.val
-
-        class MockXyxy:
-            def __init__(self, coords):
-                self.coords = coords
-
-            def __getitem__(self, idx):
-                return self
-
-            def detach(self):
-                return self
-
-            def cpu(self):
-                return self
-
-            def numpy(self):
-                return np.array(self.coords)
-
-            def tolist(self):
-                return self.coords
-
         mock_box = types.SimpleNamespace(
             cls=MockTensor(14),  # bird class
             conf=MockTensor(0.85),
@@ -215,32 +220,6 @@ class TestPickBestBirdDet:
 
     def test_pick_best_filters_by_class(self, monkeypatch):
         """Test that non-bird classes are filtered."""
-        class MockTensor:
-            def __init__(self, val):
-                self.val = val
-
-            def item(self):
-                return self.val
-
-        class MockXyxy:
-            def __init__(self, coords):
-                self.coords = coords
-
-            def __getitem__(self, idx):
-                return self
-
-            def detach(self):
-                return self
-
-            def cpu(self):
-                return self
-
-            def numpy(self):
-                return np.array(self.coords)
-
-            def tolist(self):
-                return self.coords
-
         # Non-bird class (e.g., person = 0)
         mock_box = types.SimpleNamespace(
             cls=MockTensor(0),  # Not a bird
@@ -255,32 +234,6 @@ class TestPickBestBirdDet:
 
     def test_pick_best_filters_small_boxes(self, monkeypatch):
         """Test that small boxes are filtered."""
-        class MockTensor:
-            def __init__(self, val):
-                self.val = val
-
-            def item(self):
-                return self.val
-
-        class MockXyxy:
-            def __init__(self, coords):
-                self.coords = coords
-
-            def __getitem__(self, idx):
-                return self
-
-            def detach(self):
-                return self
-
-            def cpu(self):
-                return self
-
-            def numpy(self):
-                return np.array(self.coords)
-
-            def tolist(self):
-                return self.coords
-
         # Small box (5x5 = 25 area, below min_box_area=100)
         mock_box = types.SimpleNamespace(
             cls=MockTensor(14),  # bird

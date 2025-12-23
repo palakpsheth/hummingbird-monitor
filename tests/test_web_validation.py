@@ -11,7 +11,6 @@ import importlib
 from pathlib import Path
 
 
-
 def _import_web(monkeypatch):
     """Import hbmon.web after setting safe directories."""
     cwd = Path.cwd().resolve()
