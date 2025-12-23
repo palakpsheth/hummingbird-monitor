@@ -89,14 +89,54 @@
       {% if video_info and video_info.exists %}
         <div style="margin-top:16px;">
           <h3 style="margin-top:0;">Video Clip</h3>
-          <video controls preload="metadata" style="width:100%; max-width:640px; border-radius:8px; background:#000;">
+          <div id="video-error" style="display:none; padding:12px; background:#fee; border:1px solid #c00; border-radius:8px; margin-bottom:8px;">
+            <strong>⚠️ Video playback error:</strong> <span id="video-error-msg"></span>
+            <div class="muted" style="margin-top:8px;">
+              The video file may use a codec your browser doesn't support (e.g., mp4v/MPEG-4 Part 2).
+              Try downloading and playing with VLC, or check the <a href="/api/video_info/{{ o.id }}" target="_blank">video diagnostics</a>.
+            </div>
+          </div>
+          <video id="clip-player" controls preload="metadata" style="width:100%; max-width:100%; height:auto; border-radius:8px; background:#000;">
             <source src="/media/{{ o.video_path }}" type="video/mp4">
             Your browser does not support the video tag.
           </video>
-          <div class="muted" style="margin-top:8px;">
+          <div id="video-dimensions" class="muted" style="margin-top:8px;">
             File: {{ video_info.size_kb }} KB
             {% if video_info.suffix %} · Format: {{ video_info.suffix }}{% endif %}
+            · <a href="/media/{{ o.video_path }}" download>Download video</a>
           </div>
+          <script>
+            (function() {
+              var video = document.getElementById('clip-player');
+              var errorDiv = document.getElementById('video-error');
+              var errorMsg = document.getElementById('video-error-msg');
+              var dimsDiv = document.getElementById('video-dimensions');
+              
+              video.addEventListener('error', function(e) {
+                var msg = 'Unknown error';
+                if (video.error) {
+                  switch(video.error.code) {
+                    case 1: msg = 'MEDIA_ERR_ABORTED: Playback aborted'; break;
+                    case 2: msg = 'MEDIA_ERR_NETWORK: Network error'; break;
+                    case 3: msg = 'MEDIA_ERR_DECODE: Decoding error (unsupported codec)'; break;
+                    case 4: msg = 'MEDIA_ERR_SRC_NOT_SUPPORTED: Format not supported'; break;
+                  }
+                }
+                errorMsg.textContent = msg;
+                errorDiv.style.display = 'block';
+              });
+              
+              // Show video dimensions once metadata is loaded
+              video.addEventListener('loadedmetadata', function() {
+                var dimsText = ' · Resolution: ' + video.videoWidth + '×' + video.videoHeight;
+                if (video.duration) {
+                  dimsText += ' · Duration: ' + video.duration.toFixed(1) + 's';
+                }
+                // Use textContent append via a text node for safety
+                dimsDiv.appendChild(document.createTextNode(dimsText));
+              });
+            })();
+          </script>
         </div>
       {% elif video_info and not video_info.exists %}
         <div style="margin-top:16px;">
