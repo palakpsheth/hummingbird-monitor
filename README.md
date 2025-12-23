@@ -386,32 +386,28 @@ If video clips don't stream properly in Chrome/Firefox:
 
 ## Testing & Coverage
 
-The `hbmon` package includes a comprehensive test suite with both **unit tests** and **integration tests**.
+The `hbmon` package includes a comprehensive test suite with both **unit tests** and **integration tests**. The coverage badge and PR reports always reflect coverage of **all tests**.
+
+### Running Tests
+
+```bash
+# Run all tests with coverage (default)
+uv run pytest --cov=hbmon --cov-report=term --cov-report=html
+
+# Run only unit tests (skip integration tests)
+uv run pytest -m "not integration"
+
+# Run only integration tests
+uv run pytest -m integration
+```
 
 ### Unit Tests
 
-Unit tests exercise the core logic without requiring heavy ML dependencies. They run by default:
-
-```bash
-# Run unit tests (default)
-uv run pytest --cov=hbmon --cov-report=term --cov-report=html
-```
+Unit tests exercise the core logic without requiring heavy ML dependencies. They are lightweight and fast.
 
 ### Integration Tests
 
-Integration tests require ML dependencies (PyTorch, YOLO, CLIP) and real test data. They are marked with `@pytest.mark.integration` and are **skipped by default**.
-
-```bash
-# Run integration tests only
-uv run pytest -m integration
-
-# Run all tests (unit + integration)
-uv run pytest -m ""
-```
-
-Integration tests run automatically when:
-- A PR is marked **ready for review**
-- Code is pushed to the `main` branch
+Integration tests require ML dependencies (PyTorch, YOLO, CLIP) and real test data. They are marked with `@pytest.mark.integration`.
 
 ### Test Data Structure
 
@@ -442,7 +438,7 @@ See `tests/integration/test_data/README.md` for the complete schema.
 
 ### Coverage Reports
 
-Test coverage is automatically reported on every PR. The coverage badge at the top of this README reflects the current test coverage.
+Test coverage is automatically reported on every PR. The coverage badge at the top of this README reflects coverage of **all tests (unit + integration)**.
 
 ```bash
 # Generate HTML coverage report

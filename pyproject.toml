@@ -52,5 +52,4 @@ markers = [
     "integration: marks tests as integration tests (require ML dependencies and test data)",
     "unit: marks tests as unit tests (lightweight, no ML dependencies)",
 ]
-# By default, skip integration tests. Run with -m integration to include them.
-addopts = "-m 'not integration'"
+# All tests run by default. Use -m 'not integration' to skip integration tests locally.
