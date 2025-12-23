@@ -386,28 +386,69 @@ If video clips don't stream properly in Chrome/Firefox:
 
 ## Testing & Coverage
 
-The `hbmon` package includes a suite of unit tests located in the `tests/` directory.  These
-tests are designed to exercise the core logic of the application without requiring
-heavy optional dependencies such as SQLAlchemy, FastAPI, PyTorch or OpenCV.  To run
-the tests you need to install [pytest](https://pytest.org) and the
-[`pytest‑cov`](https://github.com/pytest-dev/pytest-cov) plugin.  Once installed,
-you can execute the test suite with coverage.  If you’re using [uv](https://github.com/astral-sh/uv)
-to manage your virtual environment (as in the CI pipeline), prefix the command with
-`uv run` so that the correct interpreter and dependencies are used:
+The `hbmon` package includes a comprehensive test suite with both **unit tests** and **integration tests**.
+
+### Unit Tests
+
+Unit tests exercise the core logic without requiring heavy ML dependencies. They run by default:
 
 ```bash
-# Running with uv
+# Run unit tests (default)
 uv run pytest --cov=hbmon --cov-report=term --cov-report=html
-
-# Or, if you installed dependencies with plain pip
-pytest --cov=hbmon --cov-report=term --cov-report=html
 ```
 
-These commands print a coverage summary to the terminal and produce an HTML report
-in the `htmlcov/` directory.  The coverage badge displayed at the top of this
-README reflects the percentage of code covered by the tests.  If you modify the
-code or add new tests, be sure to regenerate the coverage report so the badge
-stays accurate.
+### Integration Tests
+
+Integration tests require ML dependencies (PyTorch, YOLO, CLIP) and real test data. They are marked with `@pytest.mark.integration` and are **skipped by default**.
+
+```bash
+# Run integration tests only
+uv run pytest -m integration
+
+# Run all tests (unit + integration)
+uv run pytest -m ""
+```
+
+Integration tests run automatically when:
+- A PR is marked **ready for review**
+- Code is pushed to the `main` branch
+
+### Test Data Structure
+
+Integration test data is located in `tests/integration/test_data/`. Each test case folder contains:
+
+```text
+tests/integration/test_data/
+├── README.md                    # Full documentation
+├── flying_0/                    # Test case: flying hummingbird
+│   ├── snapshot.jpg             # Captured image
+│   ├── clip.mp4                 # Video clip
+│   └── metadata.json            # Expected labels & sensitivity tests
+├── perched_0/                   # Test case: perched bird
+│   └── ...
+├── feeding_0/                   # Test case: bird at feeder
+│   └── ...
+└── edge_cases/                  # Edge case scenarios
+    ├── low_light_0/
+    └── motion_blur_0/
+```
+
+Each `metadata.json` includes:
+- **expected**: Detection/classification ground truth (when human_verified=true)
+- **sensitivity_tests**: Parameter variations to test
+- **original_observation**: Raw observation data from the worker
+
+See `tests/integration/test_data/README.md` for the complete schema.
+
+### Coverage Reports
+
+Test coverage is automatically reported on every PR. The coverage badge at the top of this README reflects the current test coverage.
+
+```bash
+# Generate HTML coverage report
+uv run pytest --cov=hbmon --cov-report=html
+# Open htmlcov/index.html in browser
+```
 
 ## Pre‑commit hooks
 

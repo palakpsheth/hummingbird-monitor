@@ -1,0 +1,35 @@
+{
+    "description": "Motion blur test case - PLACEHOLDER: Replace with actual test data",
+    "expected": {
+        "detection": null,
+        "species_label": null,
+        "behavior": "flying",
+        "human_verified": false
+    },
+    "source": {
+        "camera": "hummingbirdcam",
+        "timestamp_utc": null,
+        "location": null
+    },
+    "sensitivity_tests": [
+        {
+            "name": "default",
+            "params": {
+                "detect_conf": 0.35,
+                "detect_iou": 0.45,
+                "min_box_area": 600
+            },
+            "expected_detection": null
+        },
+        {
+            "name": "low_confidence",
+            "params": {
+                "detect_conf": 0.20,
+                "detect_iou": 0.45,
+                "min_box_area": 400
+            },
+            "expected_detection": null
+        }
+    ],
+    "original_observation": null
+}
