@@ -215,3 +215,17 @@ def test_get_git_commit_from_env(monkeypatch, tmp_path):
     monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
     monkeypatch.setenv("HBMON_GIT_COMMIT", "envhash123")
     assert web._get_git_commit() == "envhash123"
+
+
+def test_get_git_commit_env_unknown_falls_back_to_git(monkeypatch, tmp_path):
+    """When HBMON_GIT_COMMIT=unknown, fallback to git metadata instead."""
+    web = _import_web(monkeypatch)
+    repo_root = tmp_path / "repo"
+    git_dir = repo_root / ".git" / "refs" / "heads"
+    git_dir.mkdir(parents=True, exist_ok=True)
+    (repo_root / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (git_dir / "main").write_text("abc1234def5678\n")
+    monkeypatch.setattr(web, "_GIT_PATH", None)
+    monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
+    monkeypatch.setenv("HBMON_GIT_COMMIT", "unknown")
+    assert web._get_git_commit() == "abc1234"
