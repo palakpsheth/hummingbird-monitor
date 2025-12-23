@@ -14,9 +14,9 @@ To run with coverage and HTML reports, execute::
 """
 
 
+from datetime import datetime, timezone
 import os
 import time
-from datetime import datetime, timezone
 
 import numpy as np
 import pytest

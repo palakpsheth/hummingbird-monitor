@@ -147,7 +147,71 @@ def test_as_utc_str_treats_naive_as_utc(monkeypatch):
         time.tzset()
 
 
-def test_get_git_commit_without_git(monkeypatch):
+def test_get_git_commit_without_git(monkeypatch, tmp_path):
     web = _import_web(monkeypatch)
     monkeypatch.setattr(web, "_GIT_PATH", None)
+    repo_root = tmp_path / "nogit"
+    repo_root.mkdir()
+    monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
     assert web._get_git_commit() == "unknown"
+
+
+def test_get_git_commit_from_head(monkeypatch, tmp_path):
+    web = _import_web(monkeypatch)
+    repo_root = tmp_path / "repo"
+    git_dir = repo_root / ".git" / "refs" / "heads"
+    git_dir.mkdir(parents=True, exist_ok=True)
+    (repo_root / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (git_dir / "main").write_text("abc1234def5678\n")
+    monkeypatch.setattr(web, "_GIT_PATH", None)
+    monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
+    assert web._get_git_commit() == "abc1234"
+
+
+def test_get_git_commit_from_gitdir_file(monkeypatch, tmp_path):
+    web = _import_web(monkeypatch)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    actual_git = tmp_path / "actual_git"
+    ref_dir = actual_git / "refs" / "heads"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    (actual_git / "HEAD").write_text("ref: refs/heads/main\n")
+    (ref_dir / "main").write_text("deadbeefcafebabe\n")
+    (repo_root / ".git").write_text(f"gitdir: {actual_git}\n")
+    monkeypatch.setattr(web, "_GIT_PATH", None)
+    monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
+    assert web._get_git_commit() == "deadbee"
+
+
+def test_get_git_commit_detached_head(monkeypatch, tmp_path):
+    web = _import_web(monkeypatch)
+    repo_root = tmp_path / "repo"
+    git_dir = repo_root / ".git"
+    git_dir.mkdir(parents=True, exist_ok=True)
+    (git_dir / "HEAD").write_text("cafebabe1234567890\n")
+    monkeypatch.setattr(web, "_GIT_PATH", None)
+    monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
+    assert web._get_git_commit() == "cafebab"
+
+
+def test_get_git_commit_from_packed_refs(monkeypatch, tmp_path):
+    web = _import_web(monkeypatch)
+    repo_root = tmp_path / "repo"
+    git_dir = repo_root / ".git"
+    refs_dir = git_dir / "refs" / "heads"
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n")
+    (git_dir / "packed-refs").write_text("deadbeefcafebabe refs/heads/main\n")
+    monkeypatch.setattr(web, "_GIT_PATH", None)
+    monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
+    assert web._get_git_commit() == "deadbee"
+
+
+def test_get_git_commit_from_env(monkeypatch, tmp_path):
+    web = _import_web(monkeypatch)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    monkeypatch.setattr(web, "_GIT_PATH", None)
+    monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
+    monkeypatch.setenv("HBMON_GIT_COMMIT", "envhash123")
+    assert web._get_git_commit() == "envhash123"
