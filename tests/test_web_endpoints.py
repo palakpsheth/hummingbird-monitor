@@ -655,6 +655,46 @@ def test_split_review_page(tmp_path, monkeypatch):
     assert "split" in r.text.lower() or "Split" in r.text
 
 
+def test_split_review_with_embeddings(tmp_path, monkeypatch):
+    """Test split review page with observations that have embeddings."""
+    import numpy as np
+    from hbmon.models import _pack_embedding
+
+    client = _setup_app(tmp_path, monkeypatch)
+
+    with session_scope() as db:
+        ind = Individual(name="Test", visit_count=10)
+        db.add(ind)
+        db.commit()
+
+        # Create 15 observations with embeddings (enough for split suggestion)
+        for i in range(15):
+            obs = Observation(
+                individual_id=ind.id,
+                species_label="Anna's Hummingbird",
+                species_prob=0.85,
+                snapshot_path=f"snap{i}.jpg",
+                video_path=f"vid{i}.mp4",
+            )
+            db.add(obs)
+            db.commit()
+
+            # Create embedding with a vector
+            vec = np.random.randn(512).astype(np.float32)
+            emb = Embedding(
+                observation_id=obs.id,
+                individual_id=ind.id,
+                embedding_blob=_pack_embedding(vec),
+            )
+            db.add(emb)
+            db.commit()
+
+        ind_id = ind.id
+
+    r = client.get(f"/individuals/{ind_id}/split_review")
+    assert r.status_code == 200
+
+
 def test_split_review_not_found(tmp_path, monkeypatch):
     """Test split review for non-existent individual."""
     client = _setup_app(tmp_path, monkeypatch)

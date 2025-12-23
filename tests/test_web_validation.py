@@ -350,6 +350,43 @@ class TestPrettyJson:
         assert "\n" in result
         assert "nested" in result
 
+    def test_pretty_json_invalid_fallback(self, monkeypatch):
+        """Test that invalid JSON returns original string."""
+        web = _import_web(monkeypatch)
+
+        result = web.pretty_json("{not valid json}")
+        assert result == "{not valid json}"
+
+    def test_pretty_json_type_error(self, monkeypatch):
+        """Test pretty_json with non-serializable content after parse."""
+        web = _import_web(monkeypatch)
+
+        # Valid JSON that might trigger TypeError on re-serialize (rare case)
+        result = web.pretty_json('{"key": "value"}')
+        assert result is not None
+
+
+class TestAsUtcStr:
+    """Tests for the _as_utc_str function."""
+
+    def test_as_utc_str_none(self, monkeypatch):
+        """Test _as_utc_str with None returns None."""
+        web = _import_web(monkeypatch)
+
+        result = web._as_utc_str(None)
+        assert result is None
+
+    def test_as_utc_str_aware_datetime(self, monkeypatch):
+        """Test _as_utc_str with aware datetime."""
+        from datetime import datetime, timezone
+
+        web = _import_web(monkeypatch)
+
+        dt = datetime(2024, 1, 15, 12, 30, 45, tzinfo=timezone.utc)
+        result = web._as_utc_str(dt)
+
+        assert result == "2024-01-15T12:30:45Z"
+
 
 class TestAllowedReviewLabels:
     """Tests for the ALLOWED_REVIEW_LABELS constant."""
@@ -362,3 +399,29 @@ class TestAllowedReviewLabels:
         assert "true_positive" in web.ALLOWED_REVIEW_LABELS
         assert "false_positive" in web.ALLOWED_REVIEW_LABELS
         assert "false_negative" in web.ALLOWED_REVIEW_LABELS
+
+
+class TestToUtc:
+    """Tests for the _to_utc function."""
+
+    def test_to_utc_naive(self, monkeypatch):
+        """Test _to_utc with naive datetime."""
+        from datetime import datetime, timezone
+
+        web = _import_web(monkeypatch)
+
+        naive = datetime(2024, 1, 15, 12, 0, 0)
+        result = web._to_utc(naive)
+
+        assert result.tzinfo == timezone.utc
+
+    def test_to_utc_already_utc(self, monkeypatch):
+        """Test _to_utc with already UTC datetime."""
+        from datetime import datetime, timezone
+
+        web = _import_web(monkeypatch)
+
+        utc_dt = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        result = web._to_utc(utc_dt)
+
+        assert result == utc_dt

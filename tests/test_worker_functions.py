@@ -168,6 +168,131 @@ class TestPickBestBirdDet:
         mock_result = types.SimpleNamespace(boxes=[])
         assert worker._pick_best_bird_det([mock_result], min_box_area=100, bird_class_id=14) is None
 
+    def test_pick_best_with_valid_detection(self, monkeypatch):
+        """Test with a valid bird detection."""
+        # Create a mock box object that simulates YOLO output
+        class MockTensor:
+            def __init__(self, val):
+                self.val = val
+
+            def item(self):
+                return self.val
+
+        class MockXyxy:
+            def __init__(self, coords):
+                self.coords = coords
+
+            def __getitem__(self, idx):
+                return self
+
+            def detach(self):
+                return self
+
+            def cpu(self):
+                return self
+
+            def numpy(self):
+                return np.array(self.coords)
+
+            def tolist(self):
+                return self.coords
+
+        mock_box = types.SimpleNamespace(
+            cls=MockTensor(14),  # bird class
+            conf=MockTensor(0.85),
+            xyxy=MockXyxy([10, 20, 110, 120]),  # 100x100 area
+        )
+
+        mock_result = types.SimpleNamespace(boxes=[mock_box])
+        result = worker._pick_best_bird_det([mock_result], min_box_area=100, bird_class_id=14)
+
+        assert result is not None
+        assert result.x1 == 10
+        assert result.y1 == 20
+        assert result.x2 == 110
+        assert result.y2 == 120
+        assert result.conf == 0.85
+
+    def test_pick_best_filters_by_class(self, monkeypatch):
+        """Test that non-bird classes are filtered."""
+        class MockTensor:
+            def __init__(self, val):
+                self.val = val
+
+            def item(self):
+                return self.val
+
+        class MockXyxy:
+            def __init__(self, coords):
+                self.coords = coords
+
+            def __getitem__(self, idx):
+                return self
+
+            def detach(self):
+                return self
+
+            def cpu(self):
+                return self
+
+            def numpy(self):
+                return np.array(self.coords)
+
+            def tolist(self):
+                return self.coords
+
+        # Non-bird class (e.g., person = 0)
+        mock_box = types.SimpleNamespace(
+            cls=MockTensor(0),  # Not a bird
+            conf=MockTensor(0.99),
+            xyxy=MockXyxy([10, 20, 110, 120]),
+        )
+
+        mock_result = types.SimpleNamespace(boxes=[mock_box])
+        result = worker._pick_best_bird_det([mock_result], min_box_area=100, bird_class_id=14)
+
+        assert result is None
+
+    def test_pick_best_filters_small_boxes(self, monkeypatch):
+        """Test that small boxes are filtered."""
+        class MockTensor:
+            def __init__(self, val):
+                self.val = val
+
+            def item(self):
+                return self.val
+
+        class MockXyxy:
+            def __init__(self, coords):
+                self.coords = coords
+
+            def __getitem__(self, idx):
+                return self
+
+            def detach(self):
+                return self
+
+            def cpu(self):
+                return self
+
+            def numpy(self):
+                return np.array(self.coords)
+
+            def tolist(self):
+                return self.coords
+
+        # Small box (5x5 = 25 area, below min_box_area=100)
+        mock_box = types.SimpleNamespace(
+            cls=MockTensor(14),  # bird
+            conf=MockTensor(0.90),
+            xyxy=MockXyxy([10, 20, 15, 25]),  # 5x5 = 25 area
+        )
+
+        mock_result = types.SimpleNamespace(boxes=[mock_box])
+        result = worker._pick_best_bird_det([mock_result], min_box_area=100, bird_class_id=14)
+
+        assert result is None
+
 
 class TestSafeMkdir:
     """Tests for the _safe_mkdir function."""
@@ -200,6 +325,47 @@ class TestWriteJpeg:
 
         with pytest.raises(RuntimeError, match="OpenCV.*not installed"):
             worker._write_jpeg(Path("/tmp/test.jpg"), np.zeros((10, 10, 3), dtype=np.uint8))
+
+    def test_write_jpeg_success(self, monkeypatch, tmp_path):
+        """Test _write_jpeg success with mocked cv2."""
+        monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+
+        encoded_data = b"fake jpeg data"
+
+        def mock_imencode(ext, frame, params):
+            return True, types.SimpleNamespace(tobytes=lambda: encoded_data)
+
+        fake_cv2 = types.SimpleNamespace(
+            imencode=mock_imencode,
+            IMWRITE_JPEG_QUALITY=1,
+        )
+        monkeypatch.setattr(worker, "cv2", fake_cv2)
+
+        out_path = tmp_path / "test.jpg"
+        frame = np.zeros((10, 10, 3), dtype=np.uint8)
+        worker._write_jpeg(out_path, frame)
+
+        assert out_path.exists()
+        assert out_path.read_bytes() == encoded_data
+
+    def test_write_jpeg_encode_failure(self, monkeypatch, tmp_path):
+        """Test _write_jpeg raises on encode failure."""
+        monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+
+        def mock_imencode(ext, frame, params):
+            return False, None  # Encode failure
+
+        fake_cv2 = types.SimpleNamespace(
+            imencode=mock_imencode,
+            IMWRITE_JPEG_QUALITY=1,
+        )
+        monkeypatch.setattr(worker, "cv2", fake_cv2)
+
+        out_path = tmp_path / "test.jpg"
+        frame = np.zeros((10, 10, 3), dtype=np.uint8)
+
+        with pytest.raises(RuntimeError, match="imencode failed"):
+            worker._write_jpeg(out_path, frame)
 
 
 class TestConvertToH264:
