@@ -172,6 +172,7 @@ def _get_git_commit() -> str:
             if cleaned:
                 return cleaned
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            # Fallback to file-based parsing when the git CLI is unavailable or fails.
             pass
     head_commit = _read_git_head(_REPO_ROOT)
     if head_commit:
