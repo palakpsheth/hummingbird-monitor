@@ -82,6 +82,9 @@ rtsp://wyze-bridge:8554/<YOUR_CAMERA_NAME>
 
 > Tip: once `wyze-bridge` is running, you can also open its UI at `http://<mini-pc-ip>:5000` to confirm stream names.
 
+Optional:
+- `GIT_COMMIT`: footer label shown in the UI; usually injected by CI/build. Defaults to `unknown`.
+
 ### 2) Run
 ```bash
 docker compose up -d --build

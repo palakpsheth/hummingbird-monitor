@@ -103,6 +103,53 @@ def _normalize_timezone(tz: str | None) -> str:
     return txt or "local"
 
 
+def _read_git_head(repo_root: Path) -> str | None:
+    git_path = repo_root / ".git"
+    git_dir = git_path
+    if git_path.is_file():
+        try:
+            data = git_path.read_text().strip()
+        except OSError:
+            return None
+        if data.startswith("gitdir:"):
+            rel = data.partition(":")[2].strip()
+            git_dir = (git_path.parent / rel).resolve()
+        else:
+            return None
+    head_path = git_dir / "HEAD"
+    try:
+        head = head_path.read_text().strip()
+    except OSError:
+        return None
+    if not head:
+        return None
+    if head.startswith("ref:"):
+        ref = head.partition(" ")[2].strip()
+        if not ref:
+            return None
+        ref_path = git_dir / ref
+        try:
+            commit = ref_path.read_text().strip()
+        except OSError:
+            packed = git_dir / "packed-refs"
+            try:
+                with packed.open() as pf:
+                    for line in pf:
+                        txt = line.strip()
+                        if not txt or txt.startswith("#") or txt.startswith("^"):
+                            continue
+                        parts = txt.split(" ", 1)
+                        if len(parts) == 2 and parts[1] == ref:
+                            commit = parts[0]
+                            break
+                    else:
+                        commit = ""
+            except OSError:
+                commit = ""
+        return commit[:7] if commit else None
+    return head[:7]
+
+
 def _timezone_label(tz: str | None) -> str:
     clean = _normalize_timezone(tz)
     return "Browser local" if clean.lower() == "local" else clean
@@ -112,23 +159,25 @@ def _get_git_commit() -> str:
     env_commit = os.getenv("HBMON_GIT_COMMIT")
     if env_commit:
         return env_commit
-    if not _REPO_ROOT.is_dir():
-        return "unknown"
-    if _GIT_PATH is None:
-        return "unknown"
-    try:
-        commit = subprocess.check_output(
-            [_GIT_PATH, "rev-parse", "--short", "HEAD"],
-            cwd=_REPO_ROOT,
-            timeout=1.0,
-            shell=False,
-            text=True,
-        )
-        return commit.strip() or "unknown"
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-        return "unknown"
-    except Exception:
-        return "unknown"
+    if _REPO_ROOT.is_dir() and _GIT_PATH is not None:
+        try:
+            commit = subprocess.check_output(
+                [_GIT_PATH, "rev-parse", "--short", "HEAD"],
+                cwd=_REPO_ROOT,
+                timeout=1.0,
+                shell=False,
+                text=True,
+            )
+            cleaned = commit.strip()
+            if cleaned:
+                return cleaned
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            # Fallback to file-based parsing when the git CLI is unavailable or fails.
+            pass
+    head_commit = _read_git_head(_REPO_ROOT)
+    if head_commit:
+        return head_commit
+    return "unknown"
 
 
 _GIT_COMMIT = _get_git_commit()
