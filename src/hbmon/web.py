@@ -123,7 +123,7 @@ def _get_git_commit() -> str:
             shell=False,
             text=True,
         )
-        commit = out.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return commit or "unknown"
     except Exception:
         return "unknown"
