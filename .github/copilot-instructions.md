@@ -257,6 +257,56 @@ User settings are stored in `/data/config.json` and include:
 - **observations**: Individual detection events with metadata
 - **embeddings**: Optional storage of per-observation embedding vectors
 
+## Documentation & README Updates
+
+**ALWAYS update the README when making changes that affect:**
+
+### User-Facing Changes
+- New features or functionality that users will interact with
+- Changes to web UI, API endpoints, or CLI commands
+- New configuration options or environment variables
+- Changes to deployment instructions or Docker setup
+- New dependencies that affect installation
+- Changes to data models or export formats
+
+### Setup & Configuration
+- New prerequisites or system requirements
+- Changes to installation steps or Docker Compose configuration
+- New tuning parameters or recommendations
+- Changes to file paths, volumes, or persistent storage
+- Updates to GPU acceleration setup
+- New troubleshooting steps or common issues
+
+### Architecture & Design
+- New containers or services in Docker Compose
+- Changes to database schema (if user-visible)
+- New ML models or classification approaches
+- Changes to the processing pipeline
+- Performance improvements worth noting
+
+### Examples of README Sections to Update
+- **Quick Start**: If setup steps change
+- **Configuration**: When adding/modifying environment variables
+- **Tuning Guide**: When adding new tunable parameters
+- **Architecture**: When adding/removing containers or changing data flow
+- **Troubleshooting**: When fixing bugs or adding known issues
+- **GPU Acceleration**: When changing CUDA/device requirements
+- **Exports & Backups**: When changing export formats or locations
+- **Directory Layout**: When adding new directories or restructuring
+
+### When README Updates Are NOT Required
+- Internal refactoring that doesn't change behavior
+- Bug fixes that restore documented behavior
+- Test-only changes
+- CI/CD configuration changes (unless affecting user workflows)
+- Minor code style improvements
+
+**After updating the README:**
+- Ensure consistency with the actual implementation
+- Verify examples and commands are correct
+- Check that version numbers and badges are current
+- Maintain the existing structure and style
+
 ## Common Tasks
 
 ### Before Every Commit
@@ -286,24 +336,59 @@ User settings are stored in `/data/config.json` and include:
 2. Add appropriate type hints
 3. Handle optional dependencies gracefully
 4. Write tests for new functionality
-5. Update documentation (README, docstrings)
+5. **Update documentation (README, docstrings)**
+   - **README**: Update if the feature is user-facing or changes setup/configuration
+   - **Docstrings**: Update for all new/modified functions, classes, and modules
+   - See "Documentation & README Updates" section for detailed guidance
 6. **Run ruff and full pytest before committing (MANDATORY)**
 
 ### Modifying ML Pipeline
 
 1. Keep ML code in appropriate modules (`clip_model.py`, `clustering.py`, `worker.py`)
 2. Document new hyperparameters as environment variables
-3. Add tuning guidance to README if needed
+3. **Add tuning guidance to README if needed**
+   - Update "Tuning Guide" section with new parameters
+   - Include default values and practical recommendations
+   - Explain the impact of parameter changes
 4. Ensure CPU-friendly defaults (GPU optional)
 5. Test with and without GPU availability
-6. **Run ruff and full pytest before committing (MANDATORY)**
+6. **Update README if GPU requirements change**
+7. **Run ruff and full pytest before committing (MANDATORY)**
 
 ### Database Changes
 
 1. Update SQLAlchemy models in `models.py`
 2. Maintain dataclass stubs for testing
-3. Update schema documentation
+3. **Update schema documentation**
+   - Update README "Architecture" section (see "Persistent storage" and database schema details) if schema changes
+   - Add a dedicated "Database Schema" subsection if more detailed documentation is needed
+   - Document new tables, columns, or relationships
 4. Consider migration path for existing databases
+5. **Update README if backup/export procedures change**
+6. **Run ruff and full pytest before committing (MANDATORY)**
+
+### Docker & Deployment Changes
+
+1. **Update README when modifying Docker setup:**
+   - Changes to `docker-compose.yml` (new services, ports, volumes)
+   - Changes to `Dockerfile` (new dependencies, build steps)
+   - New environment variables in `.env.example`
+   - Changes to nginx configuration
+2. **Update "Quick Start" section** if deployment steps change
+3. **Update "Architecture" section** if containers are added/removed
+4. Ensure `.env.example` stays in sync with documented variables
+5. Test the full Docker Compose setup before committing
+6. **Run ruff and full pytest before committing (MANDATORY)**
+
+### Adding Configuration Options
+
+1. Add environment variable with `HBMON_` prefix
+2. Document in code module docstrings
+3. **Update README in relevant sections:**
+   - Add to "Configuration" > "Environment Variables"
+   - Update tuning guide if it's a tunable parameter
+   - Add to `.env.example` with helpful comments
+4. Provide sensible defaults
 5. **Run ruff and full pytest before committing (MANDATORY)**
 
 ## Security Considerations
@@ -366,6 +451,7 @@ When in doubt:
 - Follow existing code patterns in the repository
 - Check the README for setup and usage guidance
 - Review test files for examples
+- **If you modify user-facing functionality, configuration, or setup: UPDATE THE README**
 - **ALWAYS run `uv run ruff check .` before committing**
 - **ALWAYS run `uv run pytest --cov=hbmon` before committing**
 - Use these commands to ensure changes don't break tests or violate code style
