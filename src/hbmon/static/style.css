@@ -210,7 +210,7 @@ a:hover { text-decoration: underline; }
 }
 
 @media (min-width: 900px) {
-  .grid2 { grid-template-columns: 1.2fr 0.8fr; }
+  .grid2 { grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); }
 }
 
 .bigimg {
@@ -218,6 +218,31 @@ a:hover { text-decoration: underline; }
   border-radius: 14px;
   border: 1px solid var(--border);
   display: block;
+}
+
+.zoom-frame {
+  position: relative;
+  overflow: auto;
+  border-radius: 14px;
+}
+
+.zoom-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 85%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.zoom-frame [data-zoom-target] {
+  transform-origin: center center;
+  transition: transform 120ms ease;
 }
 
 .meta2 { margin-top: 8px; font-size: 14px; opacity: 0.95; }
@@ -229,6 +254,7 @@ a:hover { text-decoration: underline; }
   border-radius: 12px;
   overflow: auto;
   max-height: 240px;
+  white-space: pre-wrap;
 }
 
 /* ───────────────────────── ROI Calibration ───────────────────────── */

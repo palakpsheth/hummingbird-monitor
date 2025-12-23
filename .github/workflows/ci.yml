@@ -13,13 +13,16 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -44,7 +47,7 @@ jobs:
 
       # Post coverage report as a PR comment
       - name: Coverage comment
-        if: github.event_name == 'pull_request'
+        if: matrix.python-version == '3.12' && github.event_name == 'pull_request'
         uses: orgoro/coverage@v3.2
         with:
           coverageFile: coverage.xml
@@ -55,6 +58,7 @@ jobs:
       # create an SVG file (coverage.svg) at the repository root.  See
       # https://github.com/tj-actions/coverage-badge-py for details.
       - name: Generate coverage badge
+        if: matrix.python-version == '3.12'
         uses: tj-actions/coverage-badge-py@v2
 
       # Check whether the generated badge file differs from what is
@@ -63,6 +67,7 @@ jobs:
       # churn.
       - name: Verify changed files
         id: verify-changed-files
+        if: matrix.python-version == '3.12'
         uses: tj-actions/verify-changed-files@v20
         with:
           files: coverage.svg
@@ -73,7 +78,7 @@ jobs:
       # conditional ensures this step only runs when the badge has
       # actually changed.
       - name: Commit coverage badge
-        if: github.event_name != 'pull_request' && steps.verify-changed-files.outputs.files_changed == 'true'
+        if: matrix.python-version == '3.12' && github.event_name != 'pull_request' && steps.verify-changed-files.outputs.files_changed == 'true'
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -87,7 +92,7 @@ jobs:
       # Actions, you may need to adjust your workflow to create a
       # pull request instead.
       - name: Push changes
-        if: github.event_name != 'pull_request' && steps.verify-changed-files.outputs.files_changed == 'true'
+        if: matrix.python-version == '3.12' && github.event_name != 'pull_request' && steps.verify-changed-files.outputs.files_changed == 'true'
         uses: ad-m/github-push-action@master
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
