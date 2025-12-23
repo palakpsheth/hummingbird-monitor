@@ -140,7 +140,7 @@ def utcnow() -> datetime:
 
 def _to_utc(dt: datetime) -> datetime:
     """
-    Normalize a datetime to UTC, assuming naïve values are already UTC.
+    Normalize a datetime to UTC, assuming naive values are already UTC.
     """
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
