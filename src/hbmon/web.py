@@ -119,8 +119,9 @@ def _get_git_commit() -> str:
             cwd=_REPO_ROOT,
             timeout=1.0,
             shell=False,
+            text=True,
         )
-        commit = out.decode("utf-8", errors="ignore").strip()
+        commit = out.strip()
         return commit or "unknown"
     except Exception:
         return "unknown"

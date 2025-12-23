@@ -5,8 +5,10 @@
   const body = document.body || document.documentElement;
 
   let cachedTz;
+  let tzChecked = false;
   function getConfiguredTimezone() {
-    if (cachedTz !== undefined) return cachedTz;
+    if (tzChecked) return cachedTz;
+    tzChecked = true;
     const tz = (body?.dataset?.hbmonTz || "").trim();
     if (!tz || tz.toLowerCase() === "local") {
       cachedTz = null;
