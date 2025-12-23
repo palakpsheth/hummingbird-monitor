@@ -251,6 +251,12 @@ def pretty_json(text: str | None) -> str | None:
 
 
 def _as_utc_str(dt: datetime | None) -> str | None:
+    """
+    Convert a datetime to a UTC ISO 8601 string with a trailing "Z".
+
+    Naive datetimes are treated as already being in UTC and are given a UTC tzinfo.
+    Aware datetimes are converted to UTC before formatting. Returns None if dt is None.
+    """
     if dt is None:
         return None
     if dt.tzinfo is None:
