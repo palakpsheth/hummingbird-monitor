@@ -577,11 +577,11 @@ def make_app() -> Any:
         if o.video_path:
             video_file = media_dir() / o.video_path
             exists = video_file.exists()
-            size_kb = 0
+            size_kb = 0.0
             suffix = ""
             if exists:
                 try:
-                    size_kb = round(video_file.stat().st_size / 1024)
+                    size_kb = round(video_file.stat().st_size / 1024, 2)
                 except OSError:
                     pass
                 suffix = video_file.suffix.lower()

@@ -142,7 +142,9 @@ def test_video_info_endpoint_with_existing_file(tmp_path, monkeypatch):
     clips_dir = mdir / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     vid = clips_dir / "test.mp4"
-    vid.write_bytes(b"fake video content 12345")
+    video_content = b"fake video content 12345"
+    vid.write_bytes(video_content)
+    expected_size = len(video_content)
 
     with session_scope() as db:
         obs = Observation(
@@ -160,7 +162,7 @@ def test_video_info_endpoint_with_existing_file(tmp_path, monkeypatch):
     data = r.json()
     assert data["observation_id"] == obs_id
     assert data["file_exists"] is True
-    assert data["file_size_bytes"] == 24
+    assert data["file_size_bytes"] == expected_size
     assert data["file_suffix"] == ".mp4"
     assert "clips/test.mp4" in data["video_path"]
 
