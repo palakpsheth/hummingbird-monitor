@@ -7,7 +7,7 @@
      coverage without relying on an external badge service. -->
 ![Coverage](coverage.svg)
 [![CI](https://github.com/palakpsheth/hummingbird-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/palakpsheth/hummingbird-monitor/actions/workflows/ci.yml)
-![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+![Python 3.11 | 3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
 
 
 LAN-only hummingbird monitoring system designed for a **Linux x64 mini PC**.
