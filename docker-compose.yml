@@ -45,7 +45,6 @@ services:
 
     volumes:
       - ./data:/data
-      - ./.git:/app/.git:ro
     ports:
       - "8000:8000"
     depends_on:
