@@ -4,15 +4,22 @@
 (function () {
   const body = document.body || document.documentElement;
 
+  let cachedTz;
   function getConfiguredTimezone() {
+    if (cachedTz !== undefined) return cachedTz;
     const tz = (body?.dataset?.hbmonTz || "").trim();
-    if (!tz || tz.toLowerCase() === "local") return null;
+    if (!tz || tz.toLowerCase() === "local") {
+      cachedTz = null;
+      return cachedTz;
+    }
     try {
       // Validate timezone; Intl may throw if the time zone is invalid
       new Intl.DateTimeFormat(undefined, { timeZone: tz });
-      return tz;
+      cachedTz = tz;
+      return cachedTz;
     } catch (err) {
-      return null;
+      cachedTz = null;
+      return cachedTz;
     }
   }
 

@@ -33,8 +33,8 @@ import csv
 import io
 import math
 import os
-import shutil
 import subprocess
+import shutil
 import tarfile
 import time
 from datetime import datetime, timezone
@@ -92,6 +92,7 @@ from hbmon.schema import HealthOut, RoiOut
 from hbmon.clustering import l2_normalize, suggest_split_two_groups
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+_GIT_PATH = shutil.which("git")
 
 
 def _normalize_timezone(tz: str | None) -> str:
@@ -110,18 +111,17 @@ def _get_git_commit() -> str:
         return env_commit
     if not _REPO_ROOT.is_dir():
         return "unknown"
-    if shutil.which("git") is None:
+    if _GIT_PATH is None:
         return "unknown"
     try:
         out = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
+            [_GIT_PATH, "rev-parse", "--short", "HEAD"],
             cwd=_REPO_ROOT,
             timeout=1.0,
+            shell=False,
         )
         commit = out.decode("utf-8", errors="ignore").strip()
         return commit or "unknown"
-    except FileNotFoundError:
-        return "unknown"
     except Exception:
         return "unknown"
 
