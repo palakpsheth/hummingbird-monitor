@@ -14,8 +14,12 @@ To run with coverage and HTML reports, execute::
 """
 
 
-import numpy as np
+import os
+import time
 from datetime import datetime, timezone
+
+import numpy as np
+import pytest
 
 import hbmon.config as config
 import hbmon.clustering as clustering
@@ -44,6 +48,30 @@ except Exception:
     # fallback to None so tests can skip gracefully.
     Individual = None  # type: ignore[assignment]
     Observation = None  # type: ignore[assignment]
+
+
+def test_observation_ts_utc_handles_naive(monkeypatch):
+    if Observation is None or not _SQLALCHEMY_AVAILABLE:
+        pytest.skip("SQLAlchemy Observation model not available")
+    if not hasattr(time, "tzset"):  # pragma: no cover - platform guard
+        pytest.skip("tzset not available on this platform")
+
+    old_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "US/Pacific")
+    time.tzset()
+    try:
+        obs = Observation(
+            ts=datetime(2024, 1, 1, 12, 0, 0),
+            snapshot_path="snap.jpg",
+            video_path="clip.mp4",
+        )
+        assert obs.ts_utc == "2024-01-01T12:00:00Z"
+    finally:
+        if old_tz is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", old_tz)
+        time.tzset()
 
 
 def test_roi_clamp_and_tuple():

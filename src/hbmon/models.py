@@ -138,6 +138,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _to_utc(dt: datetime) -> datetime:
+    """
+    Normalize a datetime to UTC, assuming naïve values are already UTC.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 # ----------------------------
 # Utilities for embedding blobs
 # ----------------------------
@@ -207,7 +216,7 @@ if _SQLALCHEMY_AVAILABLE:
         def last_seen_utc(self) -> str | None:
             if self.last_seen_at is None:
                 return None
-            return self.last_seen_at.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            return _to_utc(self.last_seen_at).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
     class Observation(Base):
@@ -254,7 +263,7 @@ if _SQLALCHEMY_AVAILABLE:
 
         @property
         def ts_utc(self) -> str:
-            return self.ts.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            return _to_utc(self.ts).isoformat(timespec="seconds").replace("+00:00", "Z")
 
         @property
         def bbox_xyxy(self) -> tuple[int, int, int, int] | None:
@@ -368,7 +377,7 @@ else:
         def last_seen_utc(self) -> Optional[str]:
             if self.last_seen_at is None:
                 return None
-            return self.last_seen_at.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            return _to_utc(self.last_seen_at).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
     @dataclass
@@ -396,7 +405,7 @@ else:
 
         @property
         def ts_utc(self) -> str:
-            return self.ts.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            return _to_utc(self.ts).isoformat(timespec="seconds").replace("+00:00", "Z")
 
         @property
         def bbox_xyxy(self) -> Optional[tuple[int, int, int, int]]:

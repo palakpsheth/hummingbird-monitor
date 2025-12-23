@@ -204,7 +204,11 @@ def pretty_json(text: str | None) -> str | None:
 def _as_utc_str(dt) -> str | None:
     if dt is None:
         return None
-    return dt.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
