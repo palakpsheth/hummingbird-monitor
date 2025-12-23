@@ -265,7 +265,7 @@ A typical `.github/workflows/ci.yml` for this repo:
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](./LICENSE) for details.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
