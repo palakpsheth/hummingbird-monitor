@@ -389,7 +389,21 @@ def run_worker() -> None:
         nonlocal last_settings_load, settings
         now = time.time()
         if settings is None or (now - last_settings_load) > 3.0:
-            settings = load_settings()
+            settings = load_settings(apply_env_overrides=False)
+
+            # Always honor operational env overrides for RTSP URL and camera name,
+            # even when user-tunable settings (thresholds, ROI) come from config.json.
+            env_rtsp = os.getenv("HBMON_RTSP_URL")
+            if env_rtsp:
+                if settings.rtsp_url != env_rtsp:
+                    print(f"[worker] Overriding rtsp_url from env: {env_rtsp}")
+                settings.rtsp_url = env_rtsp
+
+            env_camera = os.getenv("HBMON_CAMERA_NAME")
+            if env_camera:
+                if getattr(settings, "camera_name", None) != env_camera:
+                    print(f"[worker] Overriding camera_name from env: {env_camera}")
+                settings.camera_name = env_camera  # type: ignore[attr-defined]
             last_settings_load = now
         return settings
 

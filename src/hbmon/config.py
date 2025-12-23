@@ -263,13 +263,74 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
     return s
 
 
-def load_settings() -> Settings:
+def _settings_from_env(
+    *,
+    last_updated_utc: float | None = None,
+    use_env: bool = True,
+) -> Settings:
+    """
+    Build Settings using environment variables as defaults.
+    This is used when no config file exists or when a fallback is needed.
+    """
+    s = Settings()
+    if use_env:
+        s = s.with_env_overrides()
+    if last_updated_utc is not None:
+        s.last_updated_utc = float(last_updated_utc)
+    return s
+
+
+def _apply_env_overrides_if_needed(
+    s: Settings,
+    *,
+    apply_env_overrides: bool,
+    env_applied: bool,
+) -> Settings:
+    if apply_env_overrides and not env_applied:
+        return s.with_env_overrides()
+    return s
+
+
+def _seed_settings(bootstrap_from_env: bool) -> tuple[Settings, bool]:
+    env_applied = bootstrap_from_env
+    s = _settings_from_env(last_updated_utc=time.time(), use_env=env_applied)
+    return s, env_applied
+
+
+def load_settings(*, apply_env_overrides: bool = True, bootstrap_from_env: bool = True) -> Settings:
+    """
+    Load the persisted Settings from config.json, optionally applying environment overrides.
+
+    Parameters
+    ----------
+    apply_env_overrides:
+        Controls whether environment variables override values loaded from the persisted config file.
+        When True (default), any relevant HBMON_* environment variables are applied on top of the
+        loaded Settings. This is appropriate for the web UI and other components that should respect
+        operator-level environment overrides even if the user changes settings via the UI.
+
+        When False, the returned Settings reflect only the persisted configuration (plus any
+        seeding behavior controlled by ``bootstrap_from_env``). Use this for runtime components
+        (e.g., workers) that need to pick up user-configured changes written by the web UI without
+        having those values masked by current environment variables.
+
+    bootstrap_from_env:
+        Controls how a fresh Settings instance is bootstrapped when no valid config file is
+        available (missing or corrupted). When True (default), environment variables are used as
+        the initial source of values for a new Settings object, which is then persisted to
+        config.json. When False, a new Settings object is created using only code defaults, ignoring
+        environment variables during this initial seeding step.
+    """
     ensure_dirs()
     p = config_path()
     if not p.exists():
-        s = Settings(last_updated_utc=time.time())
+        s, env_applied = _seed_settings(bootstrap_from_env)
         save_settings(s)
-        return s.with_env_overrides()
+        return _apply_env_overrides_if_needed(
+            s,
+            apply_env_overrides=apply_env_overrides,
+            env_applied=env_applied,
+        )
 
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
@@ -277,9 +338,16 @@ def load_settings() -> Settings:
             raise ValueError("config.json root is not an object")
         s = _settings_from_dict(data)
     except Exception:
-        s = Settings(last_updated_utc=time.time())
+        s, env_applied = _seed_settings(bootstrap_from_env)
+        return _apply_env_overrides_if_needed(
+            s,
+            apply_env_overrides=apply_env_overrides,
+            env_applied=env_applied,
+        )
 
-    return s.with_env_overrides()
+    if apply_env_overrides:
+        s = s.with_env_overrides()
+    return s
 
 
 def save_settings(s: Settings) -> None:

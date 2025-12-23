@@ -31,6 +31,21 @@ def test_save_and_load_settings_roundtrip(monkeypatch, tmp_path):
     monkeypatch.setenv("HBMON_RTSP_URL", "override")
     s3 = config.load_settings()
     assert s3.rtsp_url == "override"
+    # Explicitly opt out of env overrides to pick up persisted config values
+    s4 = config.load_settings(apply_env_overrides=False)
+    assert s4.rtsp_url == "rtsptest"
+
+
+def test_load_settings_bootstrap_uses_env(monkeypatch, tmp_path):
+    """When no config file exists, load_settings seeds values from env even without overrides."""
+    monkeypatch.setenv("HBMON_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HBMON_MEDIA_DIR", str(tmp_path / "media"))
+    monkeypatch.setenv("HBMON_RTSP_URL", "env_rtsp_url")
+    cfg = config.config_path()
+    if cfg.exists():
+        cfg.unlink()
+    s = config.load_settings(apply_env_overrides=False)
+    assert s.rtsp_url == "env_rtsp_url"
 
 
 def test_load_settings_corrupted_file(monkeypatch, tmp_path):
@@ -47,6 +62,21 @@ def test_load_settings_corrupted_file(monkeypatch, tmp_path):
     assert s.rtsp_url == ""
     # fps_limit should be default value (8.0)
     assert abs(s.fps_limit - 8.0) < 1e-6
+
+
+def test_load_settings_corrupted_file_no_overrides(monkeypatch, tmp_path):
+    """
+    When config.json is corrupted and env overrides are disabled, fallback should still seed from env.
+    This matches worker behavior (apply_env_overrides=False) while retaining bootstrap from env.
+    """
+    monkeypatch.setenv("HBMON_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HBMON_MEDIA_DIR", str(tmp_path / "media"))
+    monkeypatch.setenv("HBMON_RTSP_URL", "env_rtsp_url")
+    config.ensure_dirs()
+    cfg = config.config_path()
+    cfg.write_text("not a json", encoding="utf-8")
+    s = config.load_settings(apply_env_overrides=False)
+    assert s.rtsp_url == "env_rtsp_url"
 
 
 def test_get_db_url(monkeypatch, tmp_path):
