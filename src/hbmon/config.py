@@ -291,13 +291,13 @@ def _apply_env_overrides_if_needed(
     return s
 
 
-def _seed_settings(seed_env_if_missing: bool) -> tuple[Settings, bool]:
-    env_applied = seed_env_if_missing
+def _seed_settings(bootstrap_from_env: bool) -> tuple[Settings, bool]:
+    env_applied = bootstrap_from_env
     s = _settings_from_env(last_updated_utc=time.time(), use_env=env_applied)
     return s, env_applied
 
 
-def load_settings(*, apply_env_overrides: bool = True, seed_env_if_missing: bool = True) -> Settings:
+def load_settings(*, apply_env_overrides: bool = True, bootstrap_from_env: bool = True) -> Settings:
     """
     Load the persisted Settings from config.json, optionally applying environment overrides.
 
@@ -310,11 +310,11 @@ def load_settings(*, apply_env_overrides: bool = True, seed_env_if_missing: bool
         operator-level environment overrides even if the user changes settings via the UI.
 
         When False, the returned Settings reflect only the persisted configuration (plus any
-        seeding behavior controlled by ``seed_env_if_missing``). Use this for runtime components
+        seeding behavior controlled by ``bootstrap_from_env``). Use this for runtime components
         (e.g., workers) that need to pick up user-configured changes written by the web UI without
         having those values masked by current environment variables.
 
-    seed_env_if_missing:
+    bootstrap_from_env:
         Controls how a fresh Settings instance is bootstrapped when no valid config file is
         available (missing or corrupted). When True (default), environment variables are used as
         the initial source of values for a new Settings object, which is then persisted to
@@ -324,7 +324,7 @@ def load_settings(*, apply_env_overrides: bool = True, seed_env_if_missing: bool
     ensure_dirs()
     p = config_path()
     if not p.exists():
-        s, env_applied = _seed_settings(seed_env_if_missing)
+        s, env_applied = _seed_settings(bootstrap_from_env)
         save_settings(s)
         return _apply_env_overrides_if_needed(
             s,
@@ -338,7 +338,7 @@ def load_settings(*, apply_env_overrides: bool = True, seed_env_if_missing: bool
             raise ValueError("config.json root is not an object")
         s = _settings_from_dict(data)
     except Exception:
-        s, env_applied = _seed_settings(seed_env_if_missing)
+        s, env_applied = _seed_settings(bootstrap_from_env)
         return _apply_env_overrides_if_needed(
             s,
             apply_env_overrides=apply_env_overrides,

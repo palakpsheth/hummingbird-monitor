@@ -64,6 +64,21 @@ def test_load_settings_corrupted_file(monkeypatch, tmp_path):
     assert abs(s.fps_limit - 8.0) < 1e-6
 
 
+def test_load_settings_corrupted_file_no_overrides(monkeypatch, tmp_path):
+    """
+    When config.json is corrupted and env overrides are disabled, fallback should still seed from env.
+    This matches worker behavior (apply_env_overrides=False) while retaining bootstrap from env.
+    """
+    monkeypatch.setenv("HBMON_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HBMON_MEDIA_DIR", str(tmp_path / "media"))
+    monkeypatch.setenv("HBMON_RTSP_URL", "env_rtsp_url")
+    config.ensure_dirs()
+    cfg = config.config_path()
+    cfg.write_text("not a json", encoding="utf-8")
+    s = config.load_settings(apply_env_overrides=False)
+    assert s.rtsp_url == "env_rtsp_url"
+
+
 def test_get_db_url(monkeypatch, tmp_path):
     """get_db_url returns the configured URL or constructs one based on data_dir."""
     # Explicit DB URL via env should be returned as-is
