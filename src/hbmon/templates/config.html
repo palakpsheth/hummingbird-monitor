@@ -57,6 +57,14 @@
 
       <label class="stack">
         <span>
+          <strong>Timezone:</strong>
+          <span class="muted">IANA name like <code>America/Los_Angeles</code> or <code>local</code> for browser time.</span>
+        </span>
+        <input type="text" name="timezone" value="{{ form_values.timezone }}" placeholder="local" />
+      </label>
+
+      <label class="stack">
+        <span>
           <strong>Minimum species probability:</strong>
           <span class="muted">(0–1). Lower allows more uncertain labels.</span>
         </span>

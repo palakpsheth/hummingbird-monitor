@@ -54,6 +54,7 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+.footer { border-top: 1px solid var(--border); padding: 12px 0 18px 0; margin-top: 12px; background: color-mix(in srgb, var(--bg) 90%, transparent); }
 
 /* ───────────────────────── Top Bar ───────────────────────── */
 

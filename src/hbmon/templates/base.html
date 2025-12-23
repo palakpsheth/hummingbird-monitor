@@ -6,7 +6,9 @@
   <title>{{ title }}</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
-<body>
+{% set tz_value = timezone or "local" %}
+{% set tz_label = timezone_label or tz_value %}
+<body data-hbmon-tz="{{ tz_value }}" data-hbmon-tz-label="{{ tz_label }}" data-hbmon-version="{{ app_version }}" data-hbmon-commit="{{ git_commit }}">
   <header class="topbar">
     <div class="brand">{{ title }}</div>
 
@@ -29,6 +31,17 @@
   <main class="container">
     {% block content %}{% endblock %}
   </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="muted">
+        Current time: <span id="footer-current-time" data-timezone="{{ tz_value }}">--</span>
+        · TZ: <span id="footer-timezone">{{ tz_label }}</span>
+        · Version: <span id="footer-version">{{ app_version }}</span>
+        · Commit: <span id="footer-commit">{{ git_commit }}</span>
+      </div>
+    </div>
+  </footer>
 
   <script src="/static/theme.js"></script>
   <script src="/static/timestamps.js"></script>
