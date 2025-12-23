@@ -107,6 +107,8 @@ def _get_git_commit() -> str:
     env_commit = os.getenv("HBMON_GIT_COMMIT")
     if env_commit:
         return env_commit
+    if not _REPO_ROOT.is_dir():
+        return "unknown"
     try:
         out = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],

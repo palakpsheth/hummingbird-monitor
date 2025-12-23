@@ -82,16 +82,15 @@
     });
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", applyLocalTimestamps);
-  } else {
-    applyLocalTimestamps();
+  function onReady(fn) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", fn);
+    } else {
+      fn();
+    }
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", updateCurrentTime);
-  } else {
-    updateCurrentTime();
-  }
+  onReady(applyLocalTimestamps);
+  onReady(updateCurrentTime);
   setInterval(updateCurrentTime, 1000);
 })();
