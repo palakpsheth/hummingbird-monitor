@@ -94,6 +94,7 @@ from hbmon.schema import HealthOut, RoiOut
 from hbmon.clustering import l2_normalize, suggest_split_two_groups
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+# Derived from this module path; not user-controlled, safe for git cwd.
 _GIT_PATH = shutil.which("git")
 
 
@@ -116,15 +117,16 @@ def _get_git_commit() -> str:
     if _GIT_PATH is None:
         return "unknown"
     try:
-        out = subprocess.check_output(
+        commit = subprocess.check_output(
             [_GIT_PATH, "rev-parse", "--short", "HEAD"],
             cwd=_REPO_ROOT,
             timeout=1.0,
             shell=False,
             text=True,
         )
+        return commit.strip() or "unknown"
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-        return commit or "unknown"
+        return "unknown"
     except Exception:
         return "unknown"
 

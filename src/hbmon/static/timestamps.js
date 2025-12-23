@@ -101,5 +101,7 @@
 
   onReady(applyLocalTimestamps);
   onReady(updateCurrentTime);
-  setInterval(updateCurrentTime, 1000);
+  if (!window._hbmonTimeIntervalId) {
+    window._hbmonTimeIntervalId = setInterval(updateCurrentTime, 1000);
+  }
 })();
