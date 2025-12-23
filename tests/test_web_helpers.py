@@ -122,7 +122,22 @@ def test_timezone_helpers(monkeypatch):
     assert web._timezone_label("Europe/Paris") == "Europe/Paris"
 
 
-def test_get_git_commit_without_git(monkeypatch):
+def test_get_git_commit_without_git(monkeypatch, tmp_path):
     web = _import_web(monkeypatch)
     monkeypatch.setattr(web, "_GIT_PATH", None)
+    repo_root = tmp_path / "nogit"
+    repo_root.mkdir()
+    monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
     assert web._get_git_commit() == "unknown"
+
+
+def test_get_git_commit_from_head(monkeypatch, tmp_path):
+    web = _import_web(monkeypatch)
+    repo_root = tmp_path / "repo"
+    git_dir = repo_root / ".git" / "refs" / "heads"
+    git_dir.mkdir(parents=True, exist_ok=True)
+    (repo_root / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (git_dir / "main").write_text("abc1234def5678\n")
+    monkeypatch.setattr(web, "_GIT_PATH", None)
+    monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
+    assert web._get_git_commit() == "abc1234"
