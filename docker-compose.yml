@@ -29,6 +29,8 @@ services:
     build:
       context: .
       args:
+        # Git commit hash/label shown in the hbmon-web footer; usually set by CI or build scripts.
+        # If not provided via the GIT_COMMIT environment variable (e.g. in .env), defaults to "unknown".
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
     container_name: hbmon-web
     command: [ "uvicorn", "hbmon.web:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info" ]

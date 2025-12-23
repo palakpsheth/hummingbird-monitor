@@ -173,8 +173,6 @@ def _get_git_commit() -> str:
                 return cleaned
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
             pass
-        except Exception:
-            pass
     head_commit = _read_git_head(_REPO_ROOT)
     if head_commit:
         return head_commit

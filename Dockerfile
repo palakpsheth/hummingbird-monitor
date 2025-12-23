@@ -19,10 +19,20 @@ ENV HBMON_GIT_COMMIT=${GIT_COMMIT}
 
 # Optionally copy lightweight git metadata when available (no-op outside git repos)
 RUN --mount=type=bind,source=.,target=/tmp/src,ro \
-    if [ -f /tmp/src/.git/HEAD ]; then \
-        mkdir -p /app/.git && cp /tmp/src/.git/HEAD /app/.git/HEAD; \
-        if [ -d /tmp/src/.git/refs ]; then mkdir -p /app/.git && cp -r /tmp/src/.git/refs /app/.git/ 2>/dev/null || true; fi; \
-        if [ -f /tmp/src/.git/packed-refs ]; then cp /tmp/src/.git/packed-refs /app/.git/packed-refs; fi; \
+    if [ -d /tmp/src/.git ] || [ -f /tmp/src/.git ]; then \
+        git_dir="/tmp/src/.git"; \
+        if [ -f "$git_dir" ]; then \
+            git_dir_path=$(sed -n 's/^gitdir: //p' "$git_dir"); \
+            case "$git_dir_path" in \
+                /*) git_dir="$git_dir_path" ;; \
+                *) git_dir="/tmp/src/$git_dir_path" ;; \
+            esac; \
+        fi; \
+        if [ -f "$git_dir/HEAD" ]; then \
+            mkdir -p /app/.git && cp "$git_dir/HEAD" /app/.git/HEAD; \
+            if [ -d "$git_dir/refs" ]; then mkdir -p /app/.git && cp -r "$git_dir/refs" /app/.git/ 2>/dev/null || true; fi; \
+            if [ -f "$git_dir/packed-refs" ]; then cp "$git_dir/packed-refs" /app/.git/packed-refs; fi; \
+        fi; \
     fi
 
 RUN pip install --no-cache-dir -e .
