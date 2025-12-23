@@ -120,3 +120,47 @@ def test_record_clip_raises_when_all_codecs_fail(monkeypatch, tmp_path):
     out_path = tmp_path / "clip.mp4"
     with pytest.raises(RuntimeError):
         worker._record_clip_opencv(_dummy_cap(frames), out_path, seconds=0.01, max_fps=5.0)
+
+
+def test_ffmpeg_available_returns_bool(monkeypatch):
+    """Test that _ffmpeg_available returns a boolean."""
+    # Test when ffmpeg is not found
+    monkeypatch.setattr(worker.shutil, "which", lambda _: None)
+    assert worker._ffmpeg_available() is False
+
+    # Test when ffmpeg is found
+    monkeypatch.setattr(worker.shutil, "which", lambda _: "/usr/bin/ffmpeg")
+    assert worker._ffmpeg_available() is True
+
+
+def test_convert_to_h264_returns_false_when_ffmpeg_unavailable(monkeypatch, tmp_path):
+    """Test that _convert_to_h264 returns False when FFmpeg is not available."""
+    monkeypatch.setattr(worker.shutil, "which", lambda _: None)
+
+    input_path = tmp_path / "input.mp4"
+    output_path = tmp_path / "output.mp4"
+    input_path.write_bytes(b"fake video")
+
+    result = worker._convert_to_h264(input_path, output_path)
+    assert result is False
+
+
+def test_convert_to_h264_returns_false_on_subprocess_error(monkeypatch, tmp_path):
+    """Test that _convert_to_h264 returns False when subprocess fails."""
+    monkeypatch.setattr(worker.shutil, "which", lambda _: "/usr/bin/ffmpeg")
+
+    # Mock subprocess.run to simulate failure
+    def mock_run(*args, **kwargs):
+        result = types.SimpleNamespace()
+        result.returncode = 1
+        result.stderr = b"Error: mock failure"
+        return result
+
+    monkeypatch.setattr(worker.subprocess, "run", mock_run)
+
+    input_path = tmp_path / "input.mp4"
+    output_path = tmp_path / "output.mp4"
+    input_path.write_bytes(b"fake video")
+
+    result = worker._convert_to_h264(input_path, output_path)
+    assert result is False

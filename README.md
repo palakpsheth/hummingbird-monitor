@@ -297,6 +297,48 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
   ```
 - Confirm ROI isn’t accidentally set to a tiny/empty area (recalibrate)
 
+### Video clips won't play in browser
+If video clips don't stream properly in Chrome/Firefox:
+
+1. **Check the observation detail page** - It now includes an inline HTML5 video player
+   that shows error messages if the video fails to load, along with video resolution and duration.
+
+2. **Use the video diagnostics API** to check file existence, size, and codec:
+   ```bash
+   curl http://<your-server>/api/video_info/<observation_id>
+   ```
+   This returns information including:
+   - File existence and size
+   - Detected codec (codec_hint)
+   - Browser compatibility status (browser_compatible)
+   - Playback warning with FFmpeg conversion command if needed
+
+3. **FFmpeg auto-conversion**: The worker now automatically converts videos to H.264
+   using FFmpeg when OpenCV falls back to a non-browser-compatible codec (mp4v/XVID).
+   Check logs for conversion status:
+   ```bash
+   docker compose logs hbmon-worker | grep -i "ffmpeg\|h264\|converting"
+   ```
+
+4. **Common causes**:
+   - **Codec incompatibility**: The worker tries H.264 codecs (avc1, H264) first,
+     then falls back to mp4v/XVID. When this happens, FFmpeg automatically converts
+     the video to H.264 for browser compatibility.
+   - **File not found**: Video file may not exist on disk (check video_info API)
+   - **Corrupted file**: Worker may have been interrupted during recording
+   - **Proxy issues**: Ensure nginx is configured to forward Range headers (already
+     configured in the default `nginx.conf`)
+
+5. **Manual conversion**: If you have old clips that don't play, convert them with:
+   ```bash
+   ffmpeg -i input.mp4 -c:v libx264 -preset fast -crf 23 -movflags +faststart output.mp4
+   ```
+
+6. **Try direct access**: Open the video URL directly (bypassing nginx):
+   ```
+   http://<your-server>:8000/media/clips/2025-12-23/xxxxx.mp4
+   ```
+
 ---
 
 ## Current limitations (by design or early version)
