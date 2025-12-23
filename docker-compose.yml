@@ -26,7 +26,10 @@ services:
     restart: unless-stopped
 
   hbmon-web:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     container_name: hbmon-web
     command: [ "uvicorn", "hbmon.web:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info" ]
     environment:

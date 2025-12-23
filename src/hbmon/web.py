@@ -104,7 +104,18 @@ def _normalize_timezone(tz: str | None) -> str:
 
 
 def _read_git_head(repo_root: Path) -> str | None:
-    git_dir = repo_root / ".git"
+    git_path = repo_root / ".git"
+    git_dir = git_path
+    if git_path.is_file():
+        try:
+            data = git_path.read_text().strip()
+        except OSError:
+            return None
+        if data.startswith("gitdir:"):
+            rel = data.partition(":")[2].strip()
+            git_dir = (git_path.parent / rel).resolve()
+        else:
+            return None
     head_path = git_dir / "HEAD"
     try:
         head = head_path.read_text().strip()

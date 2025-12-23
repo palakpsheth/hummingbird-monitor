@@ -14,6 +14,17 @@ WORKDIR /app
 COPY pyproject.toml README.md /app/
 COPY src /app/src
 
+ARG GIT_COMMIT=unknown
+ENV HBMON_GIT_COMMIT=${GIT_COMMIT}
+
+# Optionally copy lightweight git metadata when available (no-op outside git repos)
+RUN --mount=type=bind,source=.git,target=/tmp/git,ro,required=false \
+    if [ -f /tmp/git/HEAD ]; then \
+        mkdir -p /app/.git && cp /tmp/git/HEAD /app/.git/HEAD; \
+        if [ -d /tmp/git/refs ]; then mkdir -p /app/.git/refs && cp -r /tmp/git/refs/heads /app/.git/refs/ 2>/dev/null || true; fi; \
+        if [ -f /tmp/git/packed-refs ]; then cp /tmp/git/packed-refs /app/.git/packed-refs; fi; \
+    fi
+
 RUN pip install --no-cache-dir -e .
 
 EXPOSE 8000

@@ -141,3 +141,18 @@ def test_get_git_commit_from_head(monkeypatch, tmp_path):
     monkeypatch.setattr(web, "_GIT_PATH", None)
     monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
     assert web._get_git_commit() == "abc1234"
+
+
+def test_get_git_commit_from_gitdir_file(monkeypatch, tmp_path):
+    web = _import_web(monkeypatch)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    actual_git = tmp_path / "actual_git"
+    ref_dir = actual_git / "refs" / "heads"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    (actual_git / "HEAD").write_text("ref: refs/heads/main\n")
+    (ref_dir / "main").write_text("deadbeefcafebabe\n")
+    (repo_root / ".git").write_text(f"gitdir: {actual_git}\n")
+    monkeypatch.setattr(web, "_GIT_PATH", None)
+    monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
+    assert web._get_git_commit() == "deadbee"
