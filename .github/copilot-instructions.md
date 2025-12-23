@@ -126,6 +126,37 @@ The repository uses **pre-commit** to run checks before commits:
 
 ## Build & Development
 
+### Using `uv` for Development
+
+**IMPORTANT: Always use `uv` for local development and testing.**
+
+This repository uses **`uv`** as the primary package manager and task runner. When working on this codebase:
+
+1. **Always create a `uv` virtual environment** before making changes:
+   ```bash
+   uv venv
+   ```
+
+2. **Use `uv run` to execute commands** (linting, testing, running servers):
+   ```bash
+   uv run ruff check .
+   uv run pytest --cov=hbmon --cov-report=term
+   uv run uvicorn hbmon.web:app --reload
+   ```
+
+3. **Install dependencies with `uv pip`**:
+   ```bash
+   uv pip install -e ".[dev]"
+   ```
+
+Why `uv`?
+- Faster than traditional `pip`
+- Consistent with CI/CD pipeline
+- Ensures reproducible environments
+- Integrates with pre-commit hooks
+
+**Do not use plain `pip` or system Python** unless `uv` is unavailable in your environment.
+
 ### Local Development Setup
 
 ```bash
