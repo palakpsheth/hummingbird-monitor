@@ -4,7 +4,11 @@
 (function () {
   function formatLocal(iso) {
     if (!iso) return "";
-    const d = new Date(iso);
+    let txt = String(iso).trim();
+    if (!/[zZ]$|[+-]\d{2}:\d{2}$|[+-]\d{4}$/.test(txt)) {
+      txt = txt.replace(" ", "T") + "Z";
+    }
+    const d = new Date(txt);
     if (Number.isNaN(d.getTime())) {
       return iso;
     }

@@ -17,9 +17,13 @@
       <button type="submit">Split into A/B (review)</button>
     </form>
 
+    <form method="post" action="/individuals/{{ individual.id }}/delete" class="inline" style="margin-top:10px;" onsubmit="return confirm('Delete this individual and all related observations?');">
+      <button type="submit">Delete individual</button>
+    </form>
+
     <p class="muted">
-      Total visits: {{ total }} · Last seen (local):
-      <span data-utc-ts="{{ last_seen or '' }}">{{ last_seen or "" }}</span>
+      Total visits: {{ total }} · Last seen:
+      <span data-utc-ts="{{ last_seen or '' }}">{{ last_seen or "" }}</span> (local) · {{ (last_seen|replace(' ', 'T') ~ 'Z') if last_seen else "" }} (UTC)
     </p>
 
     <h3>Visits by hour (local)</h3>
