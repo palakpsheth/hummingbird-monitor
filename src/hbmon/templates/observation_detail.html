@@ -4,7 +4,14 @@
 
   <div class="grid2">
     <div class="card">
-      <img class="bigimg" src="/media/{{ o.snapshot_path }}" alt="snapshot" />
+      <div class="zoom-frame" data-zoom-container>
+        <div class="zoom-controls">
+          <button type="button" data-zoom-out aria-label="Zoom out">−</button>
+          <button type="button" data-zoom-in aria-label="Zoom in">+</button>
+          <button type="button" data-zoom-reset aria-label="Reset zoom">Reset</button>
+        </div>
+        <img class="bigimg" data-zoom-target src="/media/{{ o.snapshot_path }}" alt="snapshot" />
+      </div>
 
       <div class="stack" style="margin-top:12px;">
         <div class="muted">
@@ -46,21 +53,33 @@
           <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
           <span class="muted">p={{ "%.3f"|format(o.species_prob) }}</span>
         </div>
+        <form method="post" action="/observations/{{ o.id }}/delete" onsubmit="return confirm('Delete this observation?');">
+          {% if csrf_token %}
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          {% endif %}
+          <button type="submit">Delete this observation</button>
+        </form>
+      </div>
 
-        <div style="margin-top:8px;">
+      <div class="meta2" style="margin-top:12px;">
+        <div class="inline" style="gap: 8px; flex-wrap: wrap;">
+          <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
+          <span class="muted">p={{ "%.3f"|format(o.species_prob) }}</span>
           {% set hue = ((o.individual_id or 0) * 47) % 360 %}
-          Individual:
-          <a href="/individuals/{{ o.individual_id }}">
-            <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
-          </a>
-          <span class="muted">match={{ "%.3f"|format(o.match_score) }}</span>
+          <span class="inline" style="align-items:center; gap:6px;">
+            <span class="muted">Ind:</span>
+            <a href="/individuals/{{ o.individual_id }}">
+              <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
+            </a>
+            <span class="muted">match={{ "%.3f"|format(o.match_score) }}</span>
+          </span>
         </div>
 
         <div style="margin-top:8px;">
           Timestamp (local): <span class="muted" data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span>
         </div>
 
-        <div style="margin-top:10px;" class="inline">
+        <div class="inline" style="margin-top:10px;">
           <a href="/media/{{ o.video_path }}">Open video</a>
           <span class="muted">·</span>
           <a href="/observations">Back to observations</a>
@@ -103,8 +122,10 @@
           </div>
         {% endif %}
 
-        <h3>Raw metadata</h3>
-        <pre class="pre">{{ o.extra_json }}</pre>
+        {% if o.extra_json_pretty %}
+          <h3>Raw metadata</h3>
+          <pre class="pre">{{ o.extra_json_pretty }}</pre>
+        {% endif %}
       {% else %}
         <p class="muted">No extra metadata captured for this observation.</p>
       {% endif %}
