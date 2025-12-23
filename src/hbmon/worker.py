@@ -189,7 +189,12 @@ def _record_clip_opencv(
     # Prefer H.264/AVC for browser compatibility; fall back to MP4V then AVI.
     writer = None
     final_path = out_path
-    for suffix, fourcc_str in [(".mp4", "avc1"), (".mp4", "mp4v"), (".avi", "XVID")]:
+    for suffix, fourcc_str in [
+        (".mp4", "avc1"),
+        (".mp4", "H264"),
+        (".mp4", "mp4v"),
+        (".avi", "XVID"),
+    ]:
         candidate_path = out_path.with_suffix(suffix)
         fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
         candidate = cv2.VideoWriter(str(candidate_path), fourcc, float(max_fps), (w, h))

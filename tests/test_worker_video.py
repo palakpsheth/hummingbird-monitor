@@ -73,10 +73,23 @@ def test_record_clip_prefers_avc1(monkeypatch, tmp_path):
     assert writes[0][1] == "avc1"
 
 
+def test_record_clip_falls_back_to_h264(monkeypatch, tmp_path):
+    frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
+    writes: list[tuple[Path, str]] = []
+    _setup_writer(monkeypatch, {"avc1": False, "H264": True}, writes)
+
+    out_path = tmp_path / "clip.mp4"
+    result_path = worker._record_clip_opencv(_dummy_cap(frames), out_path, seconds=0.01, max_fps=5.0)
+
+    assert result_path.suffix == ".mp4"
+    assert writes and writes[0][0].suffix == ".mp4"
+    assert writes[0][1] == "H264"
+
+
 def test_record_clip_falls_back_to_mp4v(monkeypatch, tmp_path):
     frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
     writes: list[tuple[Path, str]] = []
-    _setup_writer(monkeypatch, {"avc1": False, "mp4v": True}, writes)
+    _setup_writer(monkeypatch, {"avc1": False, "H264": False, "mp4v": True}, writes)
 
     out_path = tmp_path / "clip.mp4"
     result_path = worker._record_clip_opencv(_dummy_cap(frames), out_path, seconds=0.01, max_fps=5.0)
@@ -89,7 +102,7 @@ def test_record_clip_falls_back_to_mp4v(monkeypatch, tmp_path):
 def test_record_clip_falls_back_to_avi(monkeypatch, tmp_path):
     frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
     writes: list[tuple[Path, str]] = []
-    _setup_writer(monkeypatch, {"avc1": False, "mp4v": False, "XVID": True}, writes)
+    _setup_writer(monkeypatch, {"avc1": False, "H264": False, "mp4v": False, "XVID": True}, writes)
 
     out_path = tmp_path / "clip.mp4"
     result_path = worker._record_clip_opencv(_dummy_cap(frames), out_path, seconds=0.01, max_fps=5.0)
@@ -102,7 +115,7 @@ def test_record_clip_falls_back_to_avi(monkeypatch, tmp_path):
 def test_record_clip_raises_when_all_codecs_fail(monkeypatch, tmp_path):
     frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
     writes: list[tuple[Path, str]] = []
-    _setup_writer(monkeypatch, {"avc1": False, "mp4v": False, "XVID": False}, writes)
+    _setup_writer(monkeypatch, {"avc1": False, "H264": False, "mp4v": False, "XVID": False}, writes)
 
     out_path = tmp_path / "clip.mp4"
     with pytest.raises(RuntimeError):
