@@ -39,6 +39,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Observations**: filterable gallery + detail page
 - **Individuals**: sortable list + detail page
 - **ROI calibration**: draw a box on the latest snapshot
+- **API Docs**: interactive Swagger UI for API exploration (`/docs`)
 
 ---
 
@@ -93,6 +94,8 @@ docker compose up -d --build
 ### 3) Open the UI on your phone
 - Main UI (nginx on port 80): `http://<mini-pc-ip>/`
 - Direct to app (port 8000): `http://<mini-pc-ip>:8000`
+- API Documentation (Swagger): `http://<mini-pc-ip>:8000/docs`
+- API Documentation (ReDoc): `http://<mini-pc-ip>:8000/redoc`
 - Wyze-bridge UI: `http://<mini-pc-ip>:5000`
 
 ### 4) Find your mini PC’s LAN IP

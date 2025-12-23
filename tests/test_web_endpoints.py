@@ -131,3 +131,30 @@ def test_delete_individual_cascades(tmp_path, monkeypatch):
         assert db.get(Individual, ind_id) is None
         assert db.get(Observation, obs_id) is None
         assert db.get(Embedding, emb_id) is None
+
+
+def test_swagger_docs_endpoint(tmp_path, monkeypatch):
+    """Test that the Swagger UI docs endpoint is accessible."""
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/docs")
+    assert r.status_code == 200
+    assert "swagger-ui" in r.text.lower()
+
+
+def test_redoc_endpoint(tmp_path, monkeypatch):
+    """Test that the ReDoc docs endpoint is accessible."""
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/redoc")
+    assert r.status_code == 200
+    assert "redoc" in r.text.lower()
+
+
+def test_openapi_json_endpoint(tmp_path, monkeypatch):
+    """Test that the OpenAPI JSON spec is accessible and has correct metadata."""
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/openapi.json")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["info"]["title"] == "hbmon"
+    assert "description" in data["info"]
+    assert data["info"]["version"]
