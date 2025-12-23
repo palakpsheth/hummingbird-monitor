@@ -38,11 +38,21 @@ jobs:
       - name: Ruff
         run: uv run ruff check .
 
-      # Run ALL tests (unit + integration) with coverage
-      # Coverage badge and report always reflect total coverage
-      - name: All Tests (with coverage)
+      # Run unit tests (non-integration) with coverage
+      - name: Unit Tests
         run: |
-          uv run pytest -m "" --cov=hbmon --cov-report=term --cov-report=xml
+          uv run pytest -m "not integration" --cov=hbmon --cov-report=term
+
+      # Run integration tests with coverage (appends to existing coverage data)
+      - name: Integration Tests
+        run: |
+          uv run pytest -m "integration" --cov=hbmon --cov-append --cov-report=term
+
+      # Generate combined coverage report (XML for PR comment, term for logs)
+      - name: Generate Coverage Report
+        run: |
+          uv run coverage xml
+          uv run coverage report
 
       # Post coverage report as a PR comment
       - name: Coverage comment
