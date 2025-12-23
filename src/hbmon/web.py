@@ -33,6 +33,7 @@ import csv
 import io
 import math
 import os
+import shutil
 import subprocess
 import tarfile
 import time
@@ -109,6 +110,8 @@ def _get_git_commit() -> str:
         return env_commit
     if not _REPO_ROOT.is_dir():
         return "unknown"
+    if shutil.which("git") is None:
+        return "unknown"
     try:
         out = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -117,6 +120,8 @@ def _get_git_commit() -> str:
         )
         commit = out.decode("utf-8", errors="ignore").strip()
         return commit or "unknown"
+    except FileNotFoundError:
+        return "unknown"
     except Exception:
         return "unknown"
 

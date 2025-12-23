@@ -8,7 +8,7 @@
     const tz = (body?.dataset?.hbmonTz || "").trim();
     if (!tz || tz.toLowerCase() === "local") return null;
     try {
-      // Validate timezone; throws RangeError if invalid
+      // Validate timezone; Intl may throw if the time zone is invalid
       new Intl.DateTimeFormat(undefined, { timeZone: tz });
       return tz;
     } catch (err) {
