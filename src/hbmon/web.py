@@ -18,6 +18,11 @@ API:
 - /api/roi  (GET/POST)    Get/set ROI (POST accepts form)
 - /api/video_info/{id}    Video file diagnostics for troubleshooting
 
+API Documentation:
+- /docs                   Swagger UI (interactive API explorer)
+- /redoc                  ReDoc viewer (alternative API docs)
+- /openapi.json           OpenAPI 3.1 specification
+
 Exports:
 - /export/observations.csv
 - /export/individuals.csv
@@ -375,7 +380,17 @@ def make_app() -> Any:
     ensure_dirs()
     init_db()
 
-    app = FastAPI(title="hbmon")
+    app = FastAPI(
+        title="hbmon",
+        description=(
+            "LAN-only hummingbird monitoring system. "
+            "Uses YOLO for detection, CLIP for species classification, "
+            "and embedding-based re-identification for tracking individual birds."
+        ),
+        version=__version__,
+        docs_url="/docs",
+        redoc_url="/redoc",
+    )
 
     here = Path(__file__).resolve().parent
     templates = Jinja2Templates(directory=str(here / "templates"))

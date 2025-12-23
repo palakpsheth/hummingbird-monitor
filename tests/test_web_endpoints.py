@@ -196,3 +196,28 @@ def test_video_info_endpoint_not_found(tmp_path, monkeypatch):
 
     r = client.get("/api/video_info/99999")
     assert r.status_code == 404
+def test_swagger_docs_endpoint(tmp_path, monkeypatch):
+    """Test that the Swagger UI docs endpoint is accessible."""
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/docs")
+    assert r.status_code == 200
+    assert "swagger-ui" in r.text.lower()
+
+
+def test_redoc_endpoint(tmp_path, monkeypatch):
+    """Test that the ReDoc docs endpoint is accessible."""
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/redoc")
+    assert r.status_code == 200
+    assert "redoc" in r.text.lower()
+
+
+def test_openapi_json_endpoint(tmp_path, monkeypatch):
+    """Test that the OpenAPI JSON spec is accessible and has correct metadata."""
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/openapi.json")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["info"]["title"] == "hbmon"
+    assert "description" in data["info"]
+    assert data["info"]["version"]
