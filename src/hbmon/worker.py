@@ -389,7 +389,21 @@ def run_worker() -> None:
         nonlocal last_settings_load, settings
         now = time.time()
         if settings is None or (now - last_settings_load) > 3.0:
-            settings = load_settings()
+            settings = load_settings(apply_env_overrides=False)
+
+            # Always honor operational env overrides for RTSP URL and camera name,
+            # even when user-tunable settings (thresholds, ROI) come from config.json.
+            env_rtsp = os.getenv("HBMON_RTSP_URL")
+            if env_rtsp:
+                if settings.rtsp_url != env_rtsp:
+                    print(f"[worker] Overriding rtsp_url from env: {env_rtsp}")
+                settings.rtsp_url = env_rtsp
+
+            env_camera = os.getenv("HBMON_CAMERA_NAME")
+            if env_camera:
+                if getattr(settings, "camera_name", None) != env_camera:
+                    print(f"[worker] Overriding camera_name from env: {env_camera}")
+                settings.camera_name = env_camera  # type: ignore[attr-defined]
             last_settings_load = now
         return settings
 
@@ -544,6 +558,24 @@ def run_worker() -> None:
                     ema_alpha=float(s.ema_alpha),
                 )
 
+            extra_data = {
+                "sensitivity": {
+                    "detect_conf": float(s.detect_conf),
+                    "detect_iou": float(s.detect_iou),
+                    "min_box_area": int(s.min_box_area),
+                    "cooldown_seconds": float(s.cooldown_seconds),
+                    "min_species_prob": float(s.min_species_prob),
+                    "match_threshold": float(s.match_threshold),
+                    "ema_alpha": float(s.ema_alpha),
+                },
+                "detection": {
+                    "box_confidence": float(det_full.conf),
+                    "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
+                    "roi_offset_xy": [int(xoff), int(yoff)],
+                },
+                "review": {"label": None},
+            }
+
             obs = Observation(
                 ts=utcnow(),
                 camera_name=s.camera_name,
@@ -559,6 +591,7 @@ def run_worker() -> None:
                 video_path=clip_rel if clip_rel else "clips/none.mp4",
                 extra_json=None,
             )
+            obs.set_extra(extra_data)
             db.add(obs)
             db.flush()  # get obs.id
 

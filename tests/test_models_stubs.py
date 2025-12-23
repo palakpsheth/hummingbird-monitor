@@ -75,6 +75,9 @@ def test_observation_stub_bbox_and_extra(monkeypatch):
     # get_extra returns None for empty string
     obs.extra_json = ""
     assert obs.get_extra() is None
+    merged = obs.merge_extra({"review": {"label": "true_positive"}})
+    assert merged["review"]["label"] == "true_positive"
+    assert obs.review_label == "true_positive"
 
 
 def test_embedding_stub_set_get_vector(monkeypatch):

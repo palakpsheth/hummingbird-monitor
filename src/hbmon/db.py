@@ -14,7 +14,7 @@ Environment:
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Iterator, Optional, Callable
+from typing import Iterator, Optional, Callable, Any
 
 """
 Database helpers for hbmon.
@@ -29,7 +29,7 @@ the database layer is usable.
 """
 
 try:
-    from sqlalchemy import create_engine  # type: ignore
+    from sqlalchemy import create_engine, event  # type: ignore
     from sqlalchemy.engine import Engine  # type: ignore
     from sqlalchemy.orm import Session, sessionmaker  # type: ignore
     _SQLALCHEMY_AVAILABLE = True
@@ -41,7 +41,7 @@ except Exception:  # pragma: no cover
     sessionmaker = None  # type: ignore
     _SQLALCHEMY_AVAILABLE = False
 
-from hbmon.config import db_path, env_str, ensure_dirs
+from hbmon.config import db_path, env_int, env_str, ensure_dirs
 
 
 # Session factory is initialized lazily to allow env overrides before first use.
@@ -76,6 +76,7 @@ def get_engine() -> Engine:
 
     url = get_db_url()
 
+    busy_timeout_ms = env_int("HBMON_SQLITE_BUSY_TIMEOUT_MS", 5000)
     connect_args = {}
     if url.startswith("sqlite:"):
         # Required for SQLite + threads (FastAPI/uvicorn)
@@ -88,6 +89,17 @@ def get_engine() -> Engine:
         pool_pre_ping=True,
         connect_args=connect_args,
     )  # type: ignore[assignment]
+
+    if url.startswith("sqlite:"):
+        def _set_sqlite_pragmas(dbapi_connection: Any, connection_record: Any) -> None:  # type: ignore[override]
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+                cursor.close()
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"[db] failed to set PRAGMA busy_timeout: {exc}")
+
+        event.listen(_ENGINE, "connect", _set_sqlite_pragmas)
 
     assert sessionmaker is not None  # for mypy
     _SessionLocal = sessionmaker(
