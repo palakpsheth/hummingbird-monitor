@@ -4,7 +4,9 @@
 !.env.example
 
 # ---- VCS ----
-.git
+# Note: .git is intentionally NOT excluded so the Dockerfile can extract
+# the current commit hash during build for display in the web UI footer.
+# Only minimal metadata (HEAD, refs, packed-refs) is copied into the image.
 .gitignore
 
 # ---- python caches / venv ----
