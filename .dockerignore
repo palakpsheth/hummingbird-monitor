@@ -4,7 +4,22 @@
 !.env.example
 
 # ---- VCS ----
-.git
+# Exclude heavy parts of .git but keep minimal files needed for commit hash detection.
+# The Dockerfile extracts HEAD, refs/, and packed-refs during build for the web UI footer.
+.git/objects
+.git/hooks
+.git/logs
+.git/lfs
+.git/modules
+.git/worktrees
+.git/index
+.git/COMMIT_EDITMSG
+.git/FETCH_HEAD
+.git/ORIG_HEAD
+.git/MERGE_HEAD
+.git/REBASE_HEAD
+.git/BISECT_LOG
+.git/shallow
 .gitignore
 
 # ---- python caches / venv ----
