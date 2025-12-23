@@ -80,11 +80,29 @@
         </div>
 
         <div class="inline" style="margin-top:10px;">
-          <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Open video</a>
+          <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Open video in new tab</a>
           <span class="muted">·</span>
           <a href="/observations">Back to observations</a>
         </div>
       </div>
+
+      {% if video_info and video_info.exists %}
+        <div style="margin-top:16px;">
+          <h3 style="margin-top:0;">Video Clip</h3>
+          <video controls preload="metadata" style="width:100%; max-width:640px; border-radius:8px; background:#000;">
+            <source src="/media/{{ o.video_path }}" type="video/mp4">
+            Your browser does not support the video tag.
+          </video>
+          <div class="muted" style="margin-top:8px;">
+            File: {{ video_info.size_kb }} KB
+            {% if video_info.suffix %} · Format: {{ video_info.suffix }}{% endif %}
+          </div>
+        </div>
+      {% elif video_info and not video_info.exists %}
+        <div style="margin-top:16px;">
+          <div class="muted">⚠️ Video file not found: /media/{{ o.video_path }}</div>
+        </div>
+      {% endif %}
     </div>
 
     <div class="card">
@@ -92,7 +110,7 @@
 
       <div class="stack">
         <div class="muted">snapshot: /media/{{ o.snapshot_path }}</div>
-        <div class="muted">video: /media/{{ o.video_path }}</div>
+        <div class="muted">video: /media/{{ o.video_path }}{% if video_info %} ({{ "exists" if video_info.exists else "missing" }}){% endif %}</div>
         <div class="muted">bbox: {{ o.bbox_str or "(none)" }}</div>
         <div class="muted">camera: {{ o.camera_name or "(unknown)" }}</div>
       </div>

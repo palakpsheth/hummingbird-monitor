@@ -294,6 +294,36 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
   ```
 - Confirm ROI isn’t accidentally set to a tiny/empty area (recalibrate)
 
+### Video clips won't play in browser
+If video clips don't stream properly in Chrome/Firefox:
+
+1. **Check the observation detail page** - It now includes an inline HTML5 video player
+   that shows error messages if the video fails to load.
+
+2. **Use the video diagnostics API** to check file existence and size:
+   ```bash
+   curl http://<your-server>/api/video_info/<observation_id>
+   ```
+   This returns information like file existence, size, and path.
+
+3. **Check Docker logs** for video recording errors:
+   ```bash
+   docker compose logs hbmon-worker | grep -i "clip\|video\|mp4"
+   ```
+
+4. **Common causes**:
+   - **Codec incompatibility**: The worker tries H.264 codecs (avc1, H264) first,
+     then falls back to mp4v/XVID. Some systems may not have H.264 encoding support.
+   - **File not found**: Video file may not exist on disk (check video_info API)
+   - **Corrupted file**: Worker may have been interrupted during recording
+   - **Proxy issues**: Ensure nginx is configured to forward Range headers (already
+     configured in the default `nginx.conf`)
+
+5. **Try direct access**: Open the video URL directly (bypassing nginx):
+   ```
+   http://<your-server>:8000/media/clips/2025-12-23/xxxxx.mp4
+   ```
+
 ---
 
 ## Current limitations (by design or early version)
