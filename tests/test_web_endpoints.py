@@ -133,6 +133,69 @@ def test_delete_individual_cascades(tmp_path, monkeypatch):
         assert db.get(Embedding, emb_id) is None
 
 
+def test_video_info_endpoint_with_existing_file(tmp_path, monkeypatch):
+    """Test /api/video_info/{obs_id} endpoint with an existing video file."""
+    client = _setup_app(tmp_path, monkeypatch)
+    mdir = media_dir()
+
+    # Create a fake video file
+    clips_dir = mdir / "clips"
+    clips_dir.mkdir(parents=True, exist_ok=True)
+    vid = clips_dir / "test.mp4"
+    video_content = b"fake video content 12345"
+    vid.write_bytes(video_content)
+    expected_size = len(video_content)
+
+    with session_scope() as db:
+        obs = Observation(
+            species_label="Hummingbird",
+            species_prob=0.5,
+            snapshot_path="snap.jpg",
+            video_path="clips/test.mp4",
+        )
+        db.add(obs)
+        db.commit()
+        obs_id = obs.id
+
+    r = client.get(f"/api/video_info/{obs_id}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["observation_id"] == obs_id
+    assert data["file_exists"] is True
+    assert data["file_size_bytes"] == expected_size
+    assert data["file_suffix"] == ".mp4"
+    assert "clips/test.mp4" in data["video_path"]
+
+
+def test_video_info_endpoint_with_missing_file(tmp_path, monkeypatch):
+    """Test /api/video_info/{obs_id} endpoint when video file is missing."""
+    client = _setup_app(tmp_path, monkeypatch)
+
+    with session_scope() as db:
+        obs = Observation(
+            species_label="Hummingbird",
+            species_prob=0.5,
+            snapshot_path="snap.jpg",
+            video_path="clips/nonexistent.mp4",
+        )
+        db.add(obs)
+        db.commit()
+        obs_id = obs.id
+
+    r = client.get(f"/api/video_info/{obs_id}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["observation_id"] == obs_id
+    assert data["file_exists"] is False
+    assert "error" in data
+
+
+def test_video_info_endpoint_not_found(tmp_path, monkeypatch):
+    """Test /api/video_info/{obs_id} endpoint for non-existent observation."""
+    client = _setup_app(tmp_path, monkeypatch)
+
+    r = client.get("/api/video_info/99999")
+    assert r.status_code == 404
 def test_swagger_docs_endpoint(tmp_path, monkeypatch):
     """Test that the Swagger UI docs endpoint is accessible."""
     client = _setup_app(tmp_path, monkeypatch)

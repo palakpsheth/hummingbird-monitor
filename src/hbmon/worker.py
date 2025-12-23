@@ -25,6 +25,8 @@ Expected env vars (common):
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import time
 import uuid
 from dataclasses import dataclass
@@ -162,6 +164,58 @@ def _write_jpeg(path: Path, frame_bgr: np.ndarray) -> None:
     path.write_bytes(buf.tobytes())
 
 
+def _ffmpeg_available() -> bool:
+    """Check if FFmpeg is available on the system."""
+    return shutil.which("ffmpeg") is not None
+
+
+def _convert_to_h264(input_path: Path, output_path: Path, *, timeout: float = 60.0) -> bool:
+    """
+    Convert a video file to H.264/AAC MP4 using FFmpeg for browser compatibility.
+
+    Uses libx264 with faststart for progressive download/streaming.
+    Returns True if conversion succeeded, False otherwise.
+    """
+    if not _ffmpeg_available():
+        print("[worker] FFmpeg not available, skipping H.264 conversion")
+        return False
+
+    try:
+        cmd = [
+            "ffmpeg",
+            "-y",  # overwrite output
+            "-i", str(input_path),
+            "-c:v", "libx264",  # H.264 video codec
+            "-preset", "fast",  # balance speed/quality
+            "-crf", "23",  # quality (lower = better, 18-28 is typical)
+            "-c:a", "aac",  # AAC audio codec (if any audio)
+            "-movflags", "+faststart",  # Move moov atom to start for streaming
+            "-an",  # No audio (RTSP streams often have no audio anyway)
+            str(output_path),
+        ]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+
+        if result.returncode == 0 and output_path.exists():
+            return True
+        else:
+            stderr = result.stderr.decode("utf-8", errors="replace")[:500]
+            print(f"[worker] FFmpeg conversion failed: {stderr}")
+            return False
+
+    except subprocess.TimeoutExpired:
+        print(f"[worker] FFmpeg conversion timed out after {timeout}s")
+        return False
+    except Exception as e:
+        print(f"[worker] FFmpeg conversion error: {e}")
+        return False
+
+
 def _record_clip_opencv(
     cap: cv2.VideoCapture,
     out_path: Path,
@@ -172,6 +226,10 @@ def _record_clip_opencv(
     """
     Record a short clip from the existing VideoCapture, preferring AVC1 MP4 and
     falling back to MP4V or AVI. Returns the actual path used for the clip.
+
+    After recording, if the codec used was not browser-compatible (e.g., mp4v),
+    the clip is post-processed with FFmpeg to convert to H.264 for browser playback.
+
     This blocks while recording (simple + robust for early versions).
     """
     if not _CV2_AVAILABLE:
@@ -187,8 +245,12 @@ def _record_clip_opencv(
     h, w = frame.shape[:2]
 
     # Prefer H.264/AVC for browser compatibility; fall back to MP4V then AVI.
+    # Track which codec we actually use to decide if FFmpeg conversion is needed.
     writer = None
     final_path = out_path
+    used_fourcc = ""
+    needs_conversion = False
+
     for suffix, fourcc_str in [
         (".mp4", "avc1"),
         (".mp4", "H264"),
@@ -204,6 +266,9 @@ def _record_clip_opencv(
 
         writer = candidate
         final_path = candidate_path
+        used_fourcc = fourcc_str
+        # mp4v (MPEG-4 Part 2) and XVID are not browser-compatible
+        needs_conversion = fourcc_str.lower() in ("mp4v", "xvid")
         break
 
     if writer is None:
@@ -219,10 +284,39 @@ def _record_clip_opencv(
             break
         writer.write(fr)
 
-        # Throttle a bit (don’t hammer CPU)
+        # Throttle a bit (don't hammer CPU)
         time.sleep(max(0.0, (1.0 / max_fps) * 0.2))
 
     writer.release()
+
+    # Post-process with FFmpeg if we used a non-browser-compatible codec
+    if needs_conversion and final_path.exists():
+        print(f"[worker] Converting {used_fourcc} clip to H.264 for browser compatibility")
+        converted_path = final_path.with_stem(final_path.stem + "_h264").with_suffix(".mp4")
+
+        if _convert_to_h264(final_path, converted_path):
+            # Replace original with converted version
+            # Use the original stem but with .mp4 extension for the final name
+            target_path = final_path.parent / (final_path.stem + ".mp4")
+            try:
+                final_path.unlink()  # Remove original
+                converted_path.rename(target_path)
+                final_path = target_path
+                print(f"[worker] Successfully converted to H.264: {final_path}")
+            except Exception as e:
+                print(f"[worker] Failed to replace original with converted: {e}")
+                # Keep the converted file if rename failed
+                if converted_path.exists():
+                    final_path = converted_path
+        else:
+            print(f"[worker] FFmpeg conversion failed, keeping original {used_fourcc} file")
+            # Clean up partial converted file if it exists
+            if converted_path.exists():
+                try:
+                    converted_path.unlink()
+                except Exception:
+                    pass
+
     return final_path
 
 

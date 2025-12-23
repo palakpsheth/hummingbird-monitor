@@ -5,7 +5,7 @@ FastAPI + Jinja2 web UI for hbmon (LAN-only, no auth).
 Routes:
 - /                      Dashboard
 - /observations           Gallery + filters
-- /observations/{id}      Observation detail
+- /observations/{id}      Observation detail (with inline video player)
 - /individuals            Individuals list
 - /individuals/{id}       Individual detail + heatmap + rename
 - /individuals/{id}/split_review  Suggest A/B split & review UI
@@ -16,6 +16,7 @@ API:
 - /api/health
 - /api/frame.jpg          Latest snapshot (or placeholder)
 - /api/roi  (GET/POST)    Get/set ROI (POST accepts form)
+- /api/video_info/{id}    Video file diagnostics for troubleshooting
 
 API Documentation:
 - /docs                   Swagger UI (interactive API explorer)
@@ -592,6 +593,22 @@ def make_app() -> Any:
         o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
         extra = o.get_extra() or {}
         o.extra_json_pretty = pretty_json(o.extra_json)  # type: ignore[attr-defined]
+
+        # Video file diagnostics
+        video_info: dict[str, Any] | None = None
+        if o.video_path:
+            video_file = media_dir() / o.video_path
+            exists = video_file.exists()
+            size_kb = 0.0
+            suffix = ""
+            if exists:
+                try:
+                    size_kb = round(video_file.stat().st_size / 1024, 2)
+                except OSError:
+                    pass
+                suffix = video_file.suffix.lower()
+            video_info = {"exists": exists, "size_kb": size_kb, "suffix": suffix}
+
         return templates.TemplateResponse(
             "observation_detail.html",
             _context(
@@ -600,6 +617,7 @@ def make_app() -> Any:
                 o=o,
                 extra=extra,
                 allowed_review_labels=ALLOWED_REVIEW_LABELS,
+                video_info=video_info,
             ),
         )
 
@@ -1106,6 +1124,93 @@ def make_app() -> Any:
         img.save(buf, format="JPEG", quality=85)
         buf.seek(0)
         return StreamingResponse(buf, media_type="image/jpeg")
+
+    @app.get("/api/video_info/{obs_id}")
+    def video_info(obs_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+        """
+        Return diagnostic information about a video file for troubleshooting.
+
+        This endpoint helps diagnose video streaming issues by providing:
+        - file_exists: whether the video file exists on disk
+        - file_size_bytes: size of the video file
+        - file_suffix: file extension (e.g., .mp4, .avi)
+        - video_path: relative path stored in the database
+        - absolute_path: full path on the server filesystem
+        - codec_hint: detected codec from file header (if available)
+        - browser_compatible: whether the codec is likely supported by browsers
+        """
+        o = db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        video_path = o.video_path or ""
+        if not video_path:
+            return {
+                "observation_id": obs_id,
+                "video_path": "",
+                "file_exists": False,
+                "error": "No video path stored for this observation",
+            }
+
+        full_path = media_dir() / video_path
+        exists = full_path.exists()
+
+        result: dict[str, Any] = {
+            "observation_id": obs_id,
+            "video_path": video_path,
+            "absolute_path": str(full_path),
+            "file_exists": exists,
+        }
+
+        if exists:
+            try:
+                stat = full_path.stat()
+                result["file_size_bytes"] = stat.st_size
+                result["file_size_kb"] = round(stat.st_size / 1024, 2)
+            except OSError as e:
+                result["stat_error"] = str(e)
+            result["file_suffix"] = full_path.suffix.lower()
+
+            # Try to detect codec from file header
+            codec_hint = "unknown"
+            browser_compatible = False
+            try:
+                with open(full_path, "rb") as f:
+                    header = f.read(32)
+                    # Check for common MP4/MOV signatures
+                    if b"ftyp" in header:
+                        # Extract the brand after ftyp
+                        ftyp_pos = header.find(b"ftyp")
+                        if ftyp_pos >= 0 and ftyp_pos + 8 <= len(header):
+                            brand = header[ftyp_pos + 4 : ftyp_pos + 8].decode("ascii", errors="ignore")
+                            codec_hint = f"MP4 (brand: {brand})"
+                            # isom, mp41, mp42, avc1 are generally compatible
+                            if brand in ("isom", "mp41", "mp42", "avc1", "M4V "):
+                                browser_compatible = True
+                            else:
+                                # mp4v (MPEG-4 Part 2) is NOT well-supported
+                                browser_compatible = False
+                    elif header.startswith(b"RIFF") and b"AVI " in header:
+                        codec_hint = "AVI container"
+                        browser_compatible = False
+                    elif header.startswith(b"\x1a\x45\xdf\xa3"):
+                        codec_hint = "WebM/Matroska"
+                        browser_compatible = True
+            except Exception as e:
+                result["codec_detection_error"] = str(e)
+
+            result["codec_hint"] = codec_hint
+            result["browser_compatible"] = browser_compatible
+            if not browser_compatible:
+                result["playback_warning"] = (
+                    "This video may not play in browsers. OpenCV often uses mp4v (MPEG-4 Part 2) "
+                    "which is not supported by most browsers. Consider using VLC or converting "
+                    "with FFmpeg: ffmpeg -i input.mp4 -c:v libx264 -c:a aac output.mp4"
+                )
+        else:
+            result["error"] = f"Video file not found at {full_path}"
+
+        return result
 
     # ----------------------------
     # Export routes
