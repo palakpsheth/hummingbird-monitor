@@ -360,7 +360,8 @@ User settings are stored in `/data/config.json` and include:
 1. Update SQLAlchemy models in `models.py`
 2. Maintain dataclass stubs for testing
 3. **Update schema documentation**
-   - Update README "Database Schema" section if schema changes
+   - Update README "Architecture" section (see "Persistent storage" and database schema details) if schema changes
+   - Add a dedicated "Database Schema" subsection if more detailed documentation is needed
    - Document new tables, columns, or relationships
 4. Consider migration path for existing databases
 5. **Update README if backup/export procedures change**
