@@ -12,6 +12,11 @@ in a writable location.
 """
 
 import importlib
+import os
+import time
+from datetime import datetime
+
+import pytest
 
 
 def _import_web(monkeypatch):
@@ -120,6 +125,26 @@ def test_timezone_helpers(monkeypatch):
     assert web._timezone_label(None) == "Browser local"
     assert web._timezone_label("LOCAL") == "Browser local"
     assert web._timezone_label("Europe/Paris") == "Europe/Paris"
+
+
+def test_as_utc_str_treats_naive_as_utc(monkeypatch):
+    if not hasattr(time, "tzset"):  # pragma: no cover - platform guard
+        pytest.skip("tzset not available on this platform")
+
+    web = _import_web(monkeypatch)
+
+    old_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "US/Pacific")
+    time.tzset()
+    try:
+        naive = datetime(2024, 1, 1, 12, 0, 0)
+        assert web._as_utc_str(naive) == "2024-01-01T12:00:00Z"
+    finally:
+        if old_tz is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", old_tz)
+        time.tzset()
 
 
 def test_get_git_commit_without_git(monkeypatch, tmp_path):

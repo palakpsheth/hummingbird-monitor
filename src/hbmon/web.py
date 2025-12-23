@@ -89,7 +89,7 @@ ALLOWED_REVIEW_LABELS = ["true_positive", "false_positive", "false_negative"]
 from hbmon import __version__
 from hbmon.config import Roi, ensure_dirs, load_settings, media_dir, roi_to_str, save_settings
 from hbmon.db import get_db, init_db
-from hbmon.models import Embedding, Individual, Observation
+from hbmon.models import Embedding, Individual, Observation, _to_utc
 from hbmon.schema import HealthOut, RoiOut
 from hbmon.clustering import l2_normalize, suggest_split_two_groups
 
@@ -250,10 +250,16 @@ def pretty_json(text: str | None) -> str | None:
         return text
 
 
-def _as_utc_str(dt) -> str | None:
+def _as_utc_str(dt: datetime | None) -> str | None:
+    """
+    Convert a datetime to a UTC ISO 8601 string with a trailing "Z".
+
+    Naive datetimes are treated as already being in UTC and are given a UTC tzinfo.
+    Aware datetimes are converted to UTC before formatting. Returns None if dt is None.
+    """
     if dt is None:
         return None
-    return dt.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return _to_utc(dt).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
