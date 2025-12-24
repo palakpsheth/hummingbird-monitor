@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Background Image</h1>
+
+  <div class="card">
+    <p class="muted">
+      Define a standard background picture that shows the feeder area without any hummingbirds.
+      This can be used for background subtraction to improve detection accuracy.
+    </p>
+
+    <h2 style="margin-top: 20px;">Current Background</h2>
+
+    {% if background_configured and background_exists %}
+      <div class="inline" style="gap: 16px; align-items: flex-start; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 300px;">
+          <img src="/api/background.jpg?ts={{ ts }}" alt="Current background" style="max-width: 100%; height: auto; border-radius: 8px;" />
+        </div>
+        <div style="flex: 0 0 auto;">
+          <form method="post" action="/api/background/clear" onsubmit="return confirm('Clear the background image?');">
+            <button type="submit">Clear Background</button>
+          </form>
+          <p class="muted" style="margin-top: 8px;">The background image is stored in a static location and will persist even if observations are deleted.</p>
+        </div>
+      </div>
+    {% else %}
+      <div class="muted" style="padding: 24px; background: var(--bg-muted); border-radius: 8px; text-align: center;">
+        No background image configured. Select an observation snapshot below or upload an image.
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="card" style="margin-top: 20px;">
+    <h2 style="margin-top: 0;">Upload Custom Image</h2>
+    <p class="muted">
+      Upload a JPEG or PNG image (max 10MB). The image will be converted to JPEG and stored in a static location.
+    </p>
+
+    <form method="post" action="/api/background/upload" enctype="multipart/form-data" class="inline" style="gap: 12px; flex-wrap: wrap;">
+      <input type="file" name="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" required style="max-width: 300px;" />
+      <button type="submit">Upload</button>
+    </form>
+  </div>
+
+  <div class="card" style="margin-top: 20px;">
+    <h2 style="margin-top: 0;">Select from Observations</h2>
+    <p class="muted">
+      Choose an existing observation snapshot as the background. Pick one that shows an empty feeder (no birds).
+      The image will be copied to a static location so it persists even if the original observation is deleted.
+    </p>
+
+    {% if observations %}
+      <div class="gallery" style="margin-top: 16px;">
+        {% for o in observations %}
+          {% set hue = ((o.individual_id or 0) * 47) % 360 %}
+          <div class="thumb">
+            <img src="/media/{{ o.snapshot_path }}" alt="Observation {{ o.id }}" />
+            <div class="meta">
+              <div>
+                <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
+              </div>
+              <div><span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span></div>
+              <div>
+                <form method="post" action="/api/background/from_observation/{{ o.id }}" style="display: inline;">
+                  <button type="submit" style="padding: 4px 8px; font-size: 0.85em;">Use as Background</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+
+      {% if obs_total_pages > 1 %}
+        <div class="inline" style="margin-top: 16px; gap: 8px; flex-wrap: wrap;">
+          {% if obs_page > 1 %}
+            <a href="/background?page={{ obs_page - 1 }}&page_size={{ obs_page_size }}">← Previous</a>
+          {% endif %}
+          <span class="muted">Page {{ obs_page }} of {{ obs_total_pages }} ({{ obs_total }} total)</span>
+          {% if obs_page < obs_total_pages %}
+            <a href="/background?page={{ obs_page + 1 }}&page_size={{ obs_page_size }}">Next →</a>
+          {% endif %}
+        </div>
+      {% endif %}
+    {% else %}
+      <p class="muted" style="margin-top: 16px;">
+        No observations available. Start the worker and wait for some bird visits, then come back here.
+      </p>
+    {% endif %}
+  </div>
+{% endblock %}

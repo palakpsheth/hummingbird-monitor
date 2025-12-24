@@ -93,7 +93,16 @@ ALLOWED_REVIEW_LABELS = ["true_positive", "false_positive", "false_negative"]
 
 
 from hbmon import __version__
-from hbmon.config import Roi, ensure_dirs, load_settings, media_dir, roi_to_str, save_settings
+from hbmon.config import (
+    Roi,
+    background_dir,
+    background_image_path,
+    ensure_dirs,
+    load_settings,
+    media_dir,
+    roi_to_str,
+    save_settings,
+)
 from hbmon.db import get_db, init_db
 from hbmon.models import Embedding, Individual, Observation, _to_utc
 from hbmon.schema import HealthOut, RoiOut
@@ -1088,6 +1097,63 @@ def make_app() -> Any:
             ),
         )
 
+    @app.get("/background", response_class=HTMLResponse)
+    def background_page(
+        request: Request,
+        page: int = 1,
+        page_size: int = 20,
+        db: Session = Depends(get_db),
+    ) -> HTMLResponse:
+        """
+        Background image configuration page.
+
+        Allows users to:
+        - View the current background image
+        - Select an observation snapshot as background
+        - Upload a custom background image
+        - Clear the background image
+        """
+        s = load_settings()
+        bg_path = background_image_path()
+        bg_exists = bg_path.exists()
+
+        # Get recent observations for selection
+        total_obs = db.execute(select(func.count(Observation.id))).scalar_one()
+        current_page, clamped_page_size, total_pages, offset = paginate(
+            total_obs, page=page, page_size=page_size, max_page_size=100
+        )
+
+        recent_obs = (
+            db.execute(
+                select(Observation)
+                .order_by(desc(Observation.ts))
+                .offset(offset)
+                .limit(clamped_page_size)
+            )
+            .scalars()
+            .all()
+        )
+
+        for o in recent_obs:
+            o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
+
+        return templates.TemplateResponse(
+            "background.html",
+            _context(
+                request,
+                "Background Image",
+                settings=s,
+                background_configured=bool(s.background_image),
+                background_exists=bg_exists,
+                observations=recent_obs,
+                obs_page=current_page,
+                obs_page_size=clamped_page_size,
+                obs_total_pages=total_pages,
+                obs_total=int(total_obs),
+                ts=int(time.time()),
+            ),
+        )
+
     # ----------------------------
     # API routes
     # ----------------------------
@@ -1130,6 +1196,168 @@ def make_app() -> Any:
         s.roi = r
         save_settings(s)
         return RedirectResponse(url="/calibrate", status_code=303)
+
+    @app.get("/api/background")
+    def get_background() -> dict[str, Any]:
+        """
+        Return information about the current background image.
+
+        The response includes:
+        - configured: whether a background image is configured
+        - path: relative path to the background image (if configured)
+        - exists: whether the background image file exists on disk
+        """
+        s = load_settings()
+        bg_path = background_image_path()
+        exists = bg_path.exists()
+        return {
+            "configured": bool(s.background_image),
+            "path": s.background_image or None,
+            "exists": exists,
+        }
+
+    @app.get("/api/background.jpg")
+    def get_background_jpg() -> Any:
+        """
+        Return the configured background image, or a placeholder if none set.
+        """
+        bg_path = background_image_path()
+        if bg_path.exists():
+            return FileResponse(str(bg_path), media_type="image/jpeg")
+
+        # Return placeholder
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError:
+            raise HTTPException(status_code=404, detail="PIL library not available for image generation")
+
+        img = Image.new("RGB", (960, 540), (28, 28, 38))
+        d = ImageDraw.Draw(img)
+        d.text(
+            (24, 24),
+            "No background image configured.\nSelect an observation snapshot or upload an image.",
+            fill=(180, 180, 200),
+        )
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        buf.seek(0)
+        return StreamingResponse(buf, media_type="image/jpeg")
+
+    @app.post("/api/background/from_observation/{obs_id}")
+    def set_background_from_observation(obs_id: int, db: Session = Depends(get_db)) -> RedirectResponse:
+        """
+        Set the background image by copying a snapshot from an existing observation.
+
+        The snapshot is copied to a static location (/data/background/background.jpg)
+        so that it persists even if the original observation is deleted.
+        """
+        o = db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        if not o.snapshot_path:
+            raise HTTPException(status_code=400, detail="Observation has no snapshot")
+
+        src_path = media_dir() / o.snapshot_path
+        if not src_path.exists():
+            raise HTTPException(status_code=404, detail="Snapshot file not found")
+
+        # Ensure background directory exists
+        bg_dir = background_dir()
+        bg_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy to static location
+        dst_path = background_image_path()
+        shutil.copy2(src_path, dst_path)
+
+        # Update settings
+        s = load_settings()
+        s.background_image = "background/background.jpg"
+        save_settings(s)
+
+        return RedirectResponse(url="/background", status_code=303)
+
+    @app.post("/api/background/upload")
+    async def upload_background(request: Request) -> RedirectResponse:
+        """
+        Upload a custom background image.
+
+        The uploaded file is saved to /data/background/background.jpg.
+        Accepts JPEG and PNG images; PNG is converted to JPEG.
+        """
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None:
+            raise HTTPException(status_code=400, detail="No file uploaded")
+
+        # Validate that upload has a read method (is file-like)
+        if not hasattr(upload, "read"):
+            raise HTTPException(status_code=400, detail="Invalid file upload")
+
+        # Read file content
+        try:
+            content = await upload.read()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Failed to read uploaded file")
+
+        if not content or len(content) < 100:
+            raise HTTPException(status_code=400, detail="File is empty or too small")
+
+        # Limit file size to 10MB
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+
+        # Validate and convert image
+        try:
+            from PIL import Image
+        except ImportError:
+            raise HTTPException(status_code=500, detail="PIL not available for image processing")
+
+        try:
+            img = Image.open(io.BytesIO(content))
+            # Convert to RGB (handles PNG with alpha, etc.)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid image file")
+
+        # Ensure background directory exists
+        bg_dir = background_dir()
+        bg_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save as JPEG
+        dst_path = background_image_path()
+        img.save(dst_path, format="JPEG", quality=90)
+
+        # Update settings
+        s = load_settings()
+        s.background_image = "background/background.jpg"
+        save_settings(s)
+
+        return RedirectResponse(url="/background", status_code=303)
+
+    @app.post("/api/background/clear")
+    def clear_background() -> RedirectResponse:
+        """
+        Clear the configured background image.
+
+        Removes the background image file and clears the setting.
+        """
+        # Remove file if it exists
+        bg_path = background_image_path()
+        try:
+            bg_path.unlink(missing_ok=True)
+        except Exception:
+            # Ignore errors during file removal (e.g., permission issues, race conditions).
+            # The setting will still be cleared below, and the file can be cleaned up later.
+            pass
+
+        # Clear setting
+        s = load_settings()
+        s.background_image = ""
+        save_settings(s)
+
+        return RedirectResponse(url="/background", status_code=303)
 
     @app.get("/api/frame.jpg")
     def frame_jpg(db: Session = Depends(get_db)) -> Any:

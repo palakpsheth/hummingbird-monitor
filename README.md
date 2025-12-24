@@ -27,6 +27,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Individual re-identification**: “bird A vs bird B” using image embeddings
 - **Name individuals** in the UI
 - **Counts & last-seen** stats per individual
+- **Background image configuration**: define a standard background picture without hummingbirds
 - **Cross-linked** navigation:
   - Individuals list → individual page → all observations
   - Observation detail → linked individual
@@ -39,6 +40,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Observations**: filterable gallery + detail page
 - **Individuals**: sortable list + detail page
 - **ROI calibration**: draw a box on the latest snapshot
+- **Background image**: configure a reference background (select from observations or upload)
 - **API Docs**: interactive Swagger UI for API exploration (`/docs`)
 
 ---
@@ -52,7 +54,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **nginx** (optional): reverse proxy on port 80 (nice “just open IP” UX)
 
 ### Persistent storage
-- `/data` (volume): SQLite DB + `config.json` + exports
+- `/data` (volume): SQLite DB + `config.json` + exports + background image
 - `/media` (volume): snapshots + clips
 
 ---
@@ -155,6 +157,11 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 - `HBMON_MIN_SPECIES_PROB` (default ~0.35)
   - Raise if species labels are noisy
   - Lower if too many are forced into “unknown”
+- `HBMON_CROP_PADDING` (default ~0.05)
+  - Controls how much padding is added around the detected bird bbox before species classification
+  - **Lower** (e.g. 0.02): tighter crop, focuses more on the bird itself (may improve species ID)
+  - **Higher** (e.g. 0.18): more background context included (may help in some cases)
+  - Reduced from 0.18 to 0.05 to better focus on the bird for improved species identification
 
 ### Individual re-identification
 - `HBMON_MATCH_THRESHOLD` (cosine distance; default ~0.25)
@@ -162,6 +169,31 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
   - **Higher** (e.g. 0.30): more merging → may incorrectly merge different birds
 - `HBMON_EMA_ALPHA` (prototype update weight; default ~0.10)
   - Lower reduces drift, higher adapts faster
+
+### Background subtraction (motion filtering)
+When a background image is configured via the UI (`/background`), the worker can use it to filter out false positives by detecting motion.
+
+- `HBMON_BG_SUBTRACTION` (default "1")
+  - Set to "0" to disable background subtraction even if a background image is configured
+- `HBMON_BG_MOTION_THRESHOLD` (default 30)
+  - Pixel difference threshold (0-255) for detecting change
+  - Lower values are more sensitive to motion
+  - Higher values require more significant change to trigger
+- `HBMON_BG_MOTION_BLUR` (default 5)
+  - Gaussian blur kernel size for noise reduction (must be an odd positive integer, e.g., 3, 5, 7)
+  - Higher values smooth out noise but may miss small birds
+- `HBMON_BG_MIN_OVERLAP` (default 0.15)
+  - Minimum fraction of detection area that must have motion (0.0-1.0)
+  - Lower values accept detections with less motion overlap
+  - Higher values require more of the detection area to show change
+- `HBMON_DEBUG_BG` (default "0")
+  - Set to "1" to enable debug logging for motion mask errors
+
+**How it works:**
+1. Configure a background image showing the feeder without any birds
+2. The worker computes a motion mask by comparing each frame to the background
+3. YOLO detections are filtered: only those overlapping significantly with motion areas are kept
+4. This reduces false positives from static objects or lighting changes
 
 ---
 
@@ -364,7 +396,7 @@ If video clips don't stream properly in Chrome/Firefox:
 - Improvements:
   - fine-tune YOLO on hummingbird feeder images
   - add a second-stage classifier “hummingbird vs other bird”
-  - add motion gating + background subtraction to reduce triggers
+  - add motion gating + background subtraction to reduce triggers ✅ (now implemented using the configured background image)
 
 ### Better re-ID
 - Current: cosine matching to a prototype embedding.
