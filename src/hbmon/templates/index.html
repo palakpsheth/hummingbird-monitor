@@ -70,7 +70,7 @@
     {% for o in recent %}
       {% set hue = ((o.individual_id or 0) * 47) % 360 %}
       <div class="thumb">
-        <a href="/observations/{{ o.id }}"><img src="/media/{{ o.snapshot_path }}" /></a>
+        <a href="/observations/{{ o.id }}"><img src="/media/{{ o.display_snapshot_path }}" /></a>
         <div class="meta">
           <div>
             <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>

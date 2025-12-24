@@ -229,3 +229,61 @@ def test_get_git_commit_env_unknown_falls_back_to_git(monkeypatch, tmp_path):
     monkeypatch.setattr(web, "_REPO_ROOT", repo_root)
     monkeypatch.setenv("HBMON_GIT_COMMIT", "unknown")
     assert web._get_git_commit() == "abc1234"
+
+
+class MockObservation:
+    """Mock Observation for testing get_annotated_snapshot_path."""
+
+    def __init__(self, extra: dict | None = None):
+        self._extra = extra
+
+    def get_extra(self) -> dict | None:
+        return self._extra
+
+
+def test_get_annotated_snapshot_path_with_valid_path(monkeypatch):
+    """Test that get_annotated_snapshot_path returns path when present."""
+    web = _import_web(monkeypatch)
+    obs = MockObservation(extra={"snapshots": {"annotated_path": "snapshots/2024-01-01/abc123_annotated.jpg"}})
+    result = web.get_annotated_snapshot_path(obs)
+    assert result == "snapshots/2024-01-01/abc123_annotated.jpg"
+
+
+def test_get_annotated_snapshot_path_with_none_extra(monkeypatch):
+    """Test that get_annotated_snapshot_path returns None when extra_json is None."""
+    web = _import_web(monkeypatch)
+    obs = MockObservation(extra=None)
+    result = web.get_annotated_snapshot_path(obs)
+    assert result is None
+
+
+def test_get_annotated_snapshot_path_with_empty_extra(monkeypatch):
+    """Test that get_annotated_snapshot_path returns None when extra_json is empty dict."""
+    web = _import_web(monkeypatch)
+    obs = MockObservation(extra={})
+    result = web.get_annotated_snapshot_path(obs)
+    assert result is None
+
+
+def test_get_annotated_snapshot_path_with_missing_snapshots_key(monkeypatch):
+    """Test that get_annotated_snapshot_path returns None when snapshots key is missing."""
+    web = _import_web(monkeypatch)
+    obs = MockObservation(extra={"detection": {"box_confidence": 0.85}})
+    result = web.get_annotated_snapshot_path(obs)
+    assert result is None
+
+
+def test_get_annotated_snapshot_path_with_snapshots_not_dict(monkeypatch):
+    """Test that get_annotated_snapshot_path returns None when snapshots is not a dict."""
+    web = _import_web(monkeypatch)
+    obs = MockObservation(extra={"snapshots": "invalid_string"})
+    result = web.get_annotated_snapshot_path(obs)
+    assert result is None
+
+
+def test_get_annotated_snapshot_path_with_missing_annotated_path(monkeypatch):
+    """Test that get_annotated_snapshot_path returns None when annotated_path key is missing."""
+    web = _import_web(monkeypatch)
+    obs = MockObservation(extra={"snapshots": {"some_other_key": "value"}})
+    result = web.get_annotated_snapshot_path(obs)
+    assert result is None
