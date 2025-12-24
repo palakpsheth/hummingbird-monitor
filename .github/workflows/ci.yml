@@ -56,12 +56,15 @@ jobs:
           uv run coverage report --fail-under=80 || true
 
       # Post coverage report as a PR comment
+      # Shows 80% threshold with pass/fail icon, but does NOT fail the workflow
       - name: Coverage comment
         if: matrix.python-version == '3.12' && github.event_name == 'pull_request'
+        continue-on-error: true
         uses: orgoro/coverage@v3.2
         with:
           coverageFile: coverage.xml
           token: ${{ secrets.GITHUB_TOKEN }}
+          thresholdAll: 0.8
 
       # Generate a coverage badge based on the `.coverage` data file.
       # This uses the `tj-actions/coverage-badge-py` GitHub Action to
