@@ -1385,6 +1385,95 @@ def make_app() -> Any:
         buf.seek(0)
         return StreamingResponse(buf, media_type="image/jpeg")
 
+    @app.get("/api/stream.mjpeg")
+    def stream_mjpeg() -> Any:
+        """
+        Stream live MJPEG video from the RTSP camera.
+
+        Returns a multipart/x-mixed-replace stream of JPEG frames.
+        This provides a true live video feed from the camera.
+
+        If the RTSP URL is not configured or the camera is unavailable,
+        returns an error response.
+        """
+        s = load_settings()
+        if not s.rtsp_url:
+            raise HTTPException(status_code=503, detail="RTSP URL not configured")
+
+        try:
+            import cv2
+        except ImportError:
+            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
+
+        def _configure_capture(cap: Any) -> None:
+            """Configure VideoCapture for low latency streaming."""
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                # Buffer size may not be supported on all backends; ignore silently
+                pass
+
+        def generate_frames():
+            """Generate MJPEG frames from RTSP stream."""
+            cap = None
+            try:
+                cap = cv2.VideoCapture(s.rtsp_url)
+                if not cap.isOpened():
+                    return
+
+                _configure_capture(cap)
+
+                # Limit frame rate to reduce bandwidth (target ~10 fps)
+                frame_interval = 1.0 / 10.0
+                last_frame_time = 0.0
+
+                while True:
+                    current_time = time.time()
+                    if current_time - last_frame_time < frame_interval:
+                        time.sleep(0.01)
+                        continue
+
+                    ok, frame = cap.read()
+                    if not ok or frame is None:
+                        # Try to reconnect once
+                        cap.release()
+                        time.sleep(0.5)
+                        cap = cv2.VideoCapture(s.rtsp_url)
+                        if not cap.isOpened():
+                            break
+                        _configure_capture(cap)
+                        continue
+
+                    last_frame_time = current_time
+
+                    # Encode frame as JPEG
+                    ok, jpeg = cv2.imencode(
+                        ".jpg", frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, 70]
+                    )
+                    if not ok:
+                        continue
+
+                    # Yield multipart frame
+                    frame_bytes = jpeg.tobytes()
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(frame_bytes)).encode() + b"\r\n"
+                        b"\r\n" + frame_bytes + b"\r\n"
+                    )
+            except GeneratorExit:
+                # Client disconnected
+                pass
+            finally:
+                if cap is not None:
+                    cap.release()
+
+        return StreamingResponse(
+            generate_frames(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+        )
+
     @app.get("/api/video_info/{obs_id}")
     def video_info(obs_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
         """

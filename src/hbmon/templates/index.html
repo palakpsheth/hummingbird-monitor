@@ -5,15 +5,14 @@
   <div class="card">
     <div class="live-feed-header">
       <h2 class="live-feed-title">Live Camera Feed</h2>
-      <div class="muted" id="live-feed-status">Auto-refreshing every 5s</div>
+      <div class="muted" id="live-feed-status">Loading stream...</div>
     </div>
     <div class="live-feed-container">
-      <img id="live-feed-img" src="/api/frame.jpg?ts={{ ts }}" alt="Current camera snapshot from hummingbird feeder - click to enlarge" class="live-feed-thumb" title="Click to view full size" />
+      <img id="live-feed-img" src="/api/stream.mjpeg" alt="Live camera stream from hummingbird feeder - click to enlarge" class="live-feed-thumb" title="Click to view full size" />
       <div class="live-feed-hint">Click image to view full size</div>
     </div>
     <div class="live-feed-controls">
-      <button type="button" id="live-feed-refresh">Refresh now</button>
-      <button type="button" id="live-feed-toggle">Pause</button>
+      <button type="button" id="live-feed-toggle">Stop Stream</button>
       <a class="muted" href="/calibrate">Calibrate ROI</a>
     </div>
   </div>
@@ -128,50 +127,37 @@
   var img = document.getElementById('live-feed-img');
   var statusEl = document.getElementById('live-feed-status');
   var toggleBtn = document.getElementById('live-feed-toggle');
-  var refreshBtn = document.getElementById('live-feed-refresh');
   var modal = document.getElementById('live-feed-modal');
   var modalImg = document.getElementById('live-feed-modal-img');
   var modalClose = document.getElementById('live-feed-modal-close');
-  var intervalMs = 5000;
-  var timerId = null;
-  var isPaused = false;
-  var loadError = false;
+  var isStreaming = true;
+  var streamSrc = '/api/stream.mjpeg';
 
   function updateStatus(text) {
     if (statusEl) statusEl.textContent = text;
   }
 
-  function refreshImage() {
+  function startStream() {
     if (!img) return;
-    var newImg = new Image();
-    var newSrc = '/api/frame.jpg?ts=' + Date.now();
-    newImg.onload = function() {
-      img.src = newSrc;
-      loadError = false;
-      if (!isPaused) updateStatus('Auto-refreshing every 5s');
-    };
-    newImg.onerror = function() {
-      loadError = true;
-      updateStatus('Failed to load image');
-    };
-    newImg.src = newSrc;
+    img.src = streamSrc;
+    isStreaming = true;
+    if (toggleBtn) toggleBtn.textContent = 'Stop Stream';
+    updateStatus('Streaming live');
   }
 
-  function startAutoRefresh() {
-    if (timerId) clearInterval(timerId);
-    timerId = setInterval(refreshImage, intervalMs);
-  }
-
-  function stopAutoRefresh() {
-    if (timerId) {
-      clearInterval(timerId);
-      timerId = null;
-    }
+  function stopStream() {
+    if (!img) return;
+    // Setting src to empty string stops the stream
+    img.src = '';
+    isStreaming = false;
+    if (toggleBtn) toggleBtn.textContent = 'Start Stream';
+    updateStatus('Stream stopped');
   }
 
   function openModal() {
     if (modal && modalImg && img) {
-      modalImg.src = img.src;
+      // For MJPEG stream, open the stream in modal too
+      modalImg.src = streamSrc;
       modal.classList.add('open');
       document.body.style.overflow = 'hidden';
       // Focus close button for keyboard accessibility
@@ -185,6 +171,8 @@
     if (modal) {
       modal.classList.remove('open');
       document.body.style.overflow = '';
+      // Stop modal stream when closing
+      if (modalImg) modalImg.src = '';
       // Return focus to thumbnail image
       if (img) {
         img.focus();
@@ -227,41 +215,24 @@
 
   if (toggleBtn) {
     toggleBtn.addEventListener('click', function() {
-      if (isPaused) {
-        isPaused = false;
-        startAutoRefresh();
-        toggleBtn.textContent = 'Pause';
-        updateStatus('Auto-refreshing every 5s');
+      if (isStreaming) {
+        stopStream();
       } else {
-        isPaused = true;
-        stopAutoRefresh();
-        toggleBtn.textContent = 'Resume';
-        updateStatus('Paused');
+        startStream();
       }
     });
   }
 
-  if (refreshBtn) {
-    refreshBtn.addEventListener('click', function() {
-      refreshImage();
-    });
-  }
-
-  // Handle initial image load error
+  // Handle stream load events
   if (img) {
     img.onerror = function() {
-      loadError = true;
-      updateStatus('Failed to load image');
+      updateStatus('Stream unavailable');
     };
     img.onload = function() {
-      loadError = false;
-      // Start auto-refresh after initial image loads successfully
-      startAutoRefresh();
+      if (isStreaming) {
+        updateStatus('Streaming live');
+      }
     };
-    // If image is already cached/loaded, start auto-refresh
-    if (img.complete && img.naturalWidth > 0) {
-      startAutoRefresh();
-    }
   }
 })();
 </script>

@@ -198,6 +198,16 @@ def test_video_info_endpoint_not_found(tmp_path, monkeypatch):
     assert r.status_code == 404
 
 
+def test_stream_mjpeg_returns_503_when_rtsp_not_configured(tmp_path, monkeypatch):
+    """Test that /api/stream.mjpeg returns 503 when RTSP URL is not configured."""
+    client = _setup_app(tmp_path, monkeypatch)
+    # Clear RTSP URL to ensure it's not set
+    monkeypatch.delenv("HBMON_RTSP_URL", raising=False)
+    r = client.get("/api/stream.mjpeg")
+    assert r.status_code == 503
+    assert "RTSP URL not configured" in r.json()["detail"]
+
+
 def test_swagger_docs_endpoint(tmp_path, monkeypatch):
     """Test that the Swagger UI docs endpoint is accessible."""
     client = _setup_app(tmp_path, monkeypatch)
@@ -780,13 +790,12 @@ def test_export_media_bundle(tmp_path, monkeypatch):
 
 
 def test_dashboard_contains_live_camera_feed_section(tmp_path, monkeypatch):
-    """Test that the dashboard includes the Live Camera Feed section."""
+    """Test that the dashboard includes the Live Camera Feed section with MJPEG stream."""
     client = _setup_app(tmp_path, monkeypatch)
     r = client.get("/")
     assert r.status_code == 200
     # Check for live feed elements in the dashboard HTML
     assert "Live Camera Feed" in r.text
     assert "live-feed-img" in r.text
-    assert "live-feed-refresh" in r.text
     assert "live-feed-toggle" in r.text
-    assert "/api/frame.jpg" in r.text
+    assert "/api/stream.mjpeg" in r.text
