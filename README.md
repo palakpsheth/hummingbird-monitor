@@ -110,6 +110,30 @@ ip a
 
 ---
 
+## Developer shortcuts (Makefile)
+
+For local development, the repo includes a `Makefile` with common tasks. The targets use
+`uv` to manage the virtual environment and run commands (matching CI expectations).
+
+```bash
+make venv            # create .venv via uv
+make sync            # install dev dependencies from pyproject.toml
+make lint            # ruff check
+make test            # full pytest + coverage
+make test-unit       # unit tests + coverage (marker: not integration)
+make test-integration # integration/UI tests + coverage (marker: integration)
+make docker-build    # docker compose build
+make docker-up       # docker compose up -d --build
+make docker-down     # docker compose down
+make clean-db        # remove local database file only (defaults to ./data)
+make clean-media     # remove local media files (defaults to ./data/media)
+make clean-data      # remove all local data (defaults to ./data)
+```
+
+Run `make help` to list all available targets.
+
+---
+
 ## Recommended setup steps
 
 ### Calibrate ROI (biggest accuracy + performance win)

@@ -15,6 +15,7 @@ Key directories (defaults):
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import time
@@ -224,7 +225,14 @@ def _ensure_dir(path: Path) -> Path:
     try:
         path.mkdir(parents=True, exist_ok=True)
         return path
-    except PermissionError:
+    except (PermissionError, OSError) as exc:
+        if isinstance(exc, OSError) and exc.errno not in {
+            errno.EACCES,
+            errno.ENOENT,
+            errno.EROFS,
+            errno.EPERM,
+        }:
+            raise
         fallback = Path.cwd() / path.name
         fallback.mkdir(parents=True, exist_ok=True)
         return fallback
