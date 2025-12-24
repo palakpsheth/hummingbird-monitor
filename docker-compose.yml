@@ -30,7 +30,8 @@ services:
       - ./data/wyze-bridge/tokens:/tokens
       - ./data/wyze-bridge/img:/img
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000"]
+      # Using Python for healthcheck since curl/wget may not be in slim image
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000', timeout=5)\""]
       interval: 1m
       timeout: 10s
       retries: 3
