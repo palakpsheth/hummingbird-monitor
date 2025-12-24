@@ -53,6 +53,24 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **hbmon-web**: FastAPI + Jinja UI, serves `/media` and exports
 - **nginx** (optional): reverse proxy on port 80 (nice “just open IP” UX)
 
+### Container Startup Order & Healthchecks
+
+The `docker-compose.yml` uses healthchecks to ensure containers start in the correct order:
+
+```
+wyze-bridge (healthy) → hbmon-web (healthy) → hbmon-worker
+                                            → hbmon-proxy
+```
+
+| Container     | Healthcheck                           | Wait for                |
+|---------------|---------------------------------------|-------------------------|
+| wyze-bridge   | HTTP check on port 5000               | -                       |
+| hbmon-web     | HTTP check on `/health` endpoint      | wyze-bridge healthy     |
+| hbmon-worker  | Process check for `hbmon.worker`      | wyze-bridge & hbmon-web |
+| hbmon-proxy   | HTTP check on port 80                 | hbmon-web healthy       |
+
+This ensures the database is initialized by hbmon-web before the worker starts.
+
 ### Persistent storage
 - `/data` (volume): SQLite DB + `config.json` + exports + background image
 - `/media` (volume): snapshots + clips
