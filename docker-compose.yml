@@ -24,14 +24,14 @@ services:
       - ./data/wyze-bridge/tokens:/tokens
       - ./data/wyze-bridge/img:/img
     restart: unless-stopped
-    # Healthcheck: wyze-bridge exposes a web UI on port 5000
-    # Using curl as wget may not be available in the wyze-bridge image
+    # Healthcheck: simply check if main process is running
+    # We don't use HTTP checks as curl/wget may not be in the image
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5000/ || exit 1"]
+      test: ["CMD-SHELL", "pgrep -f 'python' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 60s
 
   hbmon-web:
     build:
