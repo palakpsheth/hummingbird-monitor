@@ -17,10 +17,17 @@ import hbmon.config as config
 
 def test_ensure_dirs_fallback(monkeypatch, tmp_path):
     """Ensure that ensure_dirs falls back to cwd when target paths are unwritable."""
-    # Point the environment to unwritable directories under /root (likely unwritable in tests)
+    # Point the environment to directories under a known-unwritable parent.
     # We use distinct names to avoid collisions with existing directories on the system.
-    unwritable_data = Path("/nonexistent_unwritable_data")
-    unwritable_media = Path("/nonexistent_unwritable_media")
+    candidates = [Path("/proc"), Path("/sys"), Path("/root")]
+    parent = next(
+        (candidate for candidate in candidates if candidate.exists() and not os.access(candidate, os.W_OK)),
+        None,
+    )
+    if parent is None:
+        pytest.skip("No unwritable parent directory available for fallback test")
+    unwritable_data = parent / "hbmon_unwritable_data"
+    unwritable_media = parent / "hbmon_unwritable_media"
     monkeypatch.setenv("HBMON_DATA_DIR", str(unwritable_data))
     monkeypatch.setenv("HBMON_MEDIA_DIR", str(unwritable_media))
 
