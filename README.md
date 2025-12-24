@@ -290,6 +290,27 @@ Run the worker locally (requires RTSP access from your host):
 HBMON_RTSP_URL="rtsp://..." uv run python -m hbmon.worker
 ```
 
+### Using the Makefile
+
+A `Makefile` is provided for convenience. Common targets:
+
+```bash
+make help              # Show all available targets
+make venv install      # Set up development environment
+make lint              # Run ruff linter
+make lint-fix          # Run ruff with auto-fix
+make test              # Run tests with coverage
+make test-unit         # Run tests without coverage (faster)
+make test-cov          # Run tests with full coverage reports (term + html + xml)
+make docker-build      # Build Docker image
+make docker-up         # Start all containers
+make docker-down       # Stop all containers
+make pre-commit-install # Install pre-commit hooks
+make run-web           # Run web server locally
+make run-worker        # Run worker locally
+make clean             # Remove build artifacts
+```
+
 ---
 
 ## GitHub Actions CI
