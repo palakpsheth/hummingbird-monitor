@@ -53,3 +53,9 @@ markers = [
     "unit: marks tests as unit tests (lightweight, no ML dependencies)",
 ]
 # All tests run by default. Use -m 'not integration' to skip integration tests locally.
+
+[tool.coverage.report]
+# Target coverage threshold (informational, does not fail the build)
+fail_under = 80
+show_missing = true
+skip_covered = false
