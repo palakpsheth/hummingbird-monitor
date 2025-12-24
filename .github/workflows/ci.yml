@@ -57,8 +57,9 @@ jobs:
 
       # Post coverage report as a PR comment
       # Shows 80% threshold with pass/fail icon, but does NOT fail the workflow
+      # Runs on both pull_request and pull_request_target events
       - name: Coverage comment
-        if: matrix.python-version == '3.12' && github.event_name == 'pull_request'
+        if: matrix.python-version == '3.12' && (github.event_name == 'pull_request' || github.event_name == 'pull_request_target')
         continue-on-error: true
         uses: orgoro/coverage@v3.2
         with:
