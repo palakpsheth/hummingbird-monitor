@@ -146,10 +146,6 @@
     var newSrc = '/api/frame.jpg?ts=' + Date.now();
     newImg.onload = function() {
       img.src = newSrc;
-      // Also update modal image if modal is open
-      if (modal && modal.classList.contains('open') && modalImg) {
-        modalImg.src = newSrc;
-      }
       loadError = false;
       if (!isPaused) updateStatus('Auto-refreshing every 5s');
     };
@@ -207,7 +203,7 @@
 
   // Close modal on Escape key
   document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' && modal && modal.classList.contains('open')) {
       closeModal();
     }
   });
