@@ -164,3 +164,64 @@ def test_convert_to_h264_returns_false_on_subprocess_error(monkeypatch, tmp_path
 
     result = worker._convert_to_h264(input_path, output_path)
     assert result is False
+
+
+def test_draw_bbox_draws_rectangle(monkeypatch):
+    """Test that _draw_bbox draws a rectangle on the frame."""
+    rectangles_drawn: list[tuple[tuple[int, int], tuple[int, int], tuple[int, int, int], int]] = []
+
+    fake_cv2 = types.SimpleNamespace(
+        rectangle=lambda img, pt1, pt2, color, thickness: rectangles_drawn.append((pt1, pt2, color, thickness)),
+    )
+
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+    monkeypatch.setattr(worker, "cv2", fake_cv2)
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    det = worker.Det(x1=10, y1=20, x2=50, y2=60, conf=0.9)
+
+    result = worker._draw_bbox(frame, det)
+
+    # Should have drawn one rectangle
+    assert len(rectangles_drawn) == 1
+    pt1, pt2, color, thickness = rectangles_drawn[0]
+    assert pt1 == (10, 20)
+    assert pt2 == (50, 60)
+    assert color == (0, 255, 0)  # green
+    assert thickness == 2
+
+    # Result should be a copy (different object)
+    assert result is not frame
+
+
+def test_draw_bbox_custom_color_and_thickness(monkeypatch):
+    """Test that _draw_bbox uses custom color and thickness when provided."""
+    rectangles_drawn: list[tuple[tuple[int, int], tuple[int, int], tuple[int, int, int], int]] = []
+
+    fake_cv2 = types.SimpleNamespace(
+        rectangle=lambda img, pt1, pt2, color, thickness: rectangles_drawn.append((pt1, pt2, color, thickness)),
+    )
+
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+    monkeypatch.setattr(worker, "cv2", fake_cv2)
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    det = worker.Det(x1=5, y1=10, x2=30, y2=40, conf=0.8)
+
+    worker._draw_bbox(frame, det, color=(255, 0, 0), thickness=5)
+
+    assert len(rectangles_drawn) == 1
+    _, _, color, thickness = rectangles_drawn[0]
+    assert color == (255, 0, 0)  # custom blue
+    assert thickness == 5
+
+
+def test_draw_bbox_raises_when_cv2_unavailable(monkeypatch):
+    """Test that _draw_bbox raises RuntimeError when OpenCV is not available."""
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", False)
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    det = worker.Det(x1=0, y1=0, x2=10, y2=10, conf=0.5)
+
+    with pytest.raises(RuntimeError, match="OpenCV"):
+        worker._draw_bbox(frame, det)

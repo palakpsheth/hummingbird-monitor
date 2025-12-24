@@ -164,6 +164,34 @@ def _write_jpeg(path: Path, frame_bgr: np.ndarray) -> None:
     path.write_bytes(buf.tobytes())
 
 
+def _draw_bbox(
+    frame_bgr: np.ndarray,
+    det: Det,
+    *,
+    color: tuple[int, int, int] = (0, 255, 0),
+    thickness: int = 2,
+) -> np.ndarray:
+    """
+    Draw a bounding box on the frame around the detected object.
+
+    Args:
+        frame_bgr: BGR image as numpy array.
+        det: Detection with bounding box coordinates.
+        color: BGR color for the box (default: green).
+        thickness: Line thickness in pixels (default: 2).
+
+    Returns:
+        A copy of the frame with the bounding box drawn.
+    """
+    if not _CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is not installed; cannot draw bounding boxes")
+    assert cv2 is not None  # for type checkers
+
+    annotated = frame_bgr.copy()
+    cv2.rectangle(annotated, (det.x1, det.y1), (det.x2, det.y2), color, thickness)
+    return annotated
+
+
 def _ffmpeg_available() -> bool:
     """Check if FFmpeg is available on the system."""
     return shutil.which("ffmpeg") is not None
@@ -609,9 +637,10 @@ def run_worker() -> None:
         snap_path = media_root / snap_rel
         clip_path = media_root / clip_rel
 
-        # Save snapshot immediately
+        # Save snapshot immediately with bounding box overlay
         try:
-            _write_jpeg(snap_path, frame)
+            annotated_frame = _draw_bbox(frame, det_full)
+            _write_jpeg(snap_path, annotated_frame)
         except Exception as e:
             print(f"[worker] snapshot write failed: {e}")
             continue
