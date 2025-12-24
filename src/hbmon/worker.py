@@ -199,7 +199,7 @@ def _draw_bbox(
         font_thickness = 2
 
         # Get text size to draw background rectangle
-        (text_w, text_h), baseline = cv2.getTextSize(label, font, font_scale, font_thickness)
+        (text_w, text_h), _ = cv2.getTextSize(label, font, font_scale, font_thickness)
 
         # Position text above the bounding box
         text_x = det.x1
@@ -681,6 +681,13 @@ def run_worker() -> None:
             _write_jpeg(snap_annotated_path, annotated_frame)
         except Exception as e:
             print(f"[worker] snapshot write failed: {e}")
+            # Clean up any partially written snapshot files to avoid orphans
+            for path in (snap_path, snap_annotated_path):
+                try:
+                    if path.exists():
+                        path.unlink()
+                except Exception as cleanup_err:
+                    print(f"[worker] snapshot cleanup failed for {path}: {cleanup_err}")
             continue
 
         # Record clip (best effort)
