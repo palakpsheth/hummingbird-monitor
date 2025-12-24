@@ -4,6 +4,21 @@
 
   <div class="card">
     <div class="inline" style="justify-content: space-between;">
+      <h2 style="margin:0;">Live Camera Feed</h2>
+      <div class="muted" id="live-feed-status">Auto-refreshing every 5s</div>
+    </div>
+    <div class="live-feed-wrap" style="margin-top:12px;">
+      <img id="live-feed-img" src="/api/frame.jpg?ts={{ ts }}" alt="Live camera feed" class="live-feed-img" />
+    </div>
+    <div class="inline" style="margin-top:10px; gap: 10px;">
+      <button type="button" id="live-feed-refresh">Refresh now</button>
+      <button type="button" id="live-feed-toggle">Pause</button>
+      <a class="muted" href="/calibrate">Calibrate ROI</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="inline" style="justify-content: space-between;">
       <h2 style="margin:0;">Top individuals</h2>
       <div class="muted">Sorted by visits</div>
     </div>
@@ -95,4 +110,61 @@
       </div>
     {% endfor %}
   </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  var img = document.getElementById('live-feed-img');
+  var statusEl = document.getElementById('live-feed-status');
+  var toggleBtn = document.getElementById('live-feed-toggle');
+  var refreshBtn = document.getElementById('live-feed-refresh');
+  var intervalMs = 5000;
+  var timerId = null;
+  var isPaused = false;
+
+  function refreshImage() {
+    if (img) {
+      img.src = '/api/frame.jpg?ts=' + Date.now();
+    }
+  }
+
+  function startAutoRefresh() {
+    if (timerId) clearInterval(timerId);
+    timerId = setInterval(refreshImage, intervalMs);
+  }
+
+  function stopAutoRefresh() {
+    if (timerId) {
+      clearInterval(timerId);
+      timerId = null;
+    }
+  }
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', function() {
+      if (isPaused) {
+        isPaused = false;
+        startAutoRefresh();
+        toggleBtn.textContent = 'Pause';
+        if (statusEl) statusEl.textContent = 'Auto-refreshing every 5s';
+      } else {
+        isPaused = true;
+        stopAutoRefresh();
+        toggleBtn.textContent = 'Resume';
+        if (statusEl) statusEl.textContent = 'Paused';
+      }
+    });
+  }
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', function() {
+      refreshImage();
+    });
+  }
+
+  // Start auto-refresh on page load
+  startAutoRefresh();
+})();
+</script>
 {% endblock %}

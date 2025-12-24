@@ -257,6 +257,29 @@ a:hover { text-decoration: underline; }
   white-space: pre-wrap;
 }
 
+/* ───────────────────────── Live Camera Feed ───────────────────────── */
+
+.live-feed-wrap {
+  max-width: 100%;
+  text-align: center;
+}
+
+.live-feed-img {
+  max-width: 100%;
+  max-height: 400px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  display: block;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+@media (min-width: 900px) {
+  .live-feed-img {
+    max-height: 480px;
+  }
+}
+
 /* ───────────────────────── ROI Calibration ───────────────────────── */
 
 .cal-wrap {
