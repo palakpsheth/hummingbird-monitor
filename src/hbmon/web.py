@@ -1410,6 +1410,7 @@ def make_app() -> Any:
             try:
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             except Exception:
+                # Buffer size may not be supported on all backends; ignore silently
                 pass
 
         def generate_frames():
@@ -1448,7 +1449,7 @@ def make_app() -> Any:
                     # Encode frame as JPEG
                     ok, jpeg = cv2.imencode(
                         ".jpg", frame,
-                        [int(cv2.IMWRITE_JPEG_QUALITY), 70]
+                        [cv2.IMWRITE_JPEG_QUALITY, 70]
                     )
                     if not ok:
                         continue
