@@ -1405,11 +1405,12 @@ def make_app() -> Any:
         except ImportError:
             raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
 
-        # Force RTSP over TCP for better compatibility
-        os.environ.setdefault(
-            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
-            "rtsp_transport;tcp|stimeout;5000000|max_delay;500000|fflags;nobuffer"
-        )
+        def _configure_capture(cap: Any) -> None:
+            """Configure VideoCapture for low latency streaming."""
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
 
         def generate_frames():
             """Generate MJPEG frames from RTSP stream."""
@@ -1419,11 +1420,7 @@ def make_app() -> Any:
                 if not cap.isOpened():
                     return
 
-                # Configure for low latency
-                try:
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                except Exception:
-                    pass
+                _configure_capture(cap)
 
                 # Limit frame rate to reduce bandwidth (target ~10 fps)
                 frame_interval = 1.0 / 10.0
@@ -1443,6 +1440,7 @@ def make_app() -> Any:
                         cap = cv2.VideoCapture(s.rtsp_url)
                         if not cap.isOpened():
                             break
+                        _configure_capture(cap)
                         continue
 
                     last_frame_time = current_time
