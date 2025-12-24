@@ -1197,8 +1197,8 @@ def make_app() -> Any:
         # Return placeholder
         try:
             from PIL import Image, ImageDraw
-        except Exception:
-            raise HTTPException(status_code=404, detail="No background image configured")
+        except ImportError:
+            raise HTTPException(status_code=404, detail="PIL library not available for image generation")
 
         img = Image.new("RGB", (960, 540), (28, 28, 38))
         d = ImageDraw.Draw(img)
@@ -1259,9 +1259,13 @@ def make_app() -> Any:
         if upload is None:
             raise HTTPException(status_code=400, detail="No file uploaded")
 
+        # Validate that upload has a read method (is file-like)
+        if not hasattr(upload, "read"):
+            raise HTTPException(status_code=400, detail="Invalid file upload")
+
         # Read file content
         try:
-            content = await upload.read()  # type: ignore[union-attr]
+            content = await upload.read()
         except Exception:
             raise HTTPException(status_code=400, detail="Failed to read uploaded file")
 
