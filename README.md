@@ -157,6 +157,11 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 - `HBMON_MIN_SPECIES_PROB` (default ~0.35)
   - Raise if species labels are noisy
   - Lower if too many are forced into “unknown”
+- `HBMON_CROP_PADDING` (default ~0.05)
+  - Controls how much padding is added around the detected bird bbox before species classification
+  - **Lower** (e.g. 0.02): tighter crop, focuses more on the bird itself (may improve species ID)
+  - **Higher** (e.g. 0.18): more background context included (may help in some cases)
+  - Reduced from 0.18 to 0.05 to better focus on the bird for improved species identification
 
 ### Individual re-identification
 - `HBMON_MATCH_THRESHOLD` (cosine distance; default ~0.25)

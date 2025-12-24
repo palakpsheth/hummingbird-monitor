@@ -125,6 +125,7 @@ class Settings:
     min_species_prob: float = 0.35
     match_threshold: float = 0.25   # cosine distance threshold (lower = stricter)
     ema_alpha: float = 0.10
+    crop_padding: float = 0.05      # padding fraction around bird bbox for CLIP (lower = tighter crop)
 
     # ROI
     roi: Roi | None = None
@@ -162,6 +163,7 @@ class Settings:
         s.min_species_prob = env_float("HBMON_MIN_SPECIES_PROB", s.min_species_prob)
         s.match_threshold = env_float("HBMON_MATCH_THRESHOLD", s.match_threshold)
         s.ema_alpha = env_float("HBMON_EMA_ALPHA", s.ema_alpha)
+        s.crop_padding = env_float("HBMON_CROP_PADDING", s.crop_padding)
         s.timezone = env_str("HBMON_TIMEZONE", s.timezone)
 
         # ROI can also be overridden via env for debugging
@@ -274,6 +276,7 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
         min_species_prob=float(d.get("min_species_prob", 0.35)),
         match_threshold=float(d.get("match_threshold", 0.25)),
         ema_alpha=float(d.get("ema_alpha", 0.10)),
+        crop_padding=float(d.get("crop_padding", 0.05)),
         timezone=str(d.get("timezone", "local")),
         roi=roi,
         background_image=str(d.get("background_image", "")),
