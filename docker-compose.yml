@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
     # Healthcheck: wyze-bridge exposes a web UI on port 5000
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/", "||", "exit", "1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5000/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -137,7 +137,7 @@ services:
     restart: unless-stopped
     # Healthcheck: nginx responds on port 80
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:80/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
