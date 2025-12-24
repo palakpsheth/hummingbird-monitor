@@ -165,6 +165,31 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 - `HBMON_EMA_ALPHA` (prototype update weight; default ~0.10)
   - Lower reduces drift, higher adapts faster
 
+### Background subtraction (motion filtering)
+When a background image is configured via the UI (`/background`), the worker can use it to filter out false positives by detecting motion.
+
+- `HBMON_BG_SUBTRACTION` (default "1")
+  - Set to "0" to disable background subtraction even if a background image is configured
+- `HBMON_BG_MOTION_THRESHOLD` (default 30)
+  - Pixel difference threshold (0-255) for detecting change
+  - Lower values are more sensitive to motion
+  - Higher values require more significant change to trigger
+- `HBMON_BG_MOTION_BLUR` (default 5)
+  - Gaussian blur kernel size for noise reduction
+  - Higher values smooth out noise but may miss small birds
+- `HBMON_BG_MIN_OVERLAP` (default 0.15)
+  - Minimum fraction of detection area that must have motion (0.0-1.0)
+  - Lower values accept detections with less motion overlap
+  - Higher values require more of the detection area to show change
+- `HBMON_DEBUG_BG` (default "0")
+  - Set to "1" to enable debug logging for motion mask errors
+
+**How it works:**
+1. Configure a background image showing the feeder without any birds
+2. The worker computes a motion mask by comparing each frame to the background
+3. YOLO detections are filtered: only those overlapping significantly with motion areas are kept
+4. This reduces false positives from static objects or lighting changes
+
 ---
 
 ## GPU acceleration (if available)
@@ -366,7 +391,7 @@ If video clips don't stream properly in Chrome/Firefox:
 - Improvements:
   - fine-tune YOLO on hummingbird feeder images
   - add a second-stage classifier “hummingbird vs other bird”
-  - add motion gating + background subtraction to reduce triggers (use the configured background image as a reference frame)
+  - add motion gating + background subtraction to reduce triggers ✅ (now implemented using the configured background image)
 
 ### Better re-ID
 - Current: cosine matching to a prototype embedding.
