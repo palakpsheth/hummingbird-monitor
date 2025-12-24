@@ -30,9 +30,11 @@ dependencies = [
 [dependency-groups]
 dev = [
   "pytest>=8,<9",
+  "pytest-xdist>=3.5,<4",
   "ruff>=0.6,<1",
   "pytest-cov>=4,<5",
   "pre-commit>=3.6,<4",
+  "pytest-sugar>=1.1.1",
 ]
 
 [tool.setuptools]
@@ -48,3 +50,12 @@ lint.ignore = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: marks tests as integration tests (require ML dependencies and test data)",
+    "unit: marks tests as unit tests (lightweight, no ML dependencies)",
+]
+# All tests run by default. Use -m 'not integration' to skip integration tests locally.
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
