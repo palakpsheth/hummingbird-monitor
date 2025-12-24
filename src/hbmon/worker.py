@@ -177,8 +177,10 @@ def _compute_motion_mask(
 
     # Apply Gaussian blur to reduce noise
     if blur_size > 0:
-        gray_frame = cv2.GaussianBlur(gray_frame, (blur_size, blur_size), 0)
-        gray_bg = cv2.GaussianBlur(gray_bg, (blur_size, blur_size), 0)
+        # GaussianBlur requires odd kernel sizes; normalize even values to the next odd.
+        kernel_size = blur_size | 1
+        gray_frame = cv2.GaussianBlur(gray_frame, (kernel_size, kernel_size), 0)
+        gray_bg = cv2.GaussianBlur(gray_bg, (kernel_size, kernel_size), 0)
 
     # Compute absolute difference
     diff = cv2.absdiff(gray_frame, gray_bg)
@@ -623,7 +625,20 @@ def run_worker() -> None:
 
     # Environment variables for background subtraction tuning
     bg_motion_threshold = int(os.getenv("HBMON_BG_MOTION_THRESHOLD", "30"))
-    bg_motion_blur = int(os.getenv("HBMON_BG_MOTION_BLUR", "5"))
+    # Must be a positive odd integer for use as a GaussianBlur kernel size
+    _bg_motion_blur_raw = os.getenv("HBMON_BG_MOTION_BLUR", "5")
+    try:
+        bg_motion_blur = int(_bg_motion_blur_raw)
+    except ValueError:
+        print(f"[worker] Invalid HBMON_BG_MOTION_BLUR={_bg_motion_blur_raw!r}, defaulting to 5")
+        bg_motion_blur = 5
+    if bg_motion_blur <= 0:
+        print(f"[worker] HBMON_BG_MOTION_BLUR must be positive, got {bg_motion_blur}. Defaulting to 5")
+        bg_motion_blur = 5
+    elif bg_motion_blur % 2 == 0:
+        print(f"[worker] HBMON_BG_MOTION_BLUR must be odd, got {bg_motion_blur}. "
+              f"Using {bg_motion_blur + 1} instead")
+        bg_motion_blur += 1
     bg_min_overlap = float(os.getenv("HBMON_BG_MIN_OVERLAP", "0.15"))
     bg_enabled = os.getenv("HBMON_BG_SUBTRACTION", "1") != "0"
 

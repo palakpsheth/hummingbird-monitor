@@ -180,7 +180,7 @@ When a background image is configured via the UI (`/background`), the worker can
   - Lower values are more sensitive to motion
   - Higher values require more significant change to trigger
 - `HBMON_BG_MOTION_BLUR` (default 5)
-  - Gaussian blur kernel size for noise reduction
+  - Gaussian blur kernel size for noise reduction (must be an odd positive integer, e.g., 3, 5, 7)
   - Higher values smooth out noise but may miss small birds
 - `HBMON_BG_MIN_OVERLAP` (default 0.15)
   - Minimum fraction of detection area that must have motion (0.0-1.0)
