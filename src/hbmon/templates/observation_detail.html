@@ -9,8 +9,37 @@
           <button type="button" data-zoom-out aria-label="Zoom out">−</button>
           <button type="button" data-zoom-in aria-label="Zoom in">+</button>
           <button type="button" data-zoom-reset aria-label="Reset zoom">Reset</button>
+          {% if annotated_snapshot_path %}
+          <button type="button" id="toggle-annotation" aria-label="Toggle annotation">Show Raw</button>
+          {% endif %}
         </div>
+        {% if annotated_snapshot_path %}
+        <img class="bigimg" data-zoom-target id="snapshot-img" src="/media/{{ annotated_snapshot_path }}" alt="snapshot (annotated)" data-annotated="/media/{{ annotated_snapshot_path }}" data-raw="/media/{{ o.snapshot_path }}" />
+        {% else %}
         <img class="bigimg" data-zoom-target src="/media/{{ o.snapshot_path }}" alt="snapshot" />
+        {% endif %}
+      </div>
+      {% if annotated_snapshot_path %}
+      <script>
+        (function() {
+          var img = document.getElementById('snapshot-img');
+          var btn = document.getElementById('toggle-annotation');
+          var showingAnnotated = true;
+          btn.addEventListener('click', function() {
+            if (showingAnnotated) {
+              img.src = img.dataset.raw;
+              img.alt = 'snapshot (raw)';
+              btn.textContent = 'Show Annotated';
+            } else {
+              img.src = img.dataset.annotated;
+              img.alt = 'snapshot (annotated)';
+              btn.textContent = 'Show Raw';
+            }
+            showingAnnotated = !showingAnnotated;
+          });
+        })();
+      </script>
+      {% endif %}
       </div>
 
       <div class="stack" style="margin-top:12px;">
@@ -149,7 +178,10 @@
       <h2 style="margin-top:0;">Details</h2>
 
       <div class="stack">
-        <div class="muted">snapshot: /media/{{ o.snapshot_path }}</div>
+        <div class="muted">snapshot (raw): /media/{{ o.snapshot_path }}</div>
+        {% if annotated_snapshot_path %}
+        <div class="muted">snapshot (annotated): /media/{{ annotated_snapshot_path }}</div>
+        {% endif %}
         <div class="muted">video: /media/{{ o.video_path }}{% if video_info %} ({{ "exists" if video_info.exists else "missing" }}){% endif %}</div>
         <div class="muted">bbox: {{ o.bbox_str or "(none)" }}</div>
         <div class="muted">camera: {{ o.camera_name or "(unknown)" }}</div>

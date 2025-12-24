@@ -170,18 +170,20 @@ def _draw_bbox(
     *,
     color: tuple[int, int, int] = (0, 255, 0),
     thickness: int = 2,
+    show_confidence: bool = True,
 ) -> np.ndarray:
     """
-    Draw a bounding box on the frame around the detected object.
+    Draw a bounding box on the frame around the detected object with optional confidence label.
 
     Args:
         frame_bgr: BGR image as numpy array.
         det: Detection with bounding box coordinates.
         color: BGR color for the box (default: green).
         thickness: Line thickness in pixels (default: 2).
+        show_confidence: If True, draw the detection confidence above the box.
 
     Returns:
-        A copy of the frame with the bounding box drawn.
+        A copy of the frame with the bounding box and optional confidence drawn.
     """
     if not _CV2_AVAILABLE:
         raise RuntimeError("OpenCV (cv2) is not installed; cannot draw bounding boxes")
@@ -189,6 +191,35 @@ def _draw_bbox(
 
     annotated = frame_bgr.copy()
     cv2.rectangle(annotated, (det.x1, det.y1), (det.x2, det.y2), color, thickness)
+
+    if show_confidence:
+        label = f"{det.conf:.2f}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        font_thickness = 2
+
+        # Get text size to draw background rectangle
+        (text_w, text_h), baseline = cv2.getTextSize(label, font, font_scale, font_thickness)
+
+        # Position text above the bounding box
+        text_x = det.x1
+        text_y = det.y1 - 6
+        if text_y - text_h < 0:
+            # If not enough space above, put it inside the box
+            text_y = det.y1 + text_h + 6
+
+        # Draw background rectangle for better readability
+        cv2.rectangle(
+            annotated,
+            (text_x, text_y - text_h - 4),
+            (text_x + text_w + 4, text_y + 4),
+            color,
+            -1,  # filled
+        )
+
+        # Draw text in black for contrast
+        cv2.putText(annotated, label, (text_x + 2, text_y), font, font_scale, (0, 0, 0), font_thickness)
+
     return annotated
 
 
@@ -628,19 +659,26 @@ def run_worker() -> None:
             conf=det.conf,
         )
 
-        # Snapshot path (relative under /media)
+        # Snapshot paths (relative under /media)
+        # We save two images: raw (original) and annotated (with bbox + confidence)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        snap_rel = f"snapshots/{stamp}/{uuid.uuid4().hex}.jpg"
+        snap_id = uuid.uuid4().hex
+        snap_rel = f"snapshots/{stamp}/{snap_id}.jpg"
+        snap_annotated_rel = f"snapshots/{stamp}/{snap_id}_annotated.jpg"
         clip_rel = f"clips/{stamp}/{uuid.uuid4().hex}.mp4"
 
         media_root = snapshots_dir().parent  # /media
         snap_path = media_root / snap_rel
+        snap_annotated_path = media_root / snap_annotated_rel
         clip_path = media_root / clip_rel
 
-        # Save snapshot immediately with bounding box overlay
+        # Save both raw and annotated snapshots
         try:
-            annotated_frame = _draw_bbox(frame, det_full)
-            _write_jpeg(snap_path, annotated_frame)
+            # Save raw image first
+            _write_jpeg(snap_path, frame)
+            # Save annotated image with bbox and confidence
+            annotated_frame = _draw_bbox(frame, det_full, show_confidence=True)
+            _write_jpeg(snap_annotated_path, annotated_frame)
         except Exception as e:
             print(f"[worker] snapshot write failed: {e}")
             continue
@@ -700,6 +738,9 @@ def run_worker() -> None:
                     "box_confidence": float(det_full.conf),
                     "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
                     "roi_offset_xy": [int(xoff), int(yoff)],
+                },
+                "snapshots": {
+                    "annotated_path": snap_annotated_rel,
                 },
                 "review": {"label": None},
             }

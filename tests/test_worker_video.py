@@ -167,7 +167,7 @@ def test_convert_to_h264_returns_false_on_subprocess_error(monkeypatch, tmp_path
 
 
 def test_draw_bbox_draws_rectangle(monkeypatch):
-    """Test that _draw_bbox draws a rectangle on the frame."""
+    """Test that _draw_bbox draws a rectangle on the frame without confidence label."""
     rectangles_drawn: list[tuple[tuple[int, int], tuple[int, int], tuple[int, int, int], int]] = []
 
     fake_cv2 = types.SimpleNamespace(
@@ -180,7 +180,7 @@ def test_draw_bbox_draws_rectangle(monkeypatch):
     frame = np.zeros((100, 100, 3), dtype=np.uint8)
     det = worker.Det(x1=10, y1=20, x2=50, y2=60, conf=0.9)
 
-    result = worker._draw_bbox(frame, det)
+    result = worker._draw_bbox(frame, det, show_confidence=False)
 
     # Should have drawn one rectangle
     assert len(rectangles_drawn) == 1
@@ -208,12 +208,43 @@ def test_draw_bbox_custom_color_and_thickness(monkeypatch):
     frame = np.zeros((100, 100, 3), dtype=np.uint8)
     det = worker.Det(x1=5, y1=10, x2=30, y2=40, conf=0.8)
 
-    worker._draw_bbox(frame, det, color=(255, 0, 0), thickness=5)
+    worker._draw_bbox(frame, det, color=(255, 0, 0), thickness=5, show_confidence=False)
 
     assert len(rectangles_drawn) == 1
     _, _, color, thickness = rectangles_drawn[0]
     assert color == (255, 0, 0)  # custom color (blue in BGR)
     assert thickness == 5
+
+
+def test_draw_bbox_with_confidence_label(monkeypatch):
+    """Test that _draw_bbox draws confidence label when show_confidence=True."""
+    rectangles_drawn: list[tuple] = []
+    texts_drawn: list[tuple] = []
+
+    fake_cv2 = types.SimpleNamespace(
+        rectangle=lambda img, pt1, pt2, color, thickness: rectangles_drawn.append((pt1, pt2, color, thickness)),
+        putText=lambda img, text, org, font, scale, color, thickness: texts_drawn.append((text, org, color)),
+        getTextSize=lambda text, font, scale, thickness: ((30, 12), 2),
+        FONT_HERSHEY_SIMPLEX=0,
+    )
+
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+    monkeypatch.setattr(worker, "cv2", fake_cv2)
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    det = worker.Det(x1=10, y1=30, x2=50, y2=60, conf=0.85)
+
+    worker._draw_bbox(frame, det, show_confidence=True)
+
+    # Should have drawn bbox rectangle + background rectangle for text
+    assert len(rectangles_drawn) == 2
+    # First is the bounding box
+    assert rectangles_drawn[0][0] == (10, 30)
+    assert rectangles_drawn[0][1] == (50, 60)
+
+    # Should have drawn text with confidence
+    assert len(texts_drawn) == 1
+    assert texts_drawn[0][0] == "0.85"  # confidence formatted to 2 decimal places
 
 
 def test_draw_bbox_raises_when_cv2_unavailable(monkeypatch):

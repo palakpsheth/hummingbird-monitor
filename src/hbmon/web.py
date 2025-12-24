@@ -213,6 +213,21 @@ def species_to_css(label: str) -> str:
     return "species-unknown"
 
 
+def get_annotated_snapshot_path(obs: Observation) -> str | None:
+    """
+    Get the annotated snapshot path for an observation from its extra_json.
+
+    Returns the annotated path if available, otherwise None.
+    """
+    extra = obs.get_extra()
+    if not extra or not isinstance(extra, dict):
+        return None
+    snapshots_data = extra.get("snapshots")
+    if not isinstance(snapshots_data, dict):
+        return None
+    return snapshots_data.get("annotated_path")
+
+
 def build_hour_heatmap(hours_rows: list[tuple[int, int]]) -> list[dict[str, int]]:
     """
     hours_rows: [(hour_int, count_int), ...]
@@ -515,6 +530,9 @@ def make_app() -> Any:
         for o in recent:
             # attach computed presentation attrs (not in DB)
             o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
+            # Use annotated snapshot if available, otherwise fall back to raw
+            annotated = get_annotated_snapshot_path(o)
+            o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
 
         latest_ts = db.execute(
             select(Observation.ts).order_by(desc(Observation.ts)).limit(1)
@@ -561,6 +579,9 @@ def make_app() -> Any:
         obs = db.execute(q).scalars().all()
         for o in obs:
             o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
+            # Use annotated snapshot if available, otherwise fall back to raw
+            annotated = get_annotated_snapshot_path(o)
+            o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
 
         inds = db.execute(
             select(Individual).order_by(desc(Individual.visit_count)).limit(2000)
@@ -594,6 +615,9 @@ def make_app() -> Any:
         extra = o.get_extra() or {}
         o.extra_json_pretty = pretty_json(o.extra_json)  # type: ignore[attr-defined]
 
+        # Get annotated snapshot path from extra data (if available)
+        annotated_snapshot_path = get_annotated_snapshot_path(o)
+
         # Video file diagnostics
         video_info: dict[str, Any] | None = None
         if o.video_path:
@@ -618,6 +642,7 @@ def make_app() -> Any:
                 extra=extra,
                 allowed_review_labels=ALLOWED_REVIEW_LABELS,
                 video_info=video_info,
+                annotated_snapshot_path=annotated_snapshot_path,
             ),
         )
 
@@ -757,6 +782,9 @@ def make_app() -> Any:
 
         for o in obs:
             o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
+            # Use annotated snapshot if available, otherwise fall back to raw
+            annotated = get_annotated_snapshot_path(o)
+            o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
 
         total = int(ind.visit_count)
 
@@ -868,6 +896,9 @@ def make_app() -> Any:
         for o in obs:
             o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
             o.suggested_side = "A"  # type: ignore[attr-defined]
+            # Use annotated snapshot if available, otherwise fall back to raw
+            annotated = get_annotated_snapshot_path(o)
+            o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
 
         emb_rows = db.execute(
             select(Embedding).join(Observation, Embedding.observation_id == Observation.id)
