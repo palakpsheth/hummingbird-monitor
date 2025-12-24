@@ -46,7 +46,7 @@ services:
       - HBMON_CONFIG_PATH=${HBMON_CONFIG_PATH}
 
     volumes:
-      - ./data:/data
+      - ./data:/data:rw
     ports:
       - "8000:8000"
     depends_on:
@@ -94,7 +94,7 @@ services:
       - HBMON_YOLO_IMGSZ=1280
 
     volumes:
-      - ./data:/data
+      - ./data:/data:rw
     depends_on:
       - wyze-bridge
     restart: unless-stopped
