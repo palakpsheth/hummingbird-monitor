@@ -48,7 +48,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 ## Architecture
 
 ### Containers (recommended)
-- **wyze-bridge**: logs into Wyze and exposes RTSP streams
+- **wyze-bridge**: logs into Wyze and exposes RTSP streams (using [IDisposable fork](https://github.com/IDisposable/docker-wyze-bridge) for improved performance and camera support)
 - **hbmon-worker**: reads RTSP, runs detection + CLIP + re-ID, writes to SQLite
 - **hbmon-web**: FastAPI + Jinja UI, serves `/media` and exports
 - **nginx** (optional): reverse proxy on port 80 (nice “just open IP” UX)
@@ -142,6 +142,33 @@ Why ROI matters:
 - improves crop quality for CLIP embeddings → better re-ID
 
 ---
+
+## Wyze Bridge configuration
+
+This project uses the [IDisposable fork](https://github.com/IDisposable/docker-wyze-bridge) of docker-wyze-bridge, which provides improved performance and camera support.
+
+### Key features
+- **Healthcheck**: The wyze-bridge container includes a healthcheck that monitors the web UI on port 5000. Other containers wait for wyze-bridge to be healthy before starting.
+- **NET_MODE=LAN**: Forces local streaming from cameras for lowest latency
+- **ON_DEMAND=False**: Keeps streams active for faster response
+- **QUALITY setting**: Configurable stream quality (default: HD60)
+
+### Environment variables for Wyze Bridge
+- `WYZE_EMAIL`, `WYZE_PASSWORD`: Required Wyze account credentials
+- `WYZE_API_KEY`, `WYZE_API_ID`: Optional API credentials (consult wyze-bridge docs)
+- `WYZE_MFA_TYPE`, `WYZE_MFA_CODE`: Optional 2FA configuration
+- `WYZE_REGION`: Optional region override
+- `WYZE_QUALITY`: Stream quality setting (default: HD60)
+  - Options: SD30, SD60, HD30, HD60, 2K30, 2K60 (2K for supported cameras)
+
+### Network mode
+The wyze-bridge container runs with `network_mode: host` for optimal performance. This means:
+- Ports are exposed directly on the host (no Docker port mapping needed)
+- RTSP is available at `rtsp://<host-ip>:8554/<camera-name>`
+- Web UI is available at `http://<host-ip>:5000`
+
+---
+
 
 ## Tuning guide (practical)
 
