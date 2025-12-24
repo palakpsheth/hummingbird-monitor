@@ -53,7 +53,7 @@ jobs:
       - name: Generate Coverage Report
         run: |
           uv run coverage xml
-          uv run coverage report || true
+          uv run coverage report --fail-under=80 || true
 
       # Post coverage report as a PR comment
       - name: Coverage comment
