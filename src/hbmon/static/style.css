@@ -259,9 +259,36 @@ a:hover { text-decoration: underline; }
 
 /* ───────────────────────── Live Camera Feed ───────────────────────── */
 
-.live-feed-wrap {
+.live-feed-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.live-feed-title {
+  margin: 0;
+}
+
+.live-feed-container {
+  margin-top: 12px;
   max-width: 100%;
   text-align: center;
+}
+
+.live-feed-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.live-feed-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 10px;
+  gap: 10px;
 }
 
 .live-feed-thumb {
@@ -276,9 +303,12 @@ a:hover { text-decoration: underline; }
   transition: transform 150ms ease, box-shadow 150ms ease;
 }
 
-.live-feed-thumb:hover {
+.live-feed-thumb:hover,
+.live-feed-thumb:focus {
   transform: scale(1.02);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 @media (min-width: 900px) {
@@ -311,11 +341,12 @@ a:hover { text-decoration: underline; }
   position: relative;
   max-width: 95%;
   max-height: 95%;
+  padding-top: 48px;
 }
 
 .live-feed-modal-img {
   max-width: 100%;
-  max-height: 90vh;
+  max-height: calc(90vh - 48px);
   border-radius: 14px;
   border: 1px solid var(--border);
   display: block;
@@ -324,7 +355,7 @@ a:hover { text-decoration: underline; }
 
 .live-feed-modal-close {
   position: absolute;
-  top: -40px;
+  top: 0;
   right: 0;
   background: var(--btn-bg);
   color: var(--text);
@@ -340,8 +371,24 @@ a:hover { text-decoration: underline; }
   justify-content: center;
 }
 
-.live-feed-modal-close:hover {
+.live-feed-modal-close:hover,
+.live-feed-modal-close:focus {
   background: var(--btn-bg-hover);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Visually hidden class for screen readers */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ───────────────────────── ROI Calibration ───────────────────────── */
