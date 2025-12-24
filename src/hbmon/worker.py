@@ -9,7 +9,7 @@ High-level pipeline per loop:
 - Run YOLO (ultralytics) to detect "bird" class (COCO 'bird' class)
 - Pick best detection (largest area)
 - If not in cooldown: save snapshot + record clip
-- Crop around bbox for CLIP classification + embedding
+- Crop around bbox (with configurable padding) for CLIP classification + embedding
 - Match embedding to an Individual prototype (cosine distance threshold)
 - Insert Observation + (optional) Embedding, update Individual stats/prototype
 
@@ -20,6 +20,7 @@ Expected env vars (common):
 - HBMON_CAMERA_NAME=hummingbirdcam
 - HBMON_FPS_LIMIT=8
 - HBMON_CLIP_SECONDS=2.0
+- HBMON_CROP_PADDING=0.05 (padding fraction around bird bbox for CLIP; lower = tighter crop)
 """
 
 from __future__ import annotations
@@ -628,7 +629,7 @@ def run_worker() -> None:
 
         # Crop around bbox for CLIP
         h, w = frame.shape[:2]
-        x1, y1, x2, y2 = _bbox_with_padding(det_full, (h, w))
+        x1, y1, x2, y2 = _bbox_with_padding(det_full, (h, w), pad_frac=float(s.crop_padding))
         crop = frame[y1:y2, x1:x2].copy()
 
         # Species + embedding
@@ -666,6 +667,7 @@ def run_worker() -> None:
                     "min_species_prob": float(s.min_species_prob),
                     "match_threshold": float(s.match_threshold),
                     "ema_alpha": float(s.ema_alpha),
+                    "crop_padding": float(s.crop_padding),
                 },
                 "detection": {
                     "box_confidence": float(det_full.conf),
