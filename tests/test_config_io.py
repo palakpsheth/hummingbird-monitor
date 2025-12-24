@@ -40,6 +40,25 @@ def test_save_and_load_settings_roundtrip(monkeypatch, tmp_path):
     assert s4.timezone == "America/New_York"
 
 
+def test_crop_padding_config(monkeypatch, tmp_path):
+    """Test that crop_padding can be configured via env and persisted."""
+    monkeypatch.setenv("HBMON_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HBMON_MEDIA_DIR", str(tmp_path / "media"))
+    # Create settings with custom crop_padding
+    s = config.Settings(crop_padding=0.10)
+    config.save_settings(s)
+    # Load back and verify
+    s2 = config.load_settings()
+    assert abs(s2.crop_padding - 0.10) < 1e-6
+    # Override via environment
+    monkeypatch.setenv("HBMON_CROP_PADDING", "0.02")
+    s3 = config.load_settings()
+    assert abs(s3.crop_padding - 0.02) < 1e-6
+    # Without env overrides, should use persisted value
+    s4 = config.load_settings(apply_env_overrides=False)
+    assert abs(s4.crop_padding - 0.10) < 1e-6
+
+
 def test_load_settings_bootstrap_uses_env(monkeypatch, tmp_path):
     """When no config file exists, load_settings seeds values from env even without overrides."""
     monkeypatch.setenv("HBMON_DATA_DIR", str(tmp_path / "data"))

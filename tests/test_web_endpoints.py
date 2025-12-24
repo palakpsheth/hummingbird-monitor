@@ -196,6 +196,8 @@ def test_video_info_endpoint_not_found(tmp_path, monkeypatch):
 
     r = client.get("/api/video_info/99999")
     assert r.status_code == 404
+
+
 def test_swagger_docs_endpoint(tmp_path, monkeypatch):
     """Test that the Swagger UI docs endpoint is accessible."""
     client = _setup_app(tmp_path, monkeypatch)
@@ -775,3 +777,16 @@ def test_export_media_bundle(tmp_path, monkeypatch):
     r = client.get("/export/media_bundle.tar.gz")
     assert r.status_code == 200
     assert "application/gzip" in r.headers.get("content-type", "")
+
+
+def test_dashboard_contains_live_camera_feed_section(tmp_path, monkeypatch):
+    """Test that the dashboard includes the Live Camera Feed section."""
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/")
+    assert r.status_code == 200
+    # Check for live feed elements in the dashboard HTML
+    assert "Live Camera Feed" in r.text
+    assert "live-feed-img" in r.text
+    assert "live-feed-refresh" in r.text
+    assert "live-feed-toggle" in r.text
+    assert "/api/frame.jpg" in r.text

@@ -9,7 +9,7 @@ High-level pipeline per loop:
 - Run YOLO (ultralytics) to detect "bird" class (COCO 'bird' class)
 - Pick best detection (largest area)
 - If not in cooldown: save snapshot + record clip
-- Crop around bbox for CLIP classification + embedding
+- Crop around bbox (with configurable padding) for CLIP classification + embedding
 - Match embedding to an Individual prototype (cosine distance threshold)
 - Insert Observation + (optional) Embedding, update Individual stats/prototype
 
@@ -20,6 +20,7 @@ Expected env vars (common):
 - HBMON_CAMERA_NAME=hummingbirdcam
 - HBMON_FPS_LIMIT=8
 - HBMON_CLIP_SECONDS=2.0
+- HBMON_CROP_PADDING=0.05 (padding fraction around bird bbox for CLIP; lower = tighter crop)
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ import numpy as np
 
 from hbmon.clip_model import ClipModel
 from hbmon.clustering import l2_normalize, update_prototype_ema, cosine_distance
-from hbmon.config import Settings, ensure_dirs, load_settings, snapshots_dir
+from hbmon.config import Settings, background_image_path, ensure_dirs, load_settings, snapshots_dir
 from hbmon.db import init_db, session_scope
 from hbmon.models import Embedding, Individual, Observation
 
@@ -114,9 +115,143 @@ def _apply_roi(frame_bgr: np.ndarray, s: Settings) -> tuple[np.ndarray, tuple[in
     return frame_bgr[y1:y2, x1:x2], (x1, y1)
 
 
-def _pick_best_bird_det(results: Any, min_box_area: int, bird_class_id: int) -> Det | None:
+def _load_background_image() -> np.ndarray | None:
+    """
+    Load the configured background image from disk.
+
+    Returns the image as a BGR numpy array, or None if not configured or not available.
+    """
+    if not _CV2_AVAILABLE:
+        return None
+
+    bg_path = background_image_path()
+    if not bg_path.exists():
+        return None
+
+    try:
+        img = cv2.imread(str(bg_path))
+        if img is None:
+            print(f"[worker] Failed to load background image: {bg_path}")
+            return None
+        print(f"[worker] Loaded background image: {bg_path} shape={img.shape}")
+        return img
+    except Exception as e:
+        print(f"[worker] Error loading background image: {e}")
+        return None
+
+
+def _compute_motion_mask(
+    frame: np.ndarray,
+    background: np.ndarray,
+    *,
+    threshold: int = 30,
+    blur_size: int = 5,
+) -> np.ndarray:
+    """
+    Compute a binary motion mask using background subtraction.
+
+    Compares the current frame with the reference background image to detect
+    areas with significant change (motion/new objects).
+
+    Parameters:
+    - frame: Current BGR frame from the camera
+    - background: Reference background BGR image
+    - threshold: Pixel difference threshold (0-255) for detecting change
+    - blur_size: Gaussian blur kernel size for noise reduction
+
+    Returns:
+    - Binary mask (255 where motion detected, 0 elsewhere)
+    """
+    if not _CV2_AVAILABLE:
+        raise RuntimeError("OpenCV required for motion detection")
+
+    assert cv2 is not None
+
+    # Resize background to match frame if needed
+    if frame.shape[:2] != background.shape[:2]:
+        background = cv2.resize(background, (frame.shape[1], frame.shape[0]))
+
+    # Convert to grayscale for comparison
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    gray_bg = cv2.cvtColor(background, cv2.COLOR_BGR2GRAY)
+
+    # Apply Gaussian blur to reduce noise
+    if blur_size > 0:
+        # GaussianBlur requires odd kernel sizes; normalize even values to the next odd.
+        kernel_size = blur_size | 1
+        gray_frame = cv2.GaussianBlur(gray_frame, (kernel_size, kernel_size), 0)
+        gray_bg = cv2.GaussianBlur(gray_bg, (kernel_size, kernel_size), 0)
+
+    # Compute absolute difference
+    diff = cv2.absdiff(gray_frame, gray_bg)
+
+    # Apply threshold to create binary mask
+    _, mask = cv2.threshold(diff, threshold, 255, cv2.THRESH_BINARY)
+
+    # Apply morphological operations to clean up the mask
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)  # Remove small noise
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)  # Fill small holes
+
+    return mask
+
+
+def _detection_overlaps_motion(
+    det: "Det",
+    motion_mask: np.ndarray,
+    *,
+    min_overlap_ratio: float = 0.15,
+) -> bool:
+    """
+    Check if a detection bounding box overlaps sufficiently with motion areas.
+
+    Returns True if the detection should be kept (has motion), False if it's
+    likely a false positive (no significant motion in that area).
+
+    Parameters:
+    - det: Detection bounding box
+    - motion_mask: Binary mask from background subtraction
+    - min_overlap_ratio: Minimum fraction of detection area that must have motion
+    """
+    h, w = motion_mask.shape[:2]
+
+    # Clamp bbox to mask dimensions, ensuring x2 >= x1 and y2 >= y1
+    x1 = max(0, min(det.x1, w - 1))
+    y1 = max(0, min(det.y1, h - 1))
+    x2 = max(x1 + 1, min(det.x2, w))
+    y2 = max(y1 + 1, min(det.y2, h))
+
+    if x2 <= x1 or y2 <= y1:
+        return True  # Edge case: keep detection if bbox is invalid
+
+    # Extract the region of the mask corresponding to the detection
+    roi_mask = motion_mask[y1:y2, x1:x2]
+
+    # Calculate the fraction of the detection area with motion
+    motion_pixels = np.count_nonzero(roi_mask)
+    total_pixels = roi_mask.size
+
+    if total_pixels == 0:
+        return True  # Edge case
+
+    overlap_ratio = motion_pixels / total_pixels
+
+    return overlap_ratio >= min_overlap_ratio
+
+
+def _pick_best_bird_det(
+    results: Any,
+    min_box_area: int,
+    bird_class_id: int,
+    *,
+    motion_mask: np.ndarray | None = None,
+    min_motion_overlap: float = 0.15,
+) -> Det | None:
     """
     Extract best detection from ultralytics results (largest area bird).
+
+    If motion_mask is provided, detections without sufficient motion overlap
+    are filtered out as likely false positives.
     """
     if not results:
         return None
@@ -141,6 +276,12 @@ def _pick_best_bird_det(results: Any, min_box_area: int, bird_class_id: int) -> 
             d = Det(x1=x1, y1=y1, x2=x2, y2=y2, conf=conf)
             if d.area < min_box_area:
                 continue
+
+            # Filter by motion if mask is available
+            if motion_mask is not None:
+                if not _detection_overlaps_motion(d, motion_mask, min_overlap_ratio=min_motion_overlap):
+                    continue
+
             if best is None or d.area > best.area:
                 best = d
         except Exception:
@@ -162,6 +303,65 @@ def _write_jpeg(path: Path, frame_bgr: np.ndarray) -> None:
     if not ok:
         raise RuntimeError("cv2.imencode failed for jpeg")
     path.write_bytes(buf.tobytes())
+
+
+def _draw_bbox(
+    frame_bgr: np.ndarray,
+    det: Det,
+    *,
+    color: tuple[int, int, int] = (0, 255, 0),
+    thickness: int = 2,
+    show_confidence: bool = True,
+) -> np.ndarray:
+    """
+    Draw a bounding box on the frame around the detected object with optional confidence label.
+
+    Args:
+        frame_bgr: BGR image as numpy array.
+        det: Detection with bounding box coordinates.
+        color: BGR color for the box (default: green).
+        thickness: Line thickness in pixels (default: 2).
+        show_confidence: If True, draw the detection confidence above the box.
+
+    Returns:
+        A copy of the frame with the bounding box and optional confidence drawn.
+    """
+    if not _CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is not installed; cannot draw bounding boxes")
+    assert cv2 is not None  # for type checkers
+
+    annotated = frame_bgr.copy()
+    cv2.rectangle(annotated, (det.x1, det.y1), (det.x2, det.y2), color, thickness)
+
+    if show_confidence:
+        label = f"{det.conf:.2f}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        font_thickness = 2
+
+        # Get text size to draw background rectangle
+        (text_w, text_h), _ = cv2.getTextSize(label, font, font_scale, font_thickness)
+
+        # Position text above the bounding box
+        text_x = det.x1
+        text_y = det.y1 - 6
+        if text_y - text_h < 0:
+            # If not enough space above, put it inside the box
+            text_y = det.y1 + text_h + 6
+
+        # Draw background rectangle for better readability
+        cv2.rectangle(
+            annotated,
+            (text_x, text_y - text_h - 4),
+            (text_x + text_w + 4, text_y + 4),
+            color,
+            -1,  # filled
+        )
+
+        # Draw text in black for contrast
+        cv2.putText(annotated, label, (text_x + 2, text_y), font, font_scale, (0, 0, 0), font_thickness)
+
+    return annotated
 
 
 def _ffmpeg_available() -> bool:
@@ -478,6 +678,35 @@ def run_worker() -> None:
         if labels:
             clip.set_label_space(labels)
 
+    # Load background image for motion-based filtering (if configured)
+    background_img: np.ndarray | None = _load_background_image()
+    last_background_check = time.time()
+
+    # Environment variables for background subtraction tuning
+    bg_motion_threshold = int(os.getenv("HBMON_BG_MOTION_THRESHOLD", "30"))
+    # Must be a positive odd integer for use as a GaussianBlur kernel size
+    _bg_motion_blur_raw = os.getenv("HBMON_BG_MOTION_BLUR", "5")
+    try:
+        bg_motion_blur = int(_bg_motion_blur_raw)
+    except ValueError:
+        print(f"[worker] Invalid HBMON_BG_MOTION_BLUR={_bg_motion_blur_raw!r}, defaulting to 5")
+        bg_motion_blur = 5
+    if bg_motion_blur <= 0:
+        print(f"[worker] HBMON_BG_MOTION_BLUR must be positive, got {bg_motion_blur}. Defaulting to 5")
+        bg_motion_blur = 5
+    elif bg_motion_blur % 2 == 0:
+        print(f"[worker] HBMON_BG_MOTION_BLUR must be odd, got {bg_motion_blur}. "
+              f"Using {bg_motion_blur + 1} instead")
+        bg_motion_blur += 1
+    bg_min_overlap = float(os.getenv("HBMON_BG_MIN_OVERLAP", "0.15"))
+    bg_enabled = os.getenv("HBMON_BG_SUBTRACTION", "1") != "0"
+
+    if background_img is not None and bg_enabled:
+        print(f"[worker] Background subtraction enabled: threshold={bg_motion_threshold}, "
+              f"blur={bg_motion_blur}, min_overlap={bg_min_overlap}")
+    elif not bg_enabled:
+        print("[worker] Background subtraction disabled via HBMON_BG_SUBTRACTION=0")
+
     cap: 'cv2.VideoCapture | None' = None  # type: ignore[name-defined]
     last_settings_load = 0.0
     settings: Settings | None = None
@@ -559,7 +788,38 @@ def run_worker() -> None:
         if s.fps_limit and s.fps_limit > 0:
             time.sleep(max(0.0, 1.0 / float(s.fps_limit)))
 
+        # Periodically check for background image updates (every 30 seconds)
+        now_bg = time.time()
+        if now_bg - last_background_check > 30.0:
+            last_background_check = now_bg
+            new_bg = _load_background_image()
+            if new_bg is not None and background_img is None:
+                print("[worker] Background image now available, enabling motion filtering")
+                background_img = new_bg
+            elif new_bg is None and background_img is not None:
+                print("[worker] Background image removed, disabling motion filtering")
+                background_img = None
+            elif new_bg is not None:
+                background_img = new_bg
+
         roi_frame, (xoff, yoff) = _apply_roi(frame, s)
+
+        # Compute motion mask for background subtraction (if enabled and background available)
+        motion_mask: np.ndarray | None = None
+        if bg_enabled and background_img is not None:
+            try:
+                # Apply same ROI to background image
+                bg_roi, _ = _apply_roi(background_img, s)
+                motion_mask = _compute_motion_mask(
+                    roi_frame,
+                    bg_roi,
+                    threshold=bg_motion_threshold,
+                    blur_size=bg_motion_blur,
+                )
+            except Exception as e:
+                if os.getenv("HBMON_DEBUG_BG", "0") == "1":
+                    print(f"[worker] Motion mask error: {e}")
+                motion_mask = None
 
         # YOLO detect birds
         try:
@@ -582,7 +842,13 @@ def run_worker() -> None:
             n = 0 if r0.boxes is None else len(r0.boxes)
             print(f"[worker] yolo boxes={n}")
 
-        det = _pick_best_bird_det(results, int(s.min_box_area), bird_class_id)
+        det = _pick_best_bird_det(
+            results,
+            int(s.min_box_area),
+            bird_class_id,
+            motion_mask=motion_mask,
+            min_motion_overlap=bg_min_overlap,
+        )
         if det is None:
             continue
 
@@ -600,20 +866,35 @@ def run_worker() -> None:
             conf=det.conf,
         )
 
-        # Snapshot path (relative under /media)
+        # Snapshot paths (relative under /media)
+        # We save two images: raw (original) and annotated (with bbox + confidence)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        snap_rel = f"snapshots/{stamp}/{uuid.uuid4().hex}.jpg"
+        snap_id = uuid.uuid4().hex
+        snap_rel = f"snapshots/{stamp}/{snap_id}.jpg"
+        snap_annotated_rel = f"snapshots/{stamp}/{snap_id}_annotated.jpg"
         clip_rel = f"clips/{stamp}/{uuid.uuid4().hex}.mp4"
 
         media_root = snapshots_dir().parent  # /media
         snap_path = media_root / snap_rel
+        snap_annotated_path = media_root / snap_annotated_rel
         clip_path = media_root / clip_rel
 
-        # Save snapshot immediately
+        # Save both raw and annotated snapshots
         try:
+            # Save raw image first
             _write_jpeg(snap_path, frame)
+            # Save annotated image with bbox and confidence
+            annotated_frame = _draw_bbox(frame, det_full, show_confidence=True)
+            _write_jpeg(snap_annotated_path, annotated_frame)
         except Exception as e:
             print(f"[worker] snapshot write failed: {e}")
+            # Clean up any partially written snapshot files to avoid orphans
+            for path in (snap_path, snap_annotated_path):
+                try:
+                    if path.exists():
+                        path.unlink()
+                except Exception as cleanup_err:
+                    print(f"[worker] snapshot cleanup failed for {path}: {cleanup_err}")
             continue
 
         # Record clip (best effort)
@@ -628,7 +909,7 @@ def run_worker() -> None:
 
         # Crop around bbox for CLIP
         h, w = frame.shape[:2]
-        x1, y1, x2, y2 = _bbox_with_padding(det_full, (h, w))
+        x1, y1, x2, y2 = _bbox_with_padding(det_full, (h, w), pad_frac=float(s.crop_padding))
         crop = frame[y1:y2, x1:x2].copy()
 
         # Species + embedding
@@ -666,11 +947,16 @@ def run_worker() -> None:
                     "min_species_prob": float(s.min_species_prob),
                     "match_threshold": float(s.match_threshold),
                     "ema_alpha": float(s.ema_alpha),
+                    "crop_padding": float(s.crop_padding),
                 },
                 "detection": {
                     "box_confidence": float(det_full.conf),
                     "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
                     "roi_offset_xy": [int(xoff), int(yoff)],
+                    "background_subtraction_enabled": bg_enabled and background_img is not None,
+                },
+                "snapshots": {
+                    "annotated_path": snap_annotated_rel,
                 },
                 "review": {"label": None},
             }
