@@ -38,15 +38,15 @@ jobs:
       - name: Ruff
         run: uv run ruff check .
 
-      # Run unit tests (non-integration) with coverage
+      # Run unit tests (non-integration) with coverage in parallel
       - name: Unit Tests
         run: |
-          uv run pytest -m "not integration" --cov=hbmon --cov-report=term
+          uv run pytest -m "not integration" -n auto --cov=hbmon --cov-report=term
 
-      # Run integration tests with coverage (appends to existing coverage data)
+      # Run integration tests with coverage (appends to existing coverage data) in parallel
       - name: Integration Tests
         run: |
-          uv run pytest -m "integration" --cov=hbmon --cov-append --cov-report=term
+          uv run pytest -m "integration" -n auto --cov=hbmon --cov-append --cov-report=term
 
       # Generate combined coverage report (XML for PR comment, term for logs)
       # The coverage report includes an 80% threshold (non-critical - does not fail the build)
