@@ -20,7 +20,7 @@ repos:
   - repo: local
     hooks:
       - id: pytest
-        name: Run pytest with covevvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvrage
+        name: Run pytest with coverage
         # Use env to set PYTHONPATH for pytest.  This avoids relying on any
         # globally installed hbmon package and ensures tests import the local code.
         entry: uv run pytest --cov=hbmon --cov-report=term
