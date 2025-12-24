@@ -212,7 +212,7 @@ def test_draw_bbox_custom_color_and_thickness(monkeypatch):
 
     assert len(rectangles_drawn) == 1
     _, _, color, thickness = rectangles_drawn[0]
-    assert color == (255, 0, 0)  # custom blue
+    assert color == (255, 0, 0)  # custom color (blue in BGR)
     assert thickness == 5
 
 
