@@ -1,12 +1,18 @@
 services:
   wyze-bridge:
-    image: mrlt8/wyze-bridge:latest
+    # Using IDisposable fork for improved performance and camera support
+    # See: https://github.com/IDisposable/docker-wyze-bridge
+    image: ghcr.io/idisposable/docker-wyze-bridge:latest
     container_name: wyze-bridge
     network_mode: "host"
     environment:
       - TZ=America/Los_Angeles
       - WB_AUTH=false
       - NET_MODE=LAN
+
+      # Performance settings
+      - ON_DEMAND=False
+      - QUALITY=${WYZE_QUALITY:-HD60}
 
       - WYZE_EMAIL=${WYZE_EMAIL}
       - WYZE_PASSWORD=${WYZE_PASSWORD}
@@ -23,6 +29,13 @@ services:
     volumes:
       - ./data/wyze-bridge/tokens:/tokens
       - ./data/wyze-bridge/img:/img
+    healthcheck:
+      # Using Python for healthcheck since curl/wget may not be in slim image
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000', timeout=5)\""]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   hbmon-web:
@@ -50,7 +63,8 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - wyze-bridge
+      wyze-bridge:
+        condition: service_healthy
     restart: unless-stopped
 
   hbmon-worker:
@@ -96,7 +110,8 @@ services:
     volumes:
       - ./data:/data
     depends_on:
-      - wyze-bridge
+      wyze-bridge:
+        condition: service_healthy
     restart: unless-stopped
 
   hbmon-proxy:
