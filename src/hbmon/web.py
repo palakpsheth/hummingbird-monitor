@@ -1317,6 +1317,8 @@ def make_app() -> Any:
         try:
             bg_path.unlink(missing_ok=True)
         except Exception:
+            # Ignore errors during file removal (e.g., permission issues, race conditions).
+            # The setting will still be cleared below, and the file can be cleaned up later.
             pass
 
         # Clear setting
