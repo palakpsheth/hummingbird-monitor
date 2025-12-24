@@ -8,12 +8,21 @@
       <div class="muted" id="live-feed-status">Auto-refreshing every 5s</div>
     </div>
     <div class="live-feed-wrap" style="margin-top:12px;">
-      <img id="live-feed-img" src="/api/frame.jpg?ts={{ ts }}" alt="Current camera snapshot from hummingbird feeder" class="live-feed-img" />
+      <img id="live-feed-img" src="/api/frame.jpg?ts={{ ts }}" alt="Current camera snapshot from hummingbird feeder - click to enlarge" class="live-feed-thumb" title="Click to view full size" />
+      <div class="muted" style="margin-top:6px; font-size:12px;">Click image to view full size</div>
     </div>
     <div class="inline" style="margin-top:10px; gap: 10px;">
       <button type="button" id="live-feed-refresh">Refresh now</button>
       <button type="button" id="live-feed-toggle">Pause</button>
       <a class="muted" href="/calibrate">Calibrate ROI</a>
+    </div>
+  </div>
+
+  <!-- Full-size modal for live feed -->
+  <div id="live-feed-modal" class="live-feed-modal">
+    <div class="live-feed-modal-content">
+      <button type="button" id="live-feed-modal-close" class="live-feed-modal-close">&times;</button>
+      <img id="live-feed-modal-img" src="" alt="Full size camera view" class="live-feed-modal-img" />
     </div>
   </div>
 
@@ -119,6 +128,9 @@
   var statusEl = document.getElementById('live-feed-status');
   var toggleBtn = document.getElementById('live-feed-toggle');
   var refreshBtn = document.getElementById('live-feed-refresh');
+  var modal = document.getElementById('live-feed-modal');
+  var modalImg = document.getElementById('live-feed-modal-img');
+  var modalClose = document.getElementById('live-feed-modal-close');
   var intervalMs = 5000;
   var timerId = null;
   var isPaused = false;
@@ -134,6 +146,10 @@
     var newSrc = '/api/frame.jpg?ts=' + Date.now();
     newImg.onload = function() {
       img.src = newSrc;
+      // Also update modal image if modal is open
+      if (modal && modal.classList.contains('open') && modalImg) {
+        modalImg.src = newSrc;
+      }
       loadError = false;
       if (!isPaused) updateStatus('Auto-refreshing every 5s');
     };
@@ -155,6 +171,46 @@
       timerId = null;
     }
   }
+
+  function openModal() {
+    if (modal && modalImg && img) {
+      modalImg.src = img.src;
+      modal.classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+  }
+
+  function closeModal() {
+    if (modal) {
+      modal.classList.remove('open');
+      document.body.style.overflow = '';
+    }
+  }
+
+  // Modal click handlers
+  if (img) {
+    img.addEventListener('click', openModal);
+    img.style.cursor = 'pointer';
+  }
+
+  if (modalClose) {
+    modalClose.addEventListener('click', closeModal);
+  }
+
+  if (modal) {
+    modal.addEventListener('click', function(e) {
+      if (e.target === modal) {
+        closeModal();
+      }
+    });
+  }
+
+  // Close modal on Escape key
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      closeModal();
+    }
+  });
 
   if (toggleBtn) {
     toggleBtn.addEventListener('click', function() {
