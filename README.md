@@ -27,6 +27,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Individual re-identification**: “bird A vs bird B” using image embeddings
 - **Name individuals** in the UI
 - **Counts & last-seen** stats per individual
+- **Background image configuration**: define a standard background picture without hummingbirds
 - **Cross-linked** navigation:
   - Individuals list → individual page → all observations
   - Observation detail → linked individual
@@ -39,6 +40,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Observations**: filterable gallery + detail page
 - **Individuals**: sortable list + detail page
 - **ROI calibration**: draw a box on the latest snapshot
+- **Background image**: configure a reference background (select from observations or upload)
 - **API Docs**: interactive Swagger UI for API exploration (`/docs`)
 
 ---
@@ -52,7 +54,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **nginx** (optional): reverse proxy on port 80 (nice “just open IP” UX)
 
 ### Persistent storage
-- `/data` (volume): SQLite DB + `config.json` + exports
+- `/data` (volume): SQLite DB + `config.json` + exports + background image
 - `/media` (volume): snapshots + clips
 
 ---
@@ -364,7 +366,7 @@ If video clips don't stream properly in Chrome/Firefox:
 - Improvements:
   - fine-tune YOLO on hummingbird feeder images
   - add a second-stage classifier “hummingbird vs other bird”
-  - add motion gating + background subtraction to reduce triggers
+  - add motion gating + background subtraction to reduce triggers (use the configured background image as a reference frame)
 
 ### Better re-ID
 - Current: cosine matching to a prototype embedding.

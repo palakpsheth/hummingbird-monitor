@@ -129,6 +129,10 @@ class Settings:
     # ROI
     roi: Roi | None = None
 
+    # Background image: relative path from data_dir (e.g., "background/background.jpg")
+    # This is the path to a static copy of the background image.
+    background_image: str = ""
+
     # misc
     timezone: str = "local"
     last_updated_utc: float = 0.0
@@ -204,6 +208,16 @@ def clips_dir() -> Path:
     return media_dir() / "clips"
 
 
+def background_dir() -> Path:
+    """Directory for storing the static background image."""
+    return data_dir() / "background"
+
+
+def background_image_path() -> Path:
+    """Full path to the persisted background image file."""
+    return background_dir() / "background.jpg"
+
+
 def _ensure_dir(path: Path) -> Path:
     try:
         path.mkdir(parents=True, exist_ok=True)
@@ -227,6 +241,7 @@ def ensure_dirs() -> None:
 
     _ensure_dir(snapshots_dir())
     _ensure_dir(clips_dir())
+    _ensure_dir(background_dir())
 
 
 # ----------------------------
@@ -261,6 +276,7 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
         ema_alpha=float(d.get("ema_alpha", 0.10)),
         timezone=str(d.get("timezone", "local")),
         roi=roi,
+        background_image=str(d.get("background_image", "")),
         last_updated_utc=float(d.get("last_updated_utc", 0.0)),
     )
     return s
