@@ -221,3 +221,16 @@ def test_openapi_json_endpoint(tmp_path, monkeypatch):
     assert data["info"]["title"] == "hbmon"
     assert "description" in data["info"]
     assert data["info"]["version"]
+
+
+def test_dashboard_contains_live_camera_feed_section(tmp_path, monkeypatch):
+    """Test that the dashboard includes the Live Camera Feed section."""
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/")
+    assert r.status_code == 200
+    # Check for live feed elements in the dashboard HTML
+    assert "Live Camera Feed" in r.text
+    assert "live-feed-img" in r.text
+    assert "live-feed-refresh" in r.text
+    assert "live-feed-toggle" in r.text
+    assert "/api/frame.jpg" in r.text

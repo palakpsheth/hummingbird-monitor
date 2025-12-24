@@ -567,6 +567,7 @@ def make_app() -> Any:
                 roi_str=roi_str,
                 rtsp_url=rtsp,
                 last_capture_utc=last_capture_utc,
+                ts=int(time.time()),
             ),
         )
 
