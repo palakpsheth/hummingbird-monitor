@@ -1666,5 +1666,22 @@ def make_app() -> Any:
     return app
 
 
-# Default ASGI app for uvicorn
-app = make_app()
+# Default ASGI app for uvicorn - lazy initialization to avoid
+# running make_app() at import time (which causes issues in tests)
+_app_instance: Any = None
+
+
+def get_app() -> Any:
+    """Get or create the FastAPI app instance (lazy singleton)."""
+    global _app_instance
+    if _app_instance is None:
+        _app_instance = make_app()
+    return _app_instance
+
+
+# For uvicorn: create app lazily on first access
+def __getattr__(name: str) -> Any:
+    """Module-level __getattr__ for lazy app initialization."""
+    if name == "app":
+        return get_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

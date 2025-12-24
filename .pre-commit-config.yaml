@@ -23,7 +23,8 @@ repos:
         name: Run pytest with coverage
         # Use env to set PYTHONPATH for pytest.  This avoids relying on any
         # globally installed hbmon package and ensures tests import the local code.
-        entry: uv run pytest --cov=hbmon --cov-report=term
+        entry: uv run pytest --verbose --cov=hbmon --cov-report=term
         language: system
         pass_filenames: false
         always_run: true
+        args: [--verbose]
