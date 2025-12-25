@@ -156,8 +156,8 @@ Run `make help` to list all available targets.
 
 ### Calibrate ROI (biggest accuracy + performance win)
 1. Open **Calibrate ROI** (uses a live snapshot from the RTSP feed when available).
-3. Drag a tight rectangle around the feeder/perch region.
-4. Save.
+2. Drag a tight rectangle around the feeder/perch region.
+3. Save.
 
 If the live feed is unavailable, the calibration page falls back to the most recent observation snapshot. If there
 are no observations yet, you will see a placeholder image prompting you to start the worker and wait for a visit.

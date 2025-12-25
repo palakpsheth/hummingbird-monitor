@@ -172,9 +172,9 @@
 
   if (refreshBtn) {
     refreshBtn.addEventListener("click", () => {
-      usingFallback = false;
       const base = liveSrc || fallbackSrc;
       if (base) {
+        usingFallback = !liveSrc || base === fallbackSrc;
         img.src = base + "?ts=" + Date.now();
       }
     });
