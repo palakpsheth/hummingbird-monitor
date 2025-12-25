@@ -12,7 +12,7 @@ CONFIG_PATH ?= $(DATA_DIR)/config.json
 PYTEST_UNIT_ARGS ?= -m "not integration"
 PYTEST_INTEGRATION_ARGS ?= -m "integration"
 
-.PHONY: help venv sync lint test test-unit test-integration pre-commit docker-build docker-up docker-down clean-db clean-media clean-data
+.PHONY: help venv sync lint test test-unit test-integration pre-commit docker-build docker-up docker-down docker-ps clean-db clean-media clean-data
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -44,6 +44,9 @@ docker-build: ## Build docker images
 docker-up: ## Start docker compose (build if needed)
 	docker compose up -d --build
 
+docker-ps: ## Get docker compose status
+	docker compose ps
+
 docker-down: ## Stop docker compose
 	docker compose down
 
@@ -53,5 +56,5 @@ clean-db: ## Remove the local database file only (defaults to ./data)
 clean-media: ## Remove local media files (defaults to ./data/media)
 	rm -rf $(MEDIA_DIR)
 
-clean-data: ## Remove all local data (defaults to ./data)
+clean-data: ## CAUTION: Remove all local data (defaults to ./data)
 	rm -rf $(DATA_DIR)
