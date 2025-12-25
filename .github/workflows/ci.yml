@@ -64,7 +64,8 @@ jobs:
         with:
           coverageFile: coverage.xml
           token: ${{ secrets.GITHUB_TOKEN }}
-          thresholdAll: 0.8
+          # 80% cov should pass: >.79 == >=0.8
+          thresholdAll: 0.79
 
       # Generate a coverage badge based on the `.coverage` data file.
       # This uses the `tj-actions/coverage-badge-py` GitHub Action to
