@@ -15,6 +15,7 @@ Routes:
 API:
 - /api/health
 - /api/frame.jpg          Latest snapshot (or placeholder)
+- /api/live_frame.jpg     Single snapshot from live RTSP feed
 - /api/roi  (GET/POST)    Get/set ROI (POST accepts form)
 - /api/video_info/{id}    Video file diagnostics for troubleshooting
 
@@ -38,6 +39,7 @@ from __future__ import annotations
 import csv
 import json
 from json import JSONDecodeError
+import importlib.util
 import io
 import math
 import os
@@ -1094,6 +1096,8 @@ def make_app() -> Any:
                 settings=s,
                 roi=s.roi,
                 roi_str=roi_str,
+                live_frame_url="/api/live_frame.jpg",
+                fallback_frame_url="/api/frame.jpg",
                 ts=int(time.time()),
             ),
         )
@@ -1384,6 +1388,41 @@ def make_app() -> Any:
         img.save(buf, format="JPEG", quality=85)
         buf.seek(0)
         return StreamingResponse(buf, media_type="image/jpeg")
+
+    @app.get("/api/live_frame.jpg")
+    def live_frame_jpg() -> Any:
+        """
+        Return a single snapshot from the live RTSP stream.
+        """
+        s = load_settings()
+        if not s.rtsp_url:
+            raise HTTPException(status_code=503, detail="RTSP URL not configured")
+
+        if importlib.util.find_spec("cv2") is None:
+            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
+
+        try:
+            import cv2  # type: ignore
+        except Exception:
+            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
+
+        cap = cv2.VideoCapture(s.rtsp_url)
+        if not cap.isOpened():
+            raise HTTPException(status_code=503, detail="Unable to open RTSP stream")
+
+        try:
+            ok, frame = cap.read()
+        finally:
+            cap.release()
+
+        if not ok or frame is None:
+            raise HTTPException(status_code=503, detail="Failed to read RTSP frame")
+
+        ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not ok:
+            raise HTTPException(status_code=500, detail="Failed to encode frame")
+
+        return StreamingResponse(io.BytesIO(jpeg.tobytes()), media_type="image/jpeg")
 
     @app.get("/api/stream.mjpeg")
     def stream_mjpeg() -> Any:

@@ -155,10 +155,12 @@ Run `make help` to list all available targets.
 ## Recommended setup steps
 
 ### Calibrate ROI (biggest accuracy + performance win)
-1. Wait until you have at least one snapshot (a bird visit helps).
-2. Open **Calibrate ROI**.
-3. Drag a tight rectangle around the feeder/perch region.
-4. Save.
+1. Open **Calibrate ROI** (uses a live snapshot from the RTSP feed when available).
+2. Drag a tight rectangle around the feeder/perch region.
+3. Save.
+
+If the live feed is unavailable, the calibration page falls back to the most recent observation snapshot. If there
+are no observations yet, you will see a placeholder image prompting you to start the worker and wait for a visit.
 
 Why ROI matters:
 - reduces CPU (YOLO runs on fewer pixels)
