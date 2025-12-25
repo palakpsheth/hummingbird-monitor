@@ -14,7 +14,14 @@
     </div>
 
     <div class="cal-wrap">
-      <img id="frame" src="/api/frame.jpg?ts={{ ts }}" alt="latest frame" draggable="false" />
+      <img
+        id="frame"
+        src="{{ live_frame_url }}?ts={{ ts }}"
+        data-live-src="{{ live_frame_url }}"
+        data-fallback-src="{{ fallback_frame_url }}"
+        alt="latest frame"
+        draggable="false"
+      />
       <div id="current-roi-box"></div>
       <div id="proposed-roi-box"></div>
     </div>

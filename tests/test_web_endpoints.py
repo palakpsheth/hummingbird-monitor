@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import io
+import sys
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from hbmon.config import ensure_dirs, media_dir
+from hbmon.config import background_image_path, ensure_dirs, media_dir
 from hbmon.db import init_db, session_scope
 from hbmon.models import Embedding, Individual, Observation, utcnow
 from hbmon.web import make_app
@@ -475,6 +478,7 @@ def test_calibrate_page(tmp_path, monkeypatch):
     r = client.get("/calibrate")
     assert r.status_code == 200
     assert "Calibrate" in r.text or "ROI" in r.text
+    assert 'data-live-src="/api/live_frame.jpg"' in r.text
 
 
 def test_health_endpoint(tmp_path, monkeypatch):
@@ -518,6 +522,149 @@ def test_frame_jpg_endpoint_placeholder(tmp_path, monkeypatch):
     r = client.get("/api/frame.jpg")
     # Should return either an image or 404 if PIL not available
     assert r.status_code in [200, 404]
+
+
+def test_live_frame_jpg_requires_rtsp(tmp_path, monkeypatch):
+    """Test the live frame endpoint errors when RTSP is not configured."""
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/api/live_frame.jpg")
+    assert r.status_code == 503
+
+
+def test_live_frame_jpg_success(tmp_path, monkeypatch):
+    """Test the live frame endpoint returns a JPEG when the RTSP stream is mocked."""
+    client = _setup_app(tmp_path, monkeypatch)
+
+    class DummyCap:
+        def __init__(self, url: str):
+            self.url = url
+
+        def isOpened(self) -> bool:
+            return True
+
+        def read(self):
+            return True, object()
+
+        def release(self) -> None:
+            return None
+
+    class DummyJpeg:
+        def __init__(self, payload: bytes):
+            self._payload = payload
+
+        def tobytes(self) -> bytes:
+            return self._payload
+
+    def fake_imencode(ext: str, frame, params):
+        return True, DummyJpeg(b"jpeg-bytes")
+
+    stub_cv2 = SimpleNamespace(
+        VideoCapture=DummyCap,
+        imencode=fake_imencode,
+        IMWRITE_JPEG_QUALITY=1,
+    )
+
+    monkeypatch.setenv("HBMON_RTSP_URL", "rtsp://example/live")
+    monkeypatch.setattr("hbmon.web.importlib.util.find_spec", lambda name: object())
+    monkeypatch.setitem(sys.modules, "cv2", stub_cv2)
+
+    r = client.get("/api/live_frame.jpg")
+    assert r.status_code == 200
+    assert "image/jpeg" in r.headers.get("content-type", "")
+
+
+def test_background_endpoints(tmp_path, monkeypatch):
+    """Test background endpoints including snapshot selection and clearing."""
+    client = _setup_app(tmp_path, monkeypatch)
+
+    r = client.get("/api/background")
+    assert r.status_code == 200
+    assert r.json()["configured"] is False
+
+    r = client.get("/api/background.jpg")
+    assert r.status_code in [200, 404]
+
+    snap = media_dir() / "snap.jpg"
+    snap.write_bytes(b"snapshot")
+
+    with session_scope() as db:
+        obs = Observation(
+            species_label="Hummingbird",
+            species_prob=0.9,
+            snapshot_path="snap.jpg",
+            video_path="",
+        )
+        db.add(obs)
+        db.commit()
+        obs_id = obs.id
+
+    r = client.post(f"/api/background/from_observation/{obs_id}", follow_redirects=False)
+    assert r.status_code == 303
+    assert background_image_path().exists()
+
+    r = client.post("/api/background/clear", follow_redirects=False)
+    assert r.status_code == 303
+    assert not background_image_path().exists()
+
+
+def test_background_upload(tmp_path, monkeypatch):
+    """Test uploading a background image."""
+    client = _setup_app(tmp_path, monkeypatch)
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 32), (120, 130, 140)).save(buf, format="PNG")
+    payload = buf.getvalue()
+
+    r = client.post(
+        "/api/background/upload",
+        files={"file": ("bg.png", payload, "image/png")},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert background_image_path().exists()
+
+
+def test_video_info_endpoint(tmp_path, monkeypatch):
+    """Test video diagnostics for missing and present files."""
+    client = _setup_app(tmp_path, monkeypatch)
+
+    with session_scope() as db:
+        obs_missing = Observation(
+            species_label="Hummingbird",
+            species_prob=0.7,
+            snapshot_path="",
+            video_path="",
+        )
+        db.add(obs_missing)
+        db.commit()
+        missing_id = obs_missing.id
+
+        video_path = "clips/sample.mp4"
+        obs_with_video = Observation(
+            species_label="Hummingbird",
+            species_prob=0.7,
+            snapshot_path="",
+            video_path=video_path,
+        )
+        db.add(obs_with_video)
+        db.commit()
+        with_video_id = obs_with_video.id
+
+    video_file = media_dir() / "clips" / "sample.mp4"
+    video_file.parent.mkdir(parents=True, exist_ok=True)
+    video_file.write_bytes(b"\x00\x00\x00\x18ftypisom" + b"\x00" * 24)
+
+    r = client.get(f"/api/video_info/{missing_id}")
+    assert r.status_code == 200
+    assert r.json()["file_exists"] is False
+
+    r = client.get(f"/api/video_info/{with_video_id}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["file_exists"] is True
+    assert data["browser_compatible"] is True
+    assert "MP4" in data["codec_hint"]
 
 
 def test_export_observations_csv(tmp_path, monkeypatch):
