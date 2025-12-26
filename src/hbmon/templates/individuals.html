@@ -27,15 +27,32 @@
   </div>
 
   <div class="card">
-    <div class="table">
+    <div class="table individuals-table">
       <div class="row head">
-        <div>ID</div><div>Name</div><div>Visits</div><div>Last seen ({{ timezone_label }})</div>
+        <div>ID</div><div>Snapshot</div><div>Name</div><div>Visits</div><div>Last seen ({{ timezone_label }})</div>
       </div>
 
       {% for ind in individuals %}
         {% set hue = (ind.id * 47) % 360 %}
+        {% set proto_obs = ind.prototype_observation if ind.prototype_observation is defined else none %}
         <div class="row">
           <div>{{ ind.id }}</div>
+          <div>
+            {% if proto_obs %}
+              <a href="/observations/{{ proto_obs.id }}">
+                <img
+                  src="/media/{{ proto_obs.display_snapshot_path }}"
+                  alt="Prototype snapshot for individual {{ ind.id }}"
+                  loading="lazy"
+                  class="ind-thumb"
+                  width="72"
+                  height="54"
+                />
+              </a>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </div>
           <div>
             <a href="/individuals/{{ ind.id }}">
               <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ ind.name }}</span>

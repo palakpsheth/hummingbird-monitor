@@ -156,6 +156,10 @@ a:hover { text-decoration: underline; }
   border-radius: 10px;
 }
 
+.individuals-table .row {
+  grid-template-columns: 80px 84px 1fr 120px 220px;
+}
+
 .row.head {
   font-weight: 700;
   color: var(--text);
@@ -230,6 +234,14 @@ a:hover { text-decoration: underline; }
 .observations-table .obs-thumb {
   width: var(--obs-thumb-width);
   height: var(--obs-thumb-height);
+  border-radius: 10px;
+  display: block;
+  object-fit: cover;
+}
+
+.individuals-table .ind-thumb {
+  width: 72px;
+  height: 54px;
   border-radius: 10px;
   display: block;
   object-fit: cover;
@@ -313,6 +325,20 @@ a:hover { text-decoration: underline; }
   display: grid;
   grid-template-columns: 1fr;
   gap: 12px;
+}
+
+.prototype-wrap {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
+}
+
+.prototype-image {
+  width: min(100%, 720px);
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  object-fit: contain;
+  background: var(--card);
 }
 
 @media (min-width: 900px) {
