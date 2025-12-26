@@ -169,6 +169,93 @@ def test_delete_individual_cascades(tmp_path, monkeypatch):
         assert db.get(Embedding, emb_id) is None
 
 
+def test_bulk_delete_observations_cleans_media_and_stats(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    mdir = media_dir()
+    snap1 = mdir / "bulk_a.jpg"
+    snap2 = mdir / "bulk_b.jpg"
+    vid1 = mdir / "bulk_a.mp4"
+    vid2 = mdir / "bulk_b.mp4"
+    snap1.write_text("x")
+    snap2.write_text("x")
+    vid1.write_text("x")
+    vid2.write_text("x")
+
+    with session_scope() as db:
+        ind = Individual(name="bulk-ind", visit_count=0, last_seen_at=None)
+        db.add(ind)
+        db.commit()
+        obs1 = Observation(
+            individual_id=ind.id,
+            species_label="Hummingbird",
+            species_prob=0.5,
+            snapshot_path="bulk_a.jpg",
+            video_path="bulk_a.mp4",
+            ts=utcnow(),
+        )
+        obs2 = Observation(
+            individual_id=ind.id,
+            species_label="Hummingbird",
+            species_prob=0.6,
+            snapshot_path="bulk_b.jpg",
+            video_path="bulk_b.mp4",
+            ts=utcnow(),
+        )
+        db.add_all([obs1, obs2])
+        db.commit()
+        db.add_all(
+            [
+                Embedding(observation_id=obs1.id, individual_id=ind.id, embedding_blob=b"123"),
+                Embedding(observation_id=obs2.id, individual_id=ind.id, embedding_blob=b"456"),
+            ]
+        )
+        db.commit()
+        obs_ids = [obs1.id, obs2.id]
+        ind_id = ind.id
+
+    r = client.post(
+        "/observations/bulk_delete",
+        data={"obs_ids": obs_ids, "redirect_to": f"/individuals/{ind_id}"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == f"/individuals/{ind_id}"
+
+    assert not snap1.exists()
+    assert not snap2.exists()
+    assert not vid1.exists()
+    assert not vid2.exists()
+
+    with session_scope() as db:
+        for obs_id in obs_ids:
+            assert db.get(Observation, obs_id) is None
+        refreshed = db.get(Individual, ind_id)
+        assert refreshed is not None
+        assert refreshed.visit_count == 0
+        assert refreshed.last_seen_at is None
+
+
+def test_bulk_delete_redirect_path_sanitized(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    with session_scope() as db:
+        obs = Observation(
+            species_label="Hummingbird",
+            species_prob=0.5,
+            snapshot_path="snap.jpg",
+            video_path="vid.mp4",
+        )
+        db.add(obs)
+        db.commit()
+        obs_id = obs.id
+
+    r = client.post(
+        "/observations/bulk_delete",
+        data={"obs_ids": [obs_id], "redirect_to": "https://example.com/hijack"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/observations"
+
 def test_video_info_endpoint_with_existing_file(tmp_path, monkeypatch):
     """Test /api/video_info/{obs_id} endpoint with an existing video file."""
     client = _setup_app(tmp_path, monkeypatch)

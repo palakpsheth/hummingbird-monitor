@@ -29,8 +29,28 @@
     </form>
   </div>
 
-  {% set obs_columns = 6 + (extra_columns | length) %}
-  <div class="table-toolbar">
+  {% set obs_columns = 7 + (extra_columns | length) %}
+  <div class="table-toolbar table-toolbar--split">
+    <div class="table-toolbar__group" data-sort-controls data-table-id="observations">
+      <label for="obs-sort-column">Sort by:</label>
+      <select id="obs-sort-column" data-sort-column>
+        <option value="snapshot">Snapshot</option>
+        <option value="obs_time">Obs time ({{ timezone_label }})</option>
+        <option value="species">Species</option>
+        <option value="species_prob">Species prob</option>
+        <option value="individual">Individual</option>
+        <option value="match_score">Match score</option>
+        {% for key in extra_columns %}
+          <option value="{{ key }}">{{ extra_column_labels[key] }}</option>
+        {% endfor %}
+        <option value="links">Links</option>
+      </select>
+      <select data-sort-direction>
+        <option value="asc">Ascending</option>
+        <option value="desc">Descending</option>
+      </select>
+      <button type="button" data-sort-apply>Sort</button>
+    </div>
     <details class="column-selector" data-column-controls data-table-id="observations">
       <summary>Visible columns</summary>
       <div class="column-selector__grid">
@@ -50,91 +70,120 @@
       </div>
     </details>
   </div>
-  <div class="card table-scroll">
-    <table
-      class="observations-table sortable"
-      data-sortable-table
-      data-table-id="observations"
-      style="--obs-columns: {{ obs_columns }};"
-    >
-      <thead>
-        <tr>
-          <th class="sortable" data-sort-type="number" data-col-key="snapshot">Snapshot</th>
-          <th
-            class="sortable"
-            data-sort-type="date"
-            data-sort-default="desc"
-            data-col-key="obs_time"
-          >
-            Obs time ({{ timezone_label }})
-          </th>
-          <th class="sortable" data-sort-type="text" data-col-key="species">Species</th>
-          <th class="sortable" data-sort-type="number" data-col-key="species_prob">Species prob</th>
-          <th class="sortable" data-sort-type="number" data-col-key="individual">Individual</th>
-          <th class="sortable" data-sort-type="number" data-col-key="match_score">Match score</th>
-          {% for key in extra_columns %}
-            <th class="sortable" data-sort-type="{{ extra_column_sort_types[key] }}" data-col-key="{{ key }}">
-              {{ extra_column_labels[key] }}
+  {% set redirect_target = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
+  <form
+    class="bulk-actions"
+    method="post"
+    action="/observations/bulk_delete"
+    data-bulk-delete
+    data-table-id="observations"
+    onsubmit="return confirm('Delete selected observations?');"
+  >
+    <input type="hidden" name="redirect_to" value="{{ redirect_target }}" />
+    <div class="bulk-actions__bar">
+      <button type="submit" data-bulk-delete-button disabled>
+        Delete selected (<span data-bulk-count>0</span>)
+      </button>
+    </div>
+    <div class="card table-scroll">
+      <table
+        class="observations-table sortable"
+        data-sortable-table
+        data-table-id="observations"
+        style="--obs-columns: {{ obs_columns }};"
+      >
+        <thead>
+          <tr>
+            <th class="obs-select-cell" data-col-key="select">
+              <input type="checkbox" data-select-all aria-label="Select all observations" />
             </th>
-          {% endfor %}
-          <th class="sortable" data-sort-type="number" data-col-key="links">Links</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for o in observations %}
-          {% set hue = ((o.individual_id or 0) * 47) % 360 %}
-          <tr data-sort-row>
-            <td data-sort-value="{{ o.id }}" data-col-key="snapshot">
-              <a href="/observations/{{ o.id }}">
-                <img
-                  src="/media/{{ o.display_snapshot_path }}"
-                  alt="Observation {{ o.id }}"
-                  loading="lazy"
-                  class="obs-thumb"
-                  width="80"
-                  height="60"
-                />
-              </a>
-            </td>
-            <td data-sort-value="{{ o.ts.isoformat() }}" data-col-key="obs_time">
-              <span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span>
-            </td>
-            <td data-sort-value="{{ o.species_label | lower }}" data-col-key="species">
-              <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
-            </td>
-            <td data-sort-value="{{ o.species_prob }}" data-col-key="species_prob">
-              {{ "%.2f"|format(o.species_prob) }}
-            </td>
-            <td data-sort-value="{{ o.individual_id or 0 }}" data-col-key="individual">
-              {% if o.individual_id %}
-                <a href="/individuals/{{ o.individual_id }}">
-                  <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
-                </a>
-              {% else %}
-                <span class="muted">—</span>
-              {% endif %}
-            </td>
-            <td data-sort-value="{{ o.match_score }}" data-col-key="match_score">
-              {{ "%.3f"|format(o.match_score) }}
-            </td>
+            <th class="sortable obs-thumb-cell" data-sort-type="number" data-col-key="snapshot">Snapshot</th>
+            <th
+              class="sortable"
+              data-sort-type="date"
+              data-sort-default="desc"
+              data-col-key="obs_time"
+            >
+              Obs time ({{ timezone_label }})
+            </th>
+            <th class="sortable" data-sort-type="text" data-col-key="species">Species</th>
+            <th class="sortable" data-sort-type="number" data-col-key="species_prob">Species prob</th>
+            <th class="sortable" data-sort-type="number" data-col-key="individual">Individual</th>
+            <th class="sortable" data-sort-type="number" data-col-key="match_score">Match score</th>
             {% for key in extra_columns %}
-              {% set display_value = o.extra_display.get(key, "") or "—" %}
-              <td data-sort-value="{{ o.extra_sort_values.get(key, '') }}" data-col-key="{{ key }}">
-                <span title="{{ display_value }}">{{ display_value }}</span>
-              </td>
+              <th class="sortable" data-sort-type="{{ extra_column_sort_types[key] }}" data-col-key="{{ key }}">
+                {{ extra_column_labels[key] }}
+              </th>
             {% endfor %}
-            <td data-sort-value="{{ o.id }}" data-col-key="links">
-              <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a>
-              · <a href="/observations/{{ o.id }}">Details</a>
-            </td>
+            <th class="sortable" data-sort-type="number" data-col-key="links">Links</th>
           </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+        </thead>
+        <tbody>
+          {% for o in observations %}
+            {% set hue = ((o.individual_id or 0) * 47) % 360 %}
+            <tr data-sort-row>
+              <td class="obs-select-cell" data-col-key="select">
+                <input
+                  type="checkbox"
+                  name="obs_ids"
+                  value="{{ o.id }}"
+                  data-select-row
+                  aria-label="Select observation {{ o.id }}"
+                />
+              </td>
+              <td class="obs-thumb-cell" data-sort-value="{{ o.id }}" data-col-key="snapshot">
+                <a href="/observations/{{ o.id }}">
+                  <img
+                    src="/media/{{ o.display_snapshot_path }}"
+                    alt="Observation {{ o.id }}"
+                    loading="lazy"
+                    class="obs-thumb"
+                    width="80"
+                    height="60"
+                  />
+                </a>
+              </td>
+              <td data-sort-value="{{ o.ts.isoformat() }}" data-col-key="obs_time">
+                <span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span>
+              </td>
+              <td data-sort-value="{{ o.species_label | lower }}" data-col-key="species">
+                <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
+              </td>
+              <td data-sort-value="{{ o.species_prob }}" data-col-key="species_prob">
+                {{ "%.2f"|format(o.species_prob) }}
+              </td>
+              <td data-sort-value="{{ o.individual_id or 0 }}" data-col-key="individual">
+                {% if o.individual_id %}
+                  <a href="/individuals/{{ o.individual_id }}">
+                    <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
+                  </a>
+                {% else %}
+                  <span class="muted">—</span>
+                {% endif %}
+              </td>
+              <td data-sort-value="{{ o.match_score }}" data-col-key="match_score">
+                {{ "%.3f"|format(o.match_score) }}
+              </td>
+              {% for key in extra_columns %}
+                {% set display_value = o.extra_display.get(key, "") or "—" %}
+                <td data-sort-value="{{ o.extra_sort_values.get(key, '') }}" data-col-key="{{ key }}">
+                  <span title="{{ display_value }}">{{ display_value }}</span>
+                </td>
+              {% endfor %}
+              <td data-sort-value="{{ o.id }}" data-col-key="links">
+                <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a>
+                · <a href="/observations/{{ o.id }}">Details</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </form>
 {% endblock %}
 
 {% block scripts %}
   <script src="/static/table_sort.js"></script>
   <script src="/static/column_selector.js"></script>
+  <script src="/static/observations_bulk.js"></script>
 {% endblock %}

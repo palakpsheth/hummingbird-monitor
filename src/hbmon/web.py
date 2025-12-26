@@ -53,6 +53,8 @@ from pathlib import Path
 from typing import Any, Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import numpy as np
+
 """
 FastAPI web application for hbmon.
 
@@ -173,6 +175,13 @@ def _timezone_label(tz: str | None) -> str:
     return "Browser local" if clean.lower() == "local" else clean
 
 
+def _sanitize_redirect_path(raw: str | None, default: str = "/observations") -> str:
+    if not raw:
+        return default
+    text = str(raw)
+    return text if text.startswith("/") else default
+
+
 def _get_git_commit() -> str:
     env_commit = os.getenv("HBMON_GIT_COMMIT")
     # Treat "unknown" (any casing) as unset so fallback methods are tried during Docker builds
@@ -238,6 +247,107 @@ def get_annotated_snapshot_path(obs: Observation) -> str | None:
     if not isinstance(snapshots_data, dict):
         return None
     return snapshots_data.get("annotated_path")
+
+
+def select_prototype_observations(
+    db: Session,
+    individual_ids: list[int],
+) -> dict[int, Observation]:
+    """
+    Select a per-individual prototype observation.
+
+    Prefer observation embeddings closest to the stored prototype embedding.
+    Falls back to highest match score (then newest timestamp/id) when no
+    embeddings are available.
+    """
+    if not individual_ids:
+        return {}
+
+    selected: dict[int, Observation] = {}
+
+    proto_rows = db.execute(
+        select(Individual).where(Individual.id.in_(individual_ids), Individual.prototype_blob.isnot(None))
+    ).scalars().all()
+    proto_map: dict[int, np.ndarray] = {}
+    for ind in proto_rows:
+        vec = ind.get_prototype()
+        if vec is None:
+            continue
+        proto_map[int(ind.id)] = l2_normalize(vec)
+
+    if proto_map:
+        emb_rows = db.execute(
+            select(Embedding).where(Embedding.individual_id.in_(list(proto_map.keys())))
+        ).scalars().all()
+        best_obs_id: dict[int, int] = {}
+        best_score: dict[int, float] = {}
+        for emb in emb_rows:
+            if emb.individual_id is None:
+                continue
+            proto = proto_map.get(int(emb.individual_id))
+            if proto is None:
+                continue
+            emb_vec = l2_normalize(emb.get_vec())
+            similarity = float(np.dot(proto, emb_vec))
+            if similarity > best_score.get(int(emb.individual_id), float("-inf")):
+                best_score[int(emb.individual_id)] = similarity
+                best_obs_id[int(emb.individual_id)] = int(emb.observation_id)
+        if best_obs_id:
+            obs_rows = db.execute(
+                select(Observation).where(Observation.id.in_(list(best_obs_id.values())))
+            ).scalars().all()
+            obs_by_id = {int(o.id): o for o in obs_rows}
+            for ind_id, obs_id in best_obs_id.items():
+                obs = obs_by_id.get(obs_id)
+                if obs is not None:
+                    selected[ind_id] = obs
+
+    remaining = [ind_id for ind_id in individual_ids if ind_id not in selected]
+    if not remaining:
+        return selected
+
+    ranked = (
+        select(
+            Observation.id.label("obs_id"),
+            func.row_number()
+            .over(
+                partition_by=Observation.individual_id,
+                order_by=(
+                    desc(Observation.match_score),
+                    desc(Observation.ts),
+                    desc(Observation.id),
+                ),
+            )
+            .label("rn"),
+        )
+        .where(Observation.individual_id.in_(remaining))
+        .subquery()
+    )
+
+    rows = db.execute(
+        select(Observation)
+        .join(ranked, Observation.id == ranked.c.obs_id)
+        .where(ranked.c.rn == 1)
+    ).scalars().all()
+
+    for obs in rows:
+        if obs.individual_id is None:
+            continue
+        selected[int(obs.individual_id)] = obs
+    return selected
+def get_clip_snapshot_path(obs: Observation) -> str | None:
+    """
+    Get the CLIP crop snapshot path for an observation from its extra_json.
+
+    Returns the CLIP snapshot path if available, otherwise None.
+    """
+    extra = obs.get_extra()
+    if not extra or not isinstance(extra, dict):
+        return None
+    snapshots_data = extra.get("snapshots")
+    if not isinstance(snapshots_data, dict):
+        return None
+    return snapshots_data.get("clip_path")
 
 
 def build_hour_heatmap(hours_rows: list[tuple[int, int]]) -> list[dict[str, int]]:
@@ -771,6 +881,7 @@ def make_app() -> Any:
 
         # Get annotated snapshot path from extra data (if available)
         annotated_snapshot_path = get_annotated_snapshot_path(o)
+        clip_snapshot_path = get_clip_snapshot_path(o)
 
         # Video file diagnostics
         video_info: dict[str, Any] | None = None
@@ -797,6 +908,7 @@ def make_app() -> Any:
                 allowed_review_labels=ALLOWED_REVIEW_LABELS,
                 video_info=video_info,
                 annotated_snapshot_path=annotated_snapshot_path,
+                clip_snapshot_path=clip_snapshot_path,
             ),
         )
 
@@ -872,6 +984,8 @@ def make_app() -> Any:
         # Clean up media
         _safe_unlink_media(o.snapshot_path)
         _safe_unlink_media(o.video_path)
+        _safe_unlink_media(get_annotated_snapshot_path(o))
+        _safe_unlink_media(get_clip_snapshot_path(o))
 
         db.execute(delete(Embedding).where(Embedding.observation_id == obs_id))
         db.delete(o)
@@ -882,6 +996,37 @@ def make_app() -> Any:
             _commit_with_retry(db)
 
         return RedirectResponse(url="/observations", status_code=303)
+
+    @app.post("/observations/bulk_delete")
+    def bulk_delete_observations(
+        obs_ids: list[int] = Form([]),
+        redirect_to: str | None = Form(None),
+        db: Session = Depends(get_db),
+    ) -> RedirectResponse:
+        redirect_path = _sanitize_redirect_path(redirect_to)
+        ids = sorted({int(obs_id) for obs_id in obs_ids if int(obs_id) > 0})
+        if not ids:
+            return RedirectResponse(url=redirect_path, status_code=303)
+
+        obs_rows = db.execute(select(Observation).where(Observation.id.in_(ids))).scalars().all()
+        if not obs_rows:
+            return RedirectResponse(url=redirect_path, status_code=303)
+
+        individual_ids = {o.individual_id for o in obs_rows if o.individual_id is not None}
+
+        for o in obs_rows:
+            _safe_unlink_media(o.snapshot_path)
+            _safe_unlink_media(o.video_path)
+
+        db.execute(delete(Embedding).where(Embedding.observation_id.in_(ids)))
+        db.execute(delete(Observation).where(Observation.id.in_(ids)))
+        _commit_with_retry(db)
+
+        for ind_id in individual_ids:
+            _recompute_individual_stats(db, int(ind_id))
+        _commit_with_retry(db)
+
+        return RedirectResponse(url=redirect_path, status_code=303)
 
     @app.get("/individuals", response_class=HTMLResponse)
     def individuals(
@@ -903,6 +1048,14 @@ def make_app() -> Any:
 
         inds = db.execute(q.limit(limit)).scalars().all()
         total = db.execute(select(func.count(Individual.id))).scalar_one()
+        prototype_map = select_prototype_observations(db, [int(ind.id) for ind in inds])
+        for ind in inds:
+            proto_obs = prototype_map.get(int(ind.id))
+            if proto_obs is None:
+                continue
+            annotated = get_annotated_snapshot_path(proto_obs)
+            proto_obs.display_snapshot_path = annotated if annotated else proto_obs.snapshot_path  # type: ignore[attr-defined]
+            ind.prototype_observation = proto_obs  # type: ignore[attr-defined]
 
         return templates.TemplateResponse(
             "individuals.html",
@@ -958,6 +1111,11 @@ def make_app() -> Any:
 
         hours_rows: list[tuple[int, int]] = [(int(hh), int(cnt)) for (hh, cnt) in rows if hh is not None]
         heatmap = build_hour_heatmap(hours_rows)
+        prototype_map = select_prototype_observations(db, [individual_id])
+        proto_obs = prototype_map.get(individual_id)
+        if proto_obs is not None:
+            annotated = get_annotated_snapshot_path(proto_obs)
+            proto_obs.display_snapshot_path = annotated if annotated else proto_obs.snapshot_path  # type: ignore[attr-defined]
 
         return templates.TemplateResponse(
             "individual_detail.html",
@@ -972,6 +1130,7 @@ def make_app() -> Any:
                 heatmap=heatmap,
                 total=total,
                 last_seen=last_seen,
+                prototype_observation=proto_obs,
             ),
         )
 

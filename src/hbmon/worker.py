@@ -8,7 +8,7 @@ High-level pipeline per loop:
 - Apply ROI crop (if configured)
 - Run YOLO (ultralytics) to detect "bird" class (COCO 'bird' class)
 - Pick best detection (largest area)
-- If not in cooldown: save snapshot + record clip
+- If not in cooldown: save snapshots (raw, annotated, CLIP crop) + record clip
 - Crop around bbox (with configurable padding) for CLIP classification + embedding
 - Match embedding to an Individual prototype (cosine distance threshold)
 - Insert Observation + (optional) Embedding, update Individual stats/prototype
@@ -935,11 +935,13 @@ def run_worker() -> None:
         snap_id = uuid.uuid4().hex
         snap_rel = f"snapshots/{stamp}/{snap_id}.jpg"
         snap_annotated_rel = f"snapshots/{stamp}/{snap_id}_annotated.jpg"
+        snap_clip_rel = f"snapshots/{stamp}/{snap_id}_clip.jpg"
         clip_rel = f"clips/{stamp}/{uuid.uuid4().hex}.mp4"
 
         media_root = snapshots_dir().parent  # /media
         snap_path = media_root / snap_rel
         snap_annotated_path = media_root / snap_annotated_rel
+        snap_clip_path = media_root / snap_clip_rel
         clip_path = media_root / clip_rel
 
         # Save both raw and annotated snapshots
@@ -974,6 +976,12 @@ def run_worker() -> None:
         h, w = frame.shape[:2]
         x1, y1, x2, y2 = _bbox_with_padding(det_full, (h, w), pad_frac=float(s.crop_padding))
         crop = frame[y1:y2, x1:x2].copy()
+        clip_snapshot_rel = ""
+        try:
+            _write_jpeg(snap_clip_path, crop)
+            clip_snapshot_rel = snap_clip_rel
+        except Exception as e:
+            print(f"[worker] clip snapshot write failed: {e}")
 
         # Species + embedding
         try:
@@ -1004,6 +1012,10 @@ def run_worker() -> None:
                 )
 
             bg_active = bool(bg_enabled and background_img is not None)
+            snapshots_data = {"annotated_path": snap_annotated_rel}
+            if clip_snapshot_rel:
+                snapshots_data["clip_path"] = clip_snapshot_rel
+
             extra_data = {
                 "sensitivity": {
                     "detect_conf": float(s.detect_conf),
@@ -1040,9 +1052,7 @@ def run_worker() -> None:
                     "species_label_final": species_label,
                     "species_accepted": species_prob >= float(s.min_species_prob),
                 },
-                "snapshots": {
-                    "annotated_path": snap_annotated_rel,
-                },
+                "snapshots": snapshots_data,
                 "review": {"label": None},
             }
 
