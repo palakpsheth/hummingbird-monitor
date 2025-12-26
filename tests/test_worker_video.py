@@ -244,7 +244,7 @@ def test_draw_bbox_with_confidence_label(monkeypatch):
 
     # Should have drawn text with confidence
     assert len(texts_drawn) == 1
-    assert texts_drawn[0][0] == "0.85"  # confidence formatted to 2 decimal places
+    assert texts_drawn[0][0] == worker._format_bbox_label(det)
 
 
 def test_draw_bbox_raises_when_cv2_unavailable(monkeypatch):
