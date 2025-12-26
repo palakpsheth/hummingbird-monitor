@@ -321,10 +321,10 @@ def _draw_bbox(
         det: Detection with bounding box coordinates.
         color: BGR color for the box (default: green).
         thickness: Line thickness in pixels (default: 2).
-        show_confidence: If True, draw the detection confidence above the box.
+        show_confidence: If True, draw the detection confidence and bbox area above the box.
 
     Returns:
-        A copy of the frame with the bounding box and optional confidence drawn.
+        A copy of the frame with the bounding box and optional label drawn.
     """
     if not _CV2_AVAILABLE:
         raise RuntimeError("OpenCV (cv2) is not installed; cannot draw bounding boxes")
@@ -334,7 +334,7 @@ def _draw_bbox(
     cv2.rectangle(annotated, (det.x1, det.y1), (det.x2, det.y2), color, thickness)
 
     if show_confidence:
-        label = f"{det.conf:.2f}"
+        label = _format_bbox_label(det)
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.6
         font_thickness = 2
@@ -362,6 +362,20 @@ def _draw_bbox(
         cv2.putText(annotated, label, (text_x + 2, text_y), font, font_scale, (0, 0, 0), font_thickness)
 
     return annotated
+
+
+def _format_bbox_label(det: Det) -> str:
+    """Format a label that includes detection confidence and bounding-box area."""
+    return f"{det.conf:.2f} | {det.area}px²"
+
+
+def _bbox_area_ratio(det: Det, frame_shape: tuple[int, int]) -> float:
+    """Return the fraction of the reference area occupied by the detection's bbox area."""
+    h, w = frame_shape
+    frame_area = max(h, 0) * max(w, 0)
+    if frame_area <= 0:
+        return 0.0
+    return det.area / frame_area
 
 
 def _ffmpeg_available() -> bool:
@@ -938,6 +952,7 @@ def run_worker() -> None:
                     ema_alpha=float(s.ema_alpha),
                 )
 
+            bg_active = bool(bg_enabled and background_img is not None)
             extra_data = {
                 "sensitivity": {
                     "detect_conf": float(s.detect_conf),
@@ -948,12 +963,23 @@ def run_worker() -> None:
                     "match_threshold": float(s.match_threshold),
                     "ema_alpha": float(s.ema_alpha),
                     "crop_padding": float(s.crop_padding),
+                    "bg_motion_threshold": int(bg_motion_threshold),
+                    "bg_motion_blur": int(bg_motion_blur),
+                    "bg_min_overlap": float(bg_min_overlap),
+                    "bg_subtraction_enabled": bg_active,
+                    "bg_subtraction_configured": bool(bg_enabled),
+                    "background_image_available": bool(background_img is not None),
                 },
                 "detection": {
                     "box_confidence": float(det_full.conf),
                     "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
+                    "bbox_area": int(det_full.area),
+                    "bbox_area_ratio": float(_bbox_area_ratio(det_full, (h, w))),
+                    "bbox_area_ratio_frame": float(_bbox_area_ratio(det_full, (h, w))),
+                    "bbox_area_ratio_roi": float(_bbox_area_ratio(det, roi_frame.shape[:2])),
                     "roi_offset_xy": [int(xoff), int(yoff)],
-                    "background_subtraction_enabled": bg_enabled and background_img is not None,
+                    "background_subtraction_enabled": bg_active,
+                    "nms_iou_threshold": float(s.detect_iou),
                 },
                 "snapshots": {
                     "annotated_path": snap_annotated_rel,

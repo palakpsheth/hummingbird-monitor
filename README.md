@@ -31,6 +31,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Cross-linked** navigation:
   - Individuals list → individual page → all observations
   - Observation detail → linked individual
+- **Observation detail metadata**: detector confidence, bbox area (frame/ROI ratios), IoU thresholds, and sensitivity settings
 - **Exports**
   - CSV: observations and individuals
   - `tar.gz` bundle: snapshots + clips (generated under `/data/exports/`)

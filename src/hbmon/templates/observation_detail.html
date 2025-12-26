@@ -205,8 +205,33 @@
             {% if extra.detection.bbox_xyxy is defined %}
               <div class="muted">BBox (xyxy): {{ extra.detection.bbox_xyxy }}</div>
             {% endif %}
+            {% if extra.detection.bbox_area is defined %}
+              <div class="muted">BBox area: {{ extra.detection.bbox_area }} px²</div>
+            {% endif %}
+            {% if extra.detection.bbox_area_ratio_frame is defined %}
+              <div class="muted">Frame area ratio: {{ "%.4f"|format(extra.detection.bbox_area_ratio_frame) }}</div>
+            {% elif extra.detection.bbox_area_ratio is defined %}
+              <div class="muted">Frame area ratio: {{ "%.4f"|format(extra.detection.bbox_area_ratio) }}</div>
+            {% endif %}
+            {% if extra.detection.bbox_area_ratio_roi is defined %}
+              <div class="muted">ROI area ratio: {{ "%.4f"|format(extra.detection.bbox_area_ratio_roi) }}</div>
+            {% endif %}
             {% if extra.detection.roi_offset_xy is defined %}
               <div class="muted">ROI offset: {{ extra.detection.roi_offset_xy }}</div>
+            {% endif %}
+            {% if extra.detection.nms_iou_threshold is defined %}
+              <div class="muted">NMS IoU threshold: {{ "%.3f"|format(extra.detection.nms_iou_threshold) }}</div>
+            {% endif %}
+            {% if extra.detection.background_subtraction_enabled is defined %}
+              <div class="muted">Background subtraction active: {{ "yes" if extra.detection.background_subtraction_enabled else "no" }}</div>
+            {% endif %}
+            {% if extra.sensitivity is defined %}
+              {% if extra.sensitivity.bg_subtraction_configured is defined %}
+                <div class="muted">Background subtraction configured: {{ "yes" if extra.sensitivity.bg_subtraction_configured else "no" }}</div>
+              {% endif %}
+              {% if extra.sensitivity.background_image_available is defined %}
+                <div class="muted">Background image available: {{ "yes" if extra.sensitivity.background_image_available else "no" }}</div>
+              {% endif %}
             {% endif %}
           </div>
         {% endif %}

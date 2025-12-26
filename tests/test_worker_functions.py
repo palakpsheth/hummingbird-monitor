@@ -44,6 +44,33 @@ class TestDetClass:
         assert det.area == 0
 
 
+class TestDetectionLabelHelpers:
+    """Tests for bbox label formatting helpers."""
+
+    def test_format_bbox_label_includes_conf_and_area(self):
+        """Ensure bbox label includes confidence and area info."""
+        det = worker.Det(x1=0, y1=0, x2=50, y2=20, conf=0.876)
+        label = worker._format_bbox_label(det)
+        assert "0.88" in label
+        assert "1000" in label
+        assert "px" in label
+
+
+class TestBboxAreaRatio:
+    """Tests for the bbox area ratio helper."""
+
+    def test_bbox_area_ratio(self):
+        """Compute ratio against frame area."""
+        det = worker.Det(x1=0, y1=0, x2=10, y2=10, conf=0.5)
+        ratio = worker._bbox_area_ratio(det, (20, 20))
+        assert ratio == pytest.approx(0.25)
+
+    def test_bbox_area_ratio_zero_frame(self):
+        """Zero frame area should return 0."""
+        det = worker.Det(x1=0, y1=0, x2=10, y2=10, conf=0.5)
+        assert worker._bbox_area_ratio(det, (0, 0)) == 0.0
+
+
 class TestUtcnow:
     """Tests for the utcnow helper function."""
 

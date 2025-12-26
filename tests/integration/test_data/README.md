@@ -86,11 +86,20 @@ Each test case folder contains a `metadata.json` file with the following structu
             "sensitivity": {
                 "detect_conf": 0.35,
                 "detect_iou": 0.45,
-                "min_box_area": 600
+                "min_box_area": 600,
+                "bg_motion_threshold": 30,
+                "bg_motion_blur": 5,
+                "bg_min_overlap": 0.15,
+                "bg_subtraction_enabled": true
             },
             "detection": {
                 "box_confidence": 0.78,
-                "bbox_xyxy": [120, 80, 320, 280]
+                "bbox_xyxy": [120, 80, 320, 280],
+                "bbox_area": 40000,
+                "bbox_area_ratio_frame": 0.0833,
+                "bbox_area_ratio_roi": 0.0912,
+                "nms_iou_threshold": 0.45,
+                "background_subtraction_enabled": true
             },
             "review": {
                 "label": "true_positive"
@@ -120,6 +129,8 @@ The raw observation data as captured by the worker, including:
 - Bounding box coordinates
 - Match score for individual re-identification
 - Extra metadata including sensitivity settings at capture time
+  - `sensitivity`: detection thresholds (confidence, IoU, min box area) plus background subtraction tuning
+  - `detection`: detector confidence, bbox geometry, bbox area + frame/ROI ratios, and IoU threshold used for NMS
 
 ## Adding New Test Cases
 
