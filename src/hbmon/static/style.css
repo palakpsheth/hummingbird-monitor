@@ -110,6 +110,8 @@ a:hover { text-decoration: underline; }
   box-shadow: var(--shadow);
 }
 
+.table-scroll { overflow-x: auto; }
+
 .inline { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .stack { display: grid; gap: 10px; margin: 10px 0; }
 .muted { color: var(--muted); font-size: 14px; }
@@ -135,6 +137,17 @@ a:hover { text-decoration: underline; }
 
 .row:not(.head) { border: 1px solid transparent; }
 .row:not(.head):hover { border: 1px solid var(--border); background: color-mix(in srgb, var(--card) 75%, transparent); }
+
+.sortable-header { cursor: pointer; user-select: none; }
+.sortable-header[data-sort-direction="asc"]::after { content: " ▲"; font-size: 12px; color: var(--muted); }
+.sortable-header[data-sort-direction="desc"]::after { content: " ▼"; font-size: 12px; color: var(--muted); }
+
+.table.observations { --obs-columns: 6; }
+.table.observations .row {
+  grid-template-columns: 120px repeat(var(--obs-columns), minmax(120px, 1fr));
+  align-items: center;
+}
+.table.observations img { width: 110px; height: auto; border-radius: 10px; display: block; }
 
 /* ───────────────────────── Badges ───────────────────────── */
 

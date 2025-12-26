@@ -295,6 +295,110 @@ def _as_utc_str(dt: datetime | None) -> str | None:
     return _to_utc(dt).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _flatten_extra_metadata(extra: dict[str, Any] | None, prefix: str = "") -> dict[str, Any]:
+    if not extra or not isinstance(extra, dict):
+        return {}
+    flattened: dict[str, Any] = {}
+    for key, value in extra.items():
+        key_str = str(key)
+        path = f"{prefix}.{key_str}" if prefix else key_str
+        if isinstance(value, dict):
+            flattened.update(_flatten_extra_metadata(value, prefix=path))
+            continue
+        flattened[path] = value
+    return flattened
+
+
+def _format_extra_label(key: str) -> str:
+    parts = key.replace("_", " ").split(".")
+    return " · ".join(part.title() for part in parts)
+
+
+def _format_extra_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.3f}"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, (list, dict)):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except TypeError:
+            return str(value)
+    return str(value)
+
+
+def _extra_sort_type(values: list[Any]) -> str:
+    if not values:
+        return "text"
+    has_value = False
+    for value in values:
+        if value is None:
+            continue
+        has_value = True
+        if isinstance(value, bool):
+            return "text"
+        if not isinstance(value, (int, float)):
+            return "text"
+    return "number" if has_value else "text"
+
+
+def _format_sort_value(value: Any, sort_type: str) -> str:
+    if value is None:
+        return ""
+    if sort_type == "number":
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        if isinstance(value, (int, float)):
+            return str(value)
+        return ""
+    if isinstance(value, (list, dict)):
+        try:
+            return json.dumps(value, ensure_ascii=False).lower()
+        except TypeError:
+            return str(value).lower()
+    return str(value).lower()
+
+
+def _order_extra_columns(keys: Iterator[str]) -> list[str]:
+    preferred = ["detection.box_confidence"]
+    key_list = list(keys)
+    ordered = [key for key in preferred if key in key_list]
+    ordered.extend(sorted(key for key in key_list if key not in preferred))
+    return ordered
+
+
+def _prepare_observation_extras(
+    observations: list["Observation"],
+) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    values_by_key: dict[str, list[Any]] = {}
+    for o in observations:
+        extra_flat = _flatten_extra_metadata(o.get_extra() or {})
+        o.extra_flat = extra_flat  # type: ignore[attr-defined]
+        for key, value in extra_flat.items():
+            values_by_key.setdefault(key, []).append(value)
+
+    columns = _order_extra_columns(values_by_key.keys())
+    sort_types = {key: _extra_sort_type(values_by_key.get(key, [])) for key in columns}
+    labels = {key: _format_extra_label(key) for key in columns}
+
+    for o in observations:
+        extra_display: dict[str, str] = {}
+        extra_sort_values: dict[str, str] = {}
+        for key in columns:
+            value = o.extra_flat.get(key)  # type: ignore[attr-defined]
+            sort_type = sort_types[key]
+            extra_display[key] = _format_extra_value(value)
+            extra_sort_values[key] = _format_sort_value(value, sort_type)
+        o.extra_display = extra_display  # type: ignore[attr-defined]
+        o.extra_sort_values = extra_sort_values  # type: ignore[attr-defined]
+
+    return columns, sort_types, labels
+
+
 def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
     """
     Validate and coerce detection/ML tuning inputs from the config form.
@@ -595,6 +699,8 @@ def make_app() -> Any:
             annotated = get_annotated_snapshot_path(o)
             o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
 
+        extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
+
         inds = db.execute(
             select(Individual).order_by(desc(Individual.visit_count)).limit(2000)
         ).scalars().all()
@@ -609,6 +715,9 @@ def make_app() -> Any:
                 settings=s,
                 observations=obs,
                 individuals=inds,
+                extra_columns=extra_columns,
+                extra_column_sort_types=extra_sort_types,
+                extra_column_labels=extra_labels,
                 selected_individual=individual_id,
                 selected_limit=limit,
                 count_shown=len(obs),
@@ -798,6 +907,8 @@ def make_app() -> Any:
             annotated = get_annotated_snapshot_path(o)
             o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
 
+        extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
+
         total = int(ind.visit_count)
 
         last_seen = _as_utc_str(ind.last_seen_at)
@@ -822,6 +933,9 @@ def make_app() -> Any:
                 f"Individual {ind.id}",
                 individual=ind,
                 observations=obs,
+                extra_columns=extra_columns,
+                extra_column_sort_types=extra_sort_types,
+                extra_column_labels=extra_labels,
                 heatmap=heatmap,
                 total=total,
                 last_seen=last_seen,
