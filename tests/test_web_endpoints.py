@@ -309,6 +309,8 @@ def test_observations_page(tmp_path, monkeypatch):
     r = client.get("/observations")
     assert r.status_code == 200
     assert "Observation" in r.text
+    assert "obs-thumb" in r.text
+    assert 'data-sort-default="desc"' in r.text
 
 
 def test_observations_page_with_filter(tmp_path, monkeypatch):
