@@ -236,6 +236,30 @@
           </div>
         {% endif %}
 
+        {% if extra.identification %}
+          <h3>Identification metadata</h3>
+          <div class="stack">
+            {% if extra.identification.species_label is defined %}
+              <div class="muted">Species matched to: {{ extra.identification.species_label }}</div>
+            {% endif %}
+            {% if extra.identification.species_prob is defined %}
+              <div class="muted">Species match probability: {{ "%.3f"|format(extra.identification.species_prob) }}</div>
+            {% endif %}
+            {% if extra.identification.species_label_final is defined %}
+              <div class="muted">Species label (final): {{ extra.identification.species_label_final }}</div>
+            {% endif %}
+            {% if extra.identification.species_accepted is defined %}
+              <div class="muted">Species accepted: {{ "yes" if extra.identification.species_accepted else "no" }}</div>
+            {% endif %}
+            {% if extra.identification.individual_id is defined %}
+              <div class="muted">Individual ID: {{ extra.identification.individual_id }}</div>
+            {% endif %}
+            {% if extra.identification.match_score is defined %}
+              <div class="muted">Individual match score: {{ "%.3f"|format(extra.identification.match_score) }}</div>
+            {% endif %}
+          </div>
+        {% endif %}
+
         {% if o.extra_json_pretty %}
           <h3>Raw metadata</h3>
           <pre class="pre">{{ o.extra_json_pretty }}</pre>

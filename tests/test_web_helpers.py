@@ -301,6 +301,12 @@ def test_flatten_extra_metadata(monkeypatch):
     web = _import_web(monkeypatch)
     extra = {
         "detection": {"box_confidence": 0.8756, "extra": {"foo": "bar"}},
+        "identification": {
+            "individual_id": 7,
+            "match_score": 0.9123,
+            "species_label": "Anna's Hummingbird",
+            "species_prob": 0.8231,
+        },
         "review": {"label": "ok"},
         "flags": ["a", "b"],
         "score": 2,
@@ -308,6 +314,10 @@ def test_flatten_extra_metadata(monkeypatch):
     flattened = web._flatten_extra_metadata(extra)
     assert flattened["detection.box_confidence"] == 0.8756
     assert flattened["detection.extra.foo"] == "bar"
+    assert flattened["identification.individual_id"] == 7
+    assert flattened["identification.match_score"] == 0.9123
+    assert flattened["identification.species_label"] == "Anna's Hummingbird"
+    assert flattened["identification.species_prob"] == 0.8231
     assert flattened["review.label"] == "ok"
     assert flattened["flags"] == ["a", "b"]
     assert flattened["score"] == 2

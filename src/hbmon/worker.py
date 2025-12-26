@@ -928,13 +928,15 @@ def run_worker() -> None:
 
         # Species + embedding
         try:
-            species_label, species_prob = clip.predict_species_label_prob(crop)
+            raw_species_label, raw_species_prob = clip.predict_species_label_prob(crop)
             emb = clip.encode_embedding(crop)
         except Exception as e:
             print(f"[worker] CLIP error: {e}")
-            species_label, species_prob = "Hummingbird (unknown species)", 0.0
+            raw_species_label, raw_species_prob = "Hummingbird (unknown species)", 0.0
             emb = None
 
+        species_label = raw_species_label
+        species_prob = float(raw_species_prob)
         if species_prob < float(s.min_species_prob):
             species_label = "Hummingbird (unknown species)"
 
@@ -980,6 +982,14 @@ def run_worker() -> None:
                     "roi_offset_xy": [int(xoff), int(yoff)],
                     "background_subtraction_enabled": bg_active,
                     "nms_iou_threshold": float(s.detect_iou),
+                },
+                "identification": {
+                    "individual_id": individual_id,
+                    "match_score": float(match_score),
+                    "species_label": raw_species_label,
+                    "species_prob": float(raw_species_prob),
+                    "species_label_final": species_label,
+                    "species_accepted": species_prob >= float(s.min_species_prob),
                 },
                 "snapshots": {
                     "annotated_path": snap_annotated_rel,

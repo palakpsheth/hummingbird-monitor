@@ -261,3 +261,42 @@ class TestSensitivityParameters:
                     f"Sensitivity test '{sens_test.get('name')}' failed for {test_dir.name}: "
                     f"expected detection={expected_detection}, got {detected}"
                 )
+
+
+class TestMetadataSchema:
+    """Integration tests for expected metadata schemas in test cases."""
+
+    def test_identification_metadata_schema(self, integration_test_data_dir: Path):
+        """
+        Validate identification metadata shape when present in metadata.json.
+        """
+        test_cases = load_test_cases(integration_test_data_dir)
+
+        if not test_cases:
+            pytest.skip("No test data with snapshots available.")
+
+        required_keys = {
+            "individual_id",
+            "match_score",
+            "species_label",
+            "species_prob",
+            "species_label_final",
+            "species_accepted",
+        }
+
+        for test_dir, metadata in test_cases:
+            original_observation = metadata.get("original_observation") or {}
+            extra = original_observation.get("extra") or {}
+            identification = extra.get("identification")
+
+            if identification is None:
+                continue
+
+            assert isinstance(identification, dict), (
+                f"Identification metadata must be a dict in {test_dir.name}, "
+                f"got {type(identification).__name__}"
+            )
+            missing = required_keys - set(identification.keys())
+            assert not missing, (
+                f"Identification metadata missing keys {sorted(missing)} in {test_dir.name}"
+            )
