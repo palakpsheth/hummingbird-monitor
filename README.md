@@ -27,6 +27,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Individual re-identification**: “bird A vs bird B” using image embeddings
 - **Name individuals** in the UI
 - **Counts & last-seen** stats per individual
+- **Multiple snapshot views** per observation: raw, annotated, and CLIP crop
 - **Background image configuration**: define a standard background picture without hummingbirds
 - **Cross-linked** navigation:
   - Individuals list → individual page → all observations
@@ -76,7 +77,7 @@ This ensures the database is initialized by hbmon-web before the worker starts.
 
 ### Persistent storage
 - `/data` (volume): SQLite DB + `config.json` + exports + background image
-- `/media` (volume): snapshots + clips
+- `/media` (volume): snapshots (raw, annotated, CLIP crop) + clips
 
 ---
 

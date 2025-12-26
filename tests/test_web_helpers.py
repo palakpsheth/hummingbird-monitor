@@ -297,6 +297,46 @@ def test_get_annotated_snapshot_path_with_missing_annotated_path(monkeypatch):
     assert result is None
 
 
+def test_get_clip_snapshot_path_with_valid_path(monkeypatch):
+    """Test that get_clip_snapshot_path returns path when present."""
+    web = _import_web(monkeypatch)
+    obs = MockObservation(extra={"snapshots": {"clip_path": "snapshots/2024-01-01/abc123_clip.jpg"}})
+    result = web.get_clip_snapshot_path(obs)
+    assert result == "snapshots/2024-01-01/abc123_clip.jpg"
+
+
+def test_get_clip_snapshot_path_with_none_extra(monkeypatch):
+    """Test that get_clip_snapshot_path returns None when extra_json is None."""
+    web = _import_web(monkeypatch)
+    obs = MockObservation(extra=None)
+    result = web.get_clip_snapshot_path(obs)
+    assert result is None
+
+
+def test_get_clip_snapshot_path_with_snapshots_not_dict(monkeypatch):
+    """Test that get_clip_snapshot_path returns None when snapshots is not a dict."""
+    web = _import_web(monkeypatch)
+    obs = MockObservation(extra={"snapshots": ["nope"]})
+    result = web.get_clip_snapshot_path(obs)
+    assert result is None
+
+
+def test_get_clip_snapshot_path_with_missing_snapshots_key(monkeypatch):
+    """Test that get_clip_snapshot_path returns None when snapshots key is missing."""
+    web = _import_web(monkeypatch)
+    obs = MockObservation(extra={"detection": {"box_confidence": 0.85}})
+    result = web.get_clip_snapshot_path(obs)
+    assert result is None
+
+
+def test_get_clip_snapshot_path_with_missing_clip_path(monkeypatch):
+    """Test that get_clip_snapshot_path returns None when clip_path key is missing."""
+    web = _import_web(monkeypatch)
+    obs = MockObservation(extra={"snapshots": {"annotated_path": "snapshots/2024-01-01/abc123_annotated.jpg"}})
+    result = web.get_clip_snapshot_path(obs)
+    assert result is None
+
+
 def test_flatten_extra_metadata(monkeypatch):
     web = _import_web(monkeypatch)
     extra = {

@@ -386,6 +386,12 @@ a:hover { text-decoration: underline; }
   backdrop-filter: blur(10px);
 }
 
+.zoom-controls button.active {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-color: var(--accent);
+}
+
 .zoom-frame [data-zoom-target] {
   transform-origin: center center;
   transition: transform 120ms ease;

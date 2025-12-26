@@ -247,6 +247,21 @@ def get_annotated_snapshot_path(obs: Observation) -> str | None:
     return snapshots_data.get("annotated_path")
 
 
+def get_clip_snapshot_path(obs: Observation) -> str | None:
+    """
+    Get the CLIP crop snapshot path for an observation from its extra_json.
+
+    Returns the CLIP snapshot path if available, otherwise None.
+    """
+    extra = obs.get_extra()
+    if not extra or not isinstance(extra, dict):
+        return None
+    snapshots_data = extra.get("snapshots")
+    if not isinstance(snapshots_data, dict):
+        return None
+    return snapshots_data.get("clip_path")
+
+
 def build_hour_heatmap(hours_rows: list[tuple[int, int]]) -> list[dict[str, int]]:
     """
     hours_rows: [(hour_int, count_int), ...]
@@ -746,6 +761,7 @@ def make_app() -> Any:
 
         # Get annotated snapshot path from extra data (if available)
         annotated_snapshot_path = get_annotated_snapshot_path(o)
+        clip_snapshot_path = get_clip_snapshot_path(o)
 
         # Video file diagnostics
         video_info: dict[str, Any] | None = None
@@ -772,6 +788,7 @@ def make_app() -> Any:
                 allowed_review_labels=ALLOWED_REVIEW_LABELS,
                 video_info=video_info,
                 annotated_snapshot_path=annotated_snapshot_path,
+                clip_snapshot_path=clip_snapshot_path,
             ),
         )
 
@@ -847,6 +864,8 @@ def make_app() -> Any:
         # Clean up media
         _safe_unlink_media(o.snapshot_path)
         _safe_unlink_media(o.video_path)
+        _safe_unlink_media(get_annotated_snapshot_path(o))
+        _safe_unlink_media(get_clip_snapshot_path(o))
 
         db.execute(delete(Embedding).where(Embedding.observation_id == obs_id))
         db.delete(o)
