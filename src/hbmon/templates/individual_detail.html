@@ -37,6 +37,22 @@
     </div>
   </div>
 
+  {% if prototype_observation %}
+    <div class="card">
+      <div class="inline" style="justify-content: space-between; align-items: center;">
+        <h2 style="margin:0;">Prototypical snapshot</h2>
+        <a class="muted" href="/observations/{{ prototype_observation.id }}">View observation</a>
+      </div>
+      <div class="prototype-wrap">
+        <img
+          src="/media/{{ prototype_observation.display_snapshot_path }}"
+          alt="Prototype snapshot for individual {{ individual.id }}"
+          class="prototype-image"
+        />
+      </div>
+    </div>
+  {% endif %}
+
   <h2>Observations</h2>
   {% set obs_columns = 7 + (extra_columns | length) %}
   <div class="table-toolbar table-toolbar--split">
