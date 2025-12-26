@@ -61,8 +61,9 @@
         <label><input type="checkbox" data-column-key="individual" checked /> Individual</label>
         <label><input type="checkbox" data-column-key="match_score" checked /> Match score</label>
         {% for key in extra_columns %}
+          {% set is_visible = extra_column_defaults.get(key, True) %}
           <label>
-            <input type="checkbox" data-column-key="{{ key }}" checked />
+            <input type="checkbox" data-column-key="{{ key }}" {% if is_visible %}checked{% endif %} />
             {{ extra_column_labels[key] }}
           </label>
         {% endfor %}
@@ -171,8 +172,28 @@
                 </td>
               {% endfor %}
               <td data-sort-value="{{ o.id }}" data-col-key="links">
-                <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a>
-                · <a href="/observations/{{ o.id }}">Details</a>
+                {% set link_state = namespace(has_link=false) %}
+                {% if o.snapshot_path %}
+                  <a href="/media/{{ o.snapshot_path }}" target="_blank" rel="noopener noreferrer">Raw</a>
+                  {% set link_state.has_link = true %}
+                {% endif %}
+                {% if o.annotated_snapshot_path %}
+                  {% if link_state.has_link %} · {% endif %}
+                  <a href="/media/{{ o.annotated_snapshot_path }}" target="_blank" rel="noopener noreferrer">Annotated</a>
+                  {% set link_state.has_link = true %}
+                {% endif %}
+                {% if o.clip_snapshot_path %}
+                  {% if link_state.has_link %} · {% endif %}
+                  <a href="/media/{{ o.clip_snapshot_path }}" target="_blank" rel="noopener noreferrer">Clip</a>
+                  {% set link_state.has_link = true %}
+                {% endif %}
+                {% if o.video_path %}
+                  {% if link_state.has_link %} · {% endif %}
+                  <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a>
+                  {% set link_state.has_link = true %}
+                {% endif %}
+                {% if link_state.has_link %} · {% endif %}
+                <a href="/observations/{{ o.id }}">Details</a>
               </td>
             </tr>
           {% endfor %}

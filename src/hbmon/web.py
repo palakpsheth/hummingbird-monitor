@@ -50,7 +50,7 @@ import tarfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import numpy as np
@@ -335,6 +335,8 @@ def select_prototype_observations(
             continue
         selected[int(obs.individual_id)] = obs
     return selected
+
+
 def get_clip_snapshot_path(obs: Observation) -> str | None:
     """
     Get the CLIP crop snapshot path for an observation from its extra_json.
@@ -420,6 +422,16 @@ def _flatten_extra_metadata(extra: dict[str, Any] | None, prefix: str = "") -> d
     return flattened
 
 
+def _is_sensitivity_key(key: str) -> bool:
+    """Return True when the extra metadata key belongs to sensitivity settings."""
+    return key.startswith("sensitivity.")
+
+
+def _is_snapshot_key(key: str) -> bool:
+    """Return True when the extra metadata key refers to snapshot paths."""
+    return key.startswith("snapshots.")
+
+
 def _format_extra_label(key: str) -> str:
     parts = key.replace("_", " ").split(".")
     return " · ".join(part.title() for part in parts)
@@ -482,6 +494,11 @@ def _order_extra_columns(keys: Iterator[str]) -> list[str]:
     return ordered
 
 
+def _default_extra_column_visibility(columns: Iterable[str]) -> dict[str, bool]:
+    """Define default visibility for extra columns by key."""
+    return {key: not _is_sensitivity_key(key) for key in columns}
+
+
 def _prepare_observation_extras(
     observations: list["Observation"],
 ) -> tuple[list[str], dict[str, str], dict[str, str]]:
@@ -490,6 +507,8 @@ def _prepare_observation_extras(
         extra_flat = _flatten_extra_metadata(o.get_extra() or {})
         o.extra_flat = extra_flat  # type: ignore[attr-defined]
         for key, value in extra_flat.items():
+            if _is_snapshot_key(key):
+                continue
             values_by_key.setdefault(key, []).append(value)
 
     columns = _order_extra_columns(values_by_key.keys())
@@ -841,8 +860,11 @@ def make_app() -> Any:
             # Use annotated snapshot if available, otherwise fall back to raw
             annotated = get_annotated_snapshot_path(o)
             o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
+            o.annotated_snapshot_path = annotated  # type: ignore[attr-defined]
+            o.clip_snapshot_path = get_clip_snapshot_path(o)  # type: ignore[attr-defined]
 
         extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
+        extra_column_defaults = _default_extra_column_visibility(extra_columns)
 
         inds = db.execute(
             select(Individual).order_by(desc(Individual.visit_count)).limit(2000)
@@ -861,6 +883,7 @@ def make_app() -> Any:
                 extra_columns=extra_columns,
                 extra_column_sort_types=extra_sort_types,
                 extra_column_labels=extra_labels,
+                extra_column_defaults=extra_column_defaults,
                 selected_individual=individual_id,
                 selected_limit=limit,
                 count_shown=len(obs),
@@ -1092,8 +1115,11 @@ def make_app() -> Any:
             # Use annotated snapshot if available, otherwise fall back to raw
             annotated = get_annotated_snapshot_path(o)
             o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
+            o.annotated_snapshot_path = annotated  # type: ignore[attr-defined]
+            o.clip_snapshot_path = get_clip_snapshot_path(o)  # type: ignore[attr-defined]
 
         extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
+        extra_column_defaults = _default_extra_column_visibility(extra_columns)
 
         total = int(ind.visit_count)
 
@@ -1127,6 +1153,7 @@ def make_app() -> Any:
                 extra_columns=extra_columns,
                 extra_column_sort_types=extra_sort_types,
                 extra_column_labels=extra_labels,
+                extra_column_defaults=extra_column_defaults,
                 heatmap=heatmap,
                 total=total,
                 last_seen=last_seen,

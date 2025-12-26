@@ -369,6 +369,7 @@ def test_prepare_observation_extras_formats_values(monkeypatch):
         MockObservationWithExtras(
             extra={
                 "detection": {"box_confidence": 0.8756},
+                "snapshots": {"annotated_path": "snapshots/2024-01-01/abc123_annotated.jpg"},
                 "review": {"label": "ok"},
                 "flags": ["a", "b"],
             }
@@ -380,9 +381,25 @@ def test_prepare_observation_extras_formats_values(monkeypatch):
     columns, sort_types, labels = web._prepare_observation_extras(obs)
 
     assert columns[0] == "detection.box_confidence"
+    assert "snapshots.annotated_path" not in columns
     assert sort_types["detection.box_confidence"] == "number"
     assert labels["review.label"] == "Review · Label"
     assert obs[0].extra_display["detection.box_confidence"] == "0.876"
     assert obs[0].extra_display["flags"] == '["a", "b"]'
     assert obs[1].extra_sort_values["score"] == "2"
     assert obs[2].extra_display["review.label"] == ""
+
+
+def test_default_extra_column_visibility_hides_sensitivity(monkeypatch):
+    web = _import_web(monkeypatch)
+    columns = [
+        "detection.box_confidence",
+        "sensitivity.bg_motion_threshold",
+        "identification.match_score",
+    ]
+
+    defaults = web._default_extra_column_visibility(columns)
+
+    assert defaults["detection.box_confidence"] is True
+    assert defaults["sensitivity.bg_motion_threshold"] is False
+    assert defaults["identification.match_score"] is True
