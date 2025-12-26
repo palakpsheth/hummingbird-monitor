@@ -39,7 +39,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 ### Web UI pages
 - **Dashboard**: recent observations + top individuals
 - **Observations**: filterable, sortable table (including dynamic extra metadata fields such as
-  detector confidence) + detail page
+  detector confidence) with compact thumbnails and horizontal scrolling for wide metadata + detail page
 - **Individuals**: sortable list + detail page
 - **ROI calibration**: draw a box on the latest snapshot
 - **Background image**: configure a reference background (select from observations, upload, or capture a live snapshot)

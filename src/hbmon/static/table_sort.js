@@ -53,6 +53,7 @@
     const head = table.querySelector(".row.head");
     if (!head) return;
     const headers = Array.from(head.children);
+    const defaultIndex = headers.findIndex((header) => header.dataset.sortDefault);
     headers.forEach((header, index) => {
       const sortType = header.dataset.sortType;
       if (!sortType) return;
@@ -70,6 +71,17 @@
         sortTable(table, index, sortType, direction);
       });
     });
+    if (defaultIndex >= 0) {
+      const header = headers[defaultIndex];
+      const sortType = header.dataset.sortType;
+      if (sortType) {
+        const direction = header.dataset.sortDefault || "asc";
+        table.dataset.sortIndex = String(defaultIndex);
+        table.dataset.sortDirection = direction;
+        setSortIndicators(headers, defaultIndex, direction);
+        sortTable(table, defaultIndex, sortType, direction);
+      }
+    }
   }
 
   function onReady(fn) {
