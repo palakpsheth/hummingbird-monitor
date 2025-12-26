@@ -40,6 +40,8 @@ Each test case folder contains a `metadata.json` file with the following structu
     "expected": {
         "detection": true,
         "species_label": "Anna's Hummingbird",
+        "species_label_final": "Anna's Hummingbird",
+        "species_accepted": true,
         "behavior": "flying",
         "human_verified": true
     },
@@ -114,6 +116,8 @@ Each test case folder contains a `metadata.json` file with the following structu
 ### `expected`
 - `detection`: Whether a bird should be detected in this test case
 - `species_label`: Expected species classification (if human verified)
+- `species_label_final` (optional): Final species label after review
+- `species_accepted` (optional): Whether the reviewed species label was accepted
 - `behavior`: Category of behavior (flying, perched, feeding, etc.)
 - `human_verified`: Whether a human has verified the ground truth
 
