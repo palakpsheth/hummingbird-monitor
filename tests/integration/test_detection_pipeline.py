@@ -80,6 +80,7 @@ def get_yolo_model():
     global _yolo_model
     if _yolo_model is None:
         from ultralytics import YOLO
+
         _yolo_model = YOLO("yolo11n.pt")
     return _yolo_model
 
@@ -285,9 +286,14 @@ class TestMetadataSchema:
         }
 
         for test_dir, metadata in test_cases:
+            # Prefer the newer nested structure used by the coverage branch…
             original_observation = metadata.get("original_observation") or {}
             extra = original_observation.get("extra") or {}
             identification = extra.get("identification")
+
+            # …but fall back to the older top-level key if present.
+            if identification is None:
+                identification = metadata.get("identification")
 
             if identification is None:
                 continue
@@ -296,6 +302,7 @@ class TestMetadataSchema:
                 f"Identification metadata must be a dict in {test_dir.name}, "
                 f"got {type(identification).__name__}"
             )
+
             missing = required_keys - set(identification.keys())
             assert not missing, (
                 f"Identification metadata missing keys {sorted(missing)} in {test_dir.name}"
