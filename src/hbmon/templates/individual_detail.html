@@ -39,63 +39,111 @@
 
   <h2>Observations</h2>
   {% set obs_columns = 6 + (extra_columns | length) %}
-  <div class="card table-scroll">
-    <div class="table observations sortable" data-sortable-table style="--obs-columns: {{ obs_columns }};">
-      <div class="row head">
-        <div>Snapshot</div>
-        <div class="sortable" data-sort-type="date" data-sort-default="desc">Obs time ({{ timezone_label }})</div>
-        <div class="sortable" data-sort-type="text">Species</div>
-        <div class="sortable" data-sort-type="number">Species prob</div>
-        <div class="sortable" data-sort-type="number">Individual</div>
-        <div class="sortable" data-sort-type="number">Match score</div>
+  <div class="table-toolbar">
+    <details class="column-selector" data-column-controls data-table-id="individual-observations">
+      <summary>Visible columns</summary>
+      <div class="column-selector__grid">
+        <label><input type="checkbox" data-column-key="snapshot" checked /> Snapshot</label>
+        <label><input type="checkbox" data-column-key="obs_time" checked /> Obs time ({{ timezone_label }})</label>
+        <label><input type="checkbox" data-column-key="species" checked /> Species</label>
+        <label><input type="checkbox" data-column-key="species_prob" checked /> Species prob</label>
+        <label><input type="checkbox" data-column-key="individual" checked /> Individual</label>
+        <label><input type="checkbox" data-column-key="match_score" checked /> Match score</label>
         {% for key in extra_columns %}
-          <div class="sortable" data-sort-type="{{ extra_column_sort_types[key] }}">
+          <label>
+            <input type="checkbox" data-column-key="{{ key }}" checked />
             {{ extra_column_labels[key] }}
-          </div>
+          </label>
         {% endfor %}
-        <div>Links</div>
+        <label><input type="checkbox" data-column-key="links" checked /> Links</label>
       </div>
-
-      {% for o in observations %}
-        {% set hue = ((o.individual_id or 0) * 47) % 360 %}
-        <div class="row" data-sort-row>
-          <div>
-            <a href="/observations/{{ o.id }}">
-              <img src="/media/{{ o.display_snapshot_path }}" alt="Observation {{ o.id }}" loading="lazy" />
-            </a>
-          </div>
-          <div data-sort-value="{{ o.ts.isoformat() }}">
-            <span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span>
-          </div>
-          <div data-sort-value="{{ o.species_label | lower }}">
-            <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
-          </div>
-          <div data-sort-value="{{ o.species_prob }}">{{ "%.2f"|format(o.species_prob) }}</div>
-          <div data-sort-value="{{ o.individual_id or 0 }}">
-            {% if o.individual_id %}
-              <a href="/individuals/{{ o.individual_id }}">
-                <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
-              </a>
-            {% else %}
-              <span class="muted">—</span>
-            {% endif %}
-          </div>
-          <div data-sort-value="{{ o.match_score }}">{{ "%.3f"|format(o.match_score) }}</div>
+    </details>
+  </div>
+  <div class="card table-scroll">
+    <table
+      class="observations-table sortable"
+      data-sortable-table
+      data-table-id="individual-observations"
+      style="--obs-columns: {{ obs_columns }};"
+    >
+      <thead>
+        <tr>
+          <th class="sortable" data-sort-type="number" data-col-key="snapshot">Snapshot</th>
+          <th
+            class="sortable"
+            data-sort-type="date"
+            data-sort-default="desc"
+            data-col-key="obs_time"
+          >
+            Obs time ({{ timezone_label }})
+          </th>
+          <th class="sortable" data-sort-type="text" data-col-key="species">Species</th>
+          <th class="sortable" data-sort-type="number" data-col-key="species_prob">Species prob</th>
+          <th class="sortable" data-sort-type="number" data-col-key="individual">Individual</th>
+          <th class="sortable" data-sort-type="number" data-col-key="match_score">Match score</th>
           {% for key in extra_columns %}
-            <div data-sort-value="{{ o.extra_sort_values.get(key, '') }}">
-              {{ o.extra_display.get(key, "") or "—" }}
-            </div>
+            <th class="sortable" data-sort-type="{{ extra_column_sort_types[key] }}" data-col-key="{{ key }}">
+              {{ extra_column_labels[key] }}
+            </th>
           {% endfor %}
-          <div>
-            <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a>
-            · <a href="/observations/{{ o.id }}">Details</a>
-          </div>
-        </div>
-      {% endfor %}
-    </div>
+          <th class="sortable" data-sort-type="number" data-col-key="links">Links</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in observations %}
+          {% set hue = ((o.individual_id or 0) * 47) % 360 %}
+          <tr data-sort-row>
+            <td data-sort-value="{{ o.id }}" data-col-key="snapshot">
+              <a href="/observations/{{ o.id }}">
+                <img
+                  src="/media/{{ o.display_snapshot_path }}"
+                  alt="Observation {{ o.id }}"
+                  loading="lazy"
+                  class="obs-thumb"
+                  width="80"
+                  height="60"
+                />
+              </a>
+            </td>
+            <td data-sort-value="{{ o.ts.isoformat() }}" data-col-key="obs_time">
+              <span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span>
+            </td>
+            <td data-sort-value="{{ o.species_label | lower }}" data-col-key="species">
+              <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
+            </td>
+            <td data-sort-value="{{ o.species_prob }}" data-col-key="species_prob">
+              {{ "%.2f"|format(o.species_prob) }}
+            </td>
+            <td data-sort-value="{{ o.individual_id or 0 }}" data-col-key="individual">
+              {% if o.individual_id %}
+                <a href="/individuals/{{ o.individual_id }}">
+                  <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
+                </a>
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+            <td data-sort-value="{{ o.match_score }}" data-col-key="match_score">
+              {{ "%.3f"|format(o.match_score) }}
+            </td>
+            {% for key in extra_columns %}
+              {% set display_value = o.extra_display.get(key, "") or "—" %}
+              <td data-sort-value="{{ o.extra_sort_values.get(key, '') }}" data-col-key="{{ key }}">
+                <span title="{{ display_value }}">{{ display_value }}</span>
+              </td>
+            {% endfor %}
+            <td data-sort-value="{{ o.id }}" data-col-key="links">
+              <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a>
+              · <a href="/observations/{{ o.id }}">Details</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 {% endblock %}
 
 {% block scripts %}
   <script src="/static/table_sort.js"></script>
+  <script src="/static/column_selector.js"></script>
 {% endblock %}

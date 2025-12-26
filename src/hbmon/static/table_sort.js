@@ -38,7 +38,10 @@
   }
 
   function sortTable(table, columnIndex, sortType, direction) {
-    const rows = Array.from(table.querySelectorAll(".row")).filter((row) => !row.classList.contains("head"));
+    const tbody = table.querySelector("tbody");
+    const rows = tbody
+      ? Array.from(tbody.querySelectorAll("tr[data-sort-row]"))
+      : Array.from(table.querySelectorAll(".row")).filter((row) => !row.classList.contains("head"));
     rows.sort((a, b) => {
       const aCell = a.children[columnIndex];
       const bCell = b.children[columnIndex];
@@ -46,13 +49,19 @@
       const bValue = parseValue(bCell?.dataset?.sortValue ?? bCell?.textContent ?? "", sortType);
       return compareValues(aValue, bValue, direction);
     });
-    rows.forEach((row) => table.appendChild(row));
+    const container = tbody || table;
+    rows.forEach((row) => container.appendChild(row));
   }
 
   function setupTable(table) {
-    const head = table.querySelector(".row.head");
-    if (!head) return;
-    const headers = Array.from(head.children);
+    const headRow = table.querySelector("thead tr");
+    const gridHead = table.querySelector(".row.head");
+    const headers = headRow
+      ? Array.from(headRow.children)
+      : gridHead
+        ? Array.from(gridHead.children)
+        : [];
+    if (!headers.length) return;
     const defaultIndex = headers.findIndex((header) => header.dataset.sortDefault);
     headers.forEach((header, index) => {
       const sortType = header.dataset.sortType;
