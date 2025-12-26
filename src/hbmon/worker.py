@@ -366,7 +366,7 @@ def _draw_bbox(
 
 def _format_bbox_label(det: Det) -> str:
     """Format a label that includes detection confidence and bounding-box area."""
-    return f"{det.conf:.2f} | {det.area}px²"
+    return f"{det.conf:.2f} | {det.area}px^2"
 
 
 def _bbox_area_ratio(det: Det, frame_shape: tuple[int, int]) -> float:
