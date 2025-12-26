@@ -42,7 +42,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
   detector confidence) + detail page
 - **Individuals**: sortable list + detail page
 - **ROI calibration**: draw a box on the latest snapshot
-- **Background image**: configure a reference background (select from observations or upload)
+- **Background image**: configure a reference background (select from observations, upload, or capture a live snapshot)
 - **API Docs**: interactive Swagger UI for API exploration (`/docs`)
 
 ---
@@ -263,7 +263,7 @@ When a background image is configured via the UI (`/background`), the worker can
   - Set to "1" to enable debug logging for motion mask errors
 
 **How it works:**
-1. Configure a background image showing the feeder without any birds
+1. Configure a background image showing the feeder without any birds (upload, pick an observation, or capture a live snapshot)
 2. The worker computes a motion mask by comparing each frame to the background
 3. YOLO detections are filtered: only those overlapping significantly with motion areas are kept
 4. This reduces false positives from static objects or lighting changes

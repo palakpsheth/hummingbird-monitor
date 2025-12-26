@@ -25,6 +25,39 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     return TestClient(app)
 
 
+def _install_live_cv2_stub(monkeypatch) -> None:
+    class DummyCap:
+        def __init__(self, url: str):
+            self.url = url
+
+        def isOpened(self) -> bool:
+            return True
+
+        def read(self):
+            return True, object()
+
+        def release(self) -> None:
+            return None
+
+    class DummyJpeg:
+        def __init__(self, payload: bytes):
+            self._payload = payload
+
+        def tobytes(self) -> bytes:
+            return self._payload
+
+    def fake_imencode(ext: str, frame, params):
+        return True, DummyJpeg(b"jpeg-bytes")
+
+    stub_cv2 = SimpleNamespace(
+        VideoCapture=DummyCap,
+        imencode=fake_imencode,
+        IMWRITE_JPEG_QUALITY=1,
+    )
+
+    monkeypatch.setattr("hbmon.web.importlib.util.find_spec", lambda name: object())
+    monkeypatch.setitem(sys.modules, "cv2", stub_cv2)
+
 def test_label_observation_and_clear(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     with session_scope() as db:
@@ -535,42 +568,33 @@ def test_live_frame_jpg_success(tmp_path, monkeypatch):
     """Test the live frame endpoint returns a JPEG when the RTSP stream is mocked."""
     client = _setup_app(tmp_path, monkeypatch)
 
-    class DummyCap:
-        def __init__(self, url: str):
-            self.url = url
-
-        def isOpened(self) -> bool:
-            return True
-
-        def read(self):
-            return True, object()
-
-        def release(self) -> None:
-            return None
-
-    class DummyJpeg:
-        def __init__(self, payload: bytes):
-            self._payload = payload
-
-        def tobytes(self) -> bytes:
-            return self._payload
-
-    def fake_imencode(ext: str, frame, params):
-        return True, DummyJpeg(b"jpeg-bytes")
-
-    stub_cv2 = SimpleNamespace(
-        VideoCapture=DummyCap,
-        imencode=fake_imencode,
-        IMWRITE_JPEG_QUALITY=1,
-    )
-
     monkeypatch.setenv("HBMON_RTSP_URL", "rtsp://example/live")
-    monkeypatch.setattr("hbmon.web.importlib.util.find_spec", lambda name: object())
-    monkeypatch.setitem(sys.modules, "cv2", stub_cv2)
+    _install_live_cv2_stub(monkeypatch)
 
     r = client.get("/api/live_frame.jpg")
     assert r.status_code == 200
     assert "image/jpeg" in r.headers.get("content-type", "")
+
+
+def test_background_live_requires_rtsp(tmp_path, monkeypatch):
+    """Test background live capture errors when RTSP is not configured."""
+    client = _setup_app(tmp_path, monkeypatch)
+
+    r = client.post("/api/background/from_live", follow_redirects=False)
+    assert r.status_code == 503
+
+
+def test_background_live_snapshot_success(tmp_path, monkeypatch):
+    """Test capturing a live snapshot saves the background image."""
+    client = _setup_app(tmp_path, monkeypatch)
+
+    monkeypatch.setenv("HBMON_RTSP_URL", "rtsp://example/live")
+    _install_live_cv2_stub(monkeypatch)
+
+    r = client.post("/api/background/from_live", follow_redirects=False)
+    assert r.status_code == 303
+    assert background_image_path().exists()
+    assert background_image_path().read_bytes() == b"jpeg-bytes"
 
 
 def test_background_endpoints(tmp_path, monkeypatch):
