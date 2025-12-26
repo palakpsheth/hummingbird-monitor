@@ -412,6 +412,9 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
         - min_box_area: int in [1, 200000]
         - cooldown_seconds: float in [0.0, 120.0]
         - min_species_prob, match_threshold, ema_alpha: float in [0.0, 1.0]
+        - bg_motion_threshold: int in [0, 255]
+        - bg_motion_blur: odd int in [1, 99]
+        - bg_min_overlap: float in [0.0, 1.0]
 
     Returns
     -------
@@ -432,6 +435,25 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
             return
         if not (lo <= val <= hi):
             errors.append(f"{label} must be between {lo} and {hi}.")
+            return
+        parsed[key] = val
+
+    def parse_odd_int(key: str, label: str, lo: int, hi: int) -> None:
+        text = str(raw.get(key, "")).strip()
+        try:
+            val_float = float(text)
+        except ValueError:
+            errors.append(f"{label} must be a whole number.")
+            return
+        if not val_float.is_integer():
+            errors.append(f"{label} must be a whole number.")
+            return
+        val = int(val_float)
+        if not (lo <= val <= hi):
+            errors.append(f"{label} must be between {lo} and {hi}.")
+            return
+        if val % 2 == 0:
+            errors.append(f"{label} must be an odd number.")
             return
         parsed[key] = val
 
@@ -458,6 +480,12 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
     parse_float("min_species_prob", "Minimum species probability", 0.0, 1.0)
     parse_float("match_threshold", "Match threshold", 0.0, 1.0)
     parse_float("ema_alpha", "EMA alpha", 0.0, 1.0)
+    parse_int("bg_motion_threshold", "Background motion threshold", 0, 255)
+    parse_odd_int("bg_motion_blur", "Background motion blur", 1, 99)
+    parse_float("bg_min_overlap", "Background minimum overlap", 0.0, 1.0)
+
+    bg_enabled_raw = str(raw.get("bg_subtraction_enabled", "")).strip().lower()
+    parsed["bg_subtraction_enabled"] = bg_enabled_raw in {"1", "true", "yes", "on"}
 
     tz_text = str(raw.get("timezone", "")).strip()
     if not tz_text:
@@ -585,6 +613,10 @@ def make_app() -> Any:
             "match_threshold": f"{float(settings.match_threshold):.2f}",
             "ema_alpha": f"{float(settings.ema_alpha):.2f}",
             "timezone": str(getattr(settings, "timezone", "local")),
+            "bg_subtraction_enabled": "1" if getattr(settings, "bg_subtraction_enabled", True) else "0",
+            "bg_motion_threshold": str(int(getattr(settings, "bg_motion_threshold", 30))),
+            "bg_motion_blur": str(int(getattr(settings, "bg_motion_blur", 5))),
+            "bg_min_overlap": f"{float(getattr(settings, 'bg_min_overlap', 0.15)):.2f}",
         }
         if raw:
             for k, v in raw.items():
@@ -1168,9 +1200,13 @@ def make_app() -> Any:
             "min_species_prob",
             "match_threshold",
             "ema_alpha",
+            "bg_motion_threshold",
+            "bg_motion_blur",
+            "bg_min_overlap",
         )
         raw = {name: str(form.get(name, "") or "").strip() for name in field_names}
         raw["timezone"] = str(form.get("timezone", "") or "").strip()
+        raw["bg_subtraction_enabled"] = "1" if form.get("bg_subtraction_enabled") else "0"
         parsed, errors = _validate_detection_inputs(raw)
 
         if errors:
@@ -1195,6 +1231,10 @@ def make_app() -> Any:
         s.match_threshold = parsed["match_threshold"]
         s.ema_alpha = parsed["ema_alpha"]
         s.timezone = parsed["timezone"]
+        s.bg_subtraction_enabled = parsed["bg_subtraction_enabled"]
+        s.bg_motion_threshold = parsed["bg_motion_threshold"]
+        s.bg_motion_blur = parsed["bg_motion_blur"]
+        s.bg_min_overlap = parsed["bg_min_overlap"]
         save_settings(s)
 
         return RedirectResponse(url="/config?saved=1", status_code=303)

@@ -43,6 +43,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
   wide metadata + detail page
 - **Individuals**: sortable list + detail page
 - **ROI calibration**: draw a box on the latest snapshot
+- **Config**: tune detection thresholds, re-ID thresholds, and background subtraction settings
 - **Background image**: configure a reference background (select from observations, upload, or capture a live snapshot)
 - **API Docs**: interactive Swagger UI for API exploration (`/docs`)
 
@@ -246,6 +247,8 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 
 ### Background subtraction (motion filtering)
 When a background image is configured via the UI (`/background`), the worker can use it to filter out false positives by detecting motion.
+These tuning values can be adjusted on the **Config** page (`/config`) and are persisted to `config.json`. Environment variables
+continue to override them when set.
 
 - `HBMON_BG_SUBTRACTION` (default "1")
   - Set to "0" to disable background subtraction even if a background image is configured

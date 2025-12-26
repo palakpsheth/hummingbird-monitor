@@ -23,6 +23,22 @@ def _import_web(monkeypatch):
     return importlib.import_module('hbmon.web')
 
 
+def _base_raw() -> dict[str, str]:
+    return {
+        "detect_conf": "0.35",
+        "detect_iou": "0.45",
+        "min_box_area": "600",
+        "cooldown_seconds": "2.5",
+        "min_species_prob": "0.35",
+        "match_threshold": "0.25",
+        "ema_alpha": "0.10",
+        "bg_subtraction_enabled": "1",
+        "bg_motion_threshold": "30",
+        "bg_motion_blur": "5",
+        "bg_min_overlap": "0.15",
+    }
+
+
 class TestValidateDetectionInputs:
     """Tests for the _validate_detection_inputs function."""
 
@@ -30,16 +46,8 @@ class TestValidateDetectionInputs:
         """Test validation with all valid inputs."""
         web = _import_web(monkeypatch)
 
-        raw = {
-            "detect_conf": "0.35",
-            "detect_iou": "0.45",
-            "min_box_area": "600",
-            "cooldown_seconds": "2.5",
-            "min_species_prob": "0.35",
-            "match_threshold": "0.25",
-            "ema_alpha": "0.10",
-            "timezone": "America/Los_Angeles",
-        }
+        raw = _base_raw()
+        raw["timezone"] = "America/Los_Angeles"
 
         parsed, errors = web._validate_detection_inputs(raw)
 
@@ -57,15 +65,8 @@ class TestValidateDetectionInputs:
         """Test validation with invalid detect_conf."""
         web = _import_web(monkeypatch)
 
-        raw = {
-            "detect_conf": "not_a_number",
-            "detect_iou": "0.45",
-            "min_box_area": "600",
-            "cooldown_seconds": "2.5",
-            "min_species_prob": "0.35",
-            "match_threshold": "0.25",
-            "ema_alpha": "0.10",
-        }
+        raw = _base_raw()
+        raw["detect_conf"] = "not_a_number"
 
         parsed, errors = web._validate_detection_inputs(raw)
 
@@ -75,15 +76,8 @@ class TestValidateDetectionInputs:
         """Test validation with detect_conf out of range."""
         web = _import_web(monkeypatch)
 
-        raw = {
-            "detect_conf": "0.01",  # Below 0.05
-            "detect_iou": "0.45",
-            "min_box_area": "600",
-            "cooldown_seconds": "2.5",
-            "min_species_prob": "0.35",
-            "match_threshold": "0.25",
-            "ema_alpha": "0.10",
-        }
+        raw = _base_raw()
+        raw["detect_conf"] = "0.01"  # Below 0.05
 
         parsed, errors = web._validate_detection_inputs(raw)
 
@@ -93,15 +87,8 @@ class TestValidateDetectionInputs:
         """Test validation with non-integer min_box_area."""
         web = _import_web(monkeypatch)
 
-        raw = {
-            "detect_conf": "0.35",
-            "detect_iou": "0.45",
-            "min_box_area": "600.5",  # Not a whole number
-            "cooldown_seconds": "2.5",
-            "min_species_prob": "0.35",
-            "match_threshold": "0.25",
-            "ema_alpha": "0.10",
-        }
+        raw = _base_raw()
+        raw["min_box_area"] = "600.5"  # Not a whole number
 
         parsed, errors = web._validate_detection_inputs(raw)
 
@@ -111,15 +98,8 @@ class TestValidateDetectionInputs:
         """Test validation with min_box_area out of range."""
         web = _import_web(monkeypatch)
 
-        raw = {
-            "detect_conf": "0.35",
-            "detect_iou": "0.45",
-            "min_box_area": "999999",  # Above 200000
-            "cooldown_seconds": "2.5",
-            "min_species_prob": "0.35",
-            "match_threshold": "0.25",
-            "ema_alpha": "0.10",
-        }
+        raw = _base_raw()
+        raw["min_box_area"] = "999999"  # Above 200000
 
         parsed, errors = web._validate_detection_inputs(raw)
 
@@ -129,16 +109,8 @@ class TestValidateDetectionInputs:
         """Test validation with invalid timezone."""
         web = _import_web(monkeypatch)
 
-        raw = {
-            "detect_conf": "0.35",
-            "detect_iou": "0.45",
-            "min_box_area": "600",
-            "cooldown_seconds": "2.5",
-            "min_species_prob": "0.35",
-            "match_threshold": "0.25",
-            "ema_alpha": "0.10",
-            "timezone": "Invalid/Timezone",
-        }
+        raw = _base_raw()
+        raw["timezone"] = "Invalid/Timezone"
 
         parsed, errors = web._validate_detection_inputs(raw)
 
@@ -148,16 +120,8 @@ class TestValidateDetectionInputs:
         """Test validation with 'local' timezone."""
         web = _import_web(monkeypatch)
 
-        raw = {
-            "detect_conf": "0.35",
-            "detect_iou": "0.45",
-            "min_box_area": "600",
-            "cooldown_seconds": "2.5",
-            "min_species_prob": "0.35",
-            "match_threshold": "0.25",
-            "ema_alpha": "0.10",
-            "timezone": "local",
-        }
+        raw = _base_raw()
+        raw["timezone"] = "local"
 
         parsed, errors = web._validate_detection_inputs(raw)
 
@@ -168,16 +132,8 @@ class TestValidateDetectionInputs:
         """Test validation with empty timezone defaults to local."""
         web = _import_web(monkeypatch)
 
-        raw = {
-            "detect_conf": "0.35",
-            "detect_iou": "0.45",
-            "min_box_area": "600",
-            "cooldown_seconds": "2.5",
-            "min_species_prob": "0.35",
-            "match_threshold": "0.25",
-            "ema_alpha": "0.10",
-            "timezone": "",
-        }
+        raw = _base_raw()
+        raw["timezone"] = ""
 
         parsed, errors = web._validate_detection_inputs(raw)
 
@@ -188,15 +144,8 @@ class TestValidateDetectionInputs:
         """Test validation with zero cooldown seconds."""
         web = _import_web(monkeypatch)
 
-        raw = {
-            "detect_conf": "0.35",
-            "detect_iou": "0.45",
-            "min_box_area": "600",
-            "cooldown_seconds": "0.0",
-            "min_species_prob": "0.35",
-            "match_threshold": "0.25",
-            "ema_alpha": "0.10",
-        }
+        raw = _base_raw()
+        raw["cooldown_seconds"] = "0.0"
 
         parsed, errors = web._validate_detection_inputs(raw)
 
