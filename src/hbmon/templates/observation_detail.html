@@ -10,33 +10,81 @@
           <button type="button" data-zoom-in aria-label="Zoom in">+</button>
           <button type="button" data-zoom-reset aria-label="Reset zoom">Reset</button>
           {% if annotated_snapshot_path %}
-          <button type="button" id="toggle-annotation" aria-label="Toggle annotation">Show Raw</button>
+          <button type="button" data-snapshot-view="annotated" aria-label="Show annotated snapshot">
+            Annotated
+          </button>
+          <button type="button" data-snapshot-view="raw" aria-label="Show raw snapshot">Raw</button>
+          {% if clip_snapshot_path %}
+          <button
+            type="button"
+            data-snapshot-view="clip"
+            aria-label="Show CLIP snapshot"
+            title="CLIP crop used for species classification"
+          >CLIP</button>
+          {% endif %}
+          {% elif clip_snapshot_path %}
+          <button type="button" data-snapshot-view="raw" aria-label="Show raw snapshot">Raw</button>
+          <button
+            type="button"
+            data-snapshot-view="clip"
+            aria-label="Show CLIP snapshot"
+            title="CLIP crop used for species classification"
+          >CLIP</button>
           {% endif %}
         </div>
         {% if annotated_snapshot_path %}
-        <img class="bigimg" data-zoom-target id="snapshot-img" src="/media/{{ annotated_snapshot_path }}" alt="snapshot (annotated)" data-annotated="/media/{{ annotated_snapshot_path }}" data-raw="/media/{{ o.snapshot_path }}" />
+        <img
+          class="bigimg"
+          data-zoom-target
+          id="snapshot-img"
+          src="/media/{{ annotated_snapshot_path }}"
+          alt="snapshot (annotated)"
+          data-default-view="annotated"
+          data-annotated="/media/{{ annotated_snapshot_path }}"
+          data-raw="/media/{{ o.snapshot_path }}"
+          {% if clip_snapshot_path %}data-clip="/media/{{ clip_snapshot_path }}"{% endif %}
+        />
         {% else %}
-        <img class="bigimg" data-zoom-target src="/media/{{ o.snapshot_path }}" alt="snapshot" />
+        <img
+          class="bigimg"
+          data-zoom-target
+          id="snapshot-img"
+          src="/media/{{ o.snapshot_path }}"
+          alt="snapshot (raw)"
+          data-default-view="raw"
+          data-raw="/media/{{ o.snapshot_path }}"
+          {% if clip_snapshot_path %}data-clip="/media/{{ clip_snapshot_path }}"{% endif %}
+        />
         {% endif %}
       </div>
-      {% if annotated_snapshot_path %}
+      {% if annotated_snapshot_path or clip_snapshot_path %}
       <script>
         (function() {
           var img = document.getElementById('snapshot-img');
-          var btn = document.getElementById('toggle-annotation');
-          var showingAnnotated = true;
-          btn.addEventListener('click', function() {
-            if (showingAnnotated) {
-              img.src = img.dataset.raw;
-              img.alt = 'snapshot (raw)';
-              btn.textContent = 'Show Annotated';
-            } else {
-              img.src = img.dataset.annotated;
-              img.alt = 'snapshot (annotated)';
-              btn.textContent = 'Show Raw';
+          if (!img) {
+            return;
+          }
+          var buttons = document.querySelectorAll('[data-snapshot-view]');
+          if (!buttons.length) {
+            return;
+          }
+          var setView = function(view) {
+            var path = img.dataset[view];
+            if (!path) {
+              return;
             }
-            showingAnnotated = !showingAnnotated;
+            img.src = path;
+            img.alt = 'snapshot (' + view + ')';
+            buttons.forEach(function(button) {
+              button.classList.toggle('active', button.dataset.snapshotView === view);
+            });
+          };
+          buttons.forEach(function(button) {
+            button.addEventListener('click', function() {
+              setView(button.dataset.snapshotView);
+            });
           });
+          setView(img.dataset.defaultView || (img.dataset.annotated ? 'annotated' : 'raw'));
         })();
       </script>
       {% endif %}
@@ -180,6 +228,9 @@
         <div class="muted">snapshot (raw): /media/{{ o.snapshot_path }}</div>
         {% if annotated_snapshot_path %}
         <div class="muted">snapshot (annotated): /media/{{ annotated_snapshot_path }}</div>
+        {% endif %}
+        {% if clip_snapshot_path %}
+        <div class="muted">snapshot (clip): /media/{{ clip_snapshot_path }}</div>
         {% endif %}
         <div class="muted">video: /media/{{ o.video_path }}{% if video_info %} ({{ "exists" if video_info.exists else "missing" }}){% endif %}</div>
         <div class="muted">bbox: {{ o.bbox_str or "(none)" }}</div>
