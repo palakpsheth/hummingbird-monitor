@@ -52,7 +52,14 @@
         <div class="row" data-sort-row>
           <div>
             <a href="/observations/{{ o.id }}">
-              <img src="/media/{{ o.display_snapshot_path }}" alt="Observation {{ o.id }}" loading="lazy" />
+              <img
+                src="/media/{{ o.display_snapshot_path }}"
+                alt="Observation {{ o.id }}"
+                loading="lazy"
+                class="obs-thumb"
+                width="80"
+                height="60"
+              />
             </a>
           </div>
           <div data-sort-value="{{ o.ts.isoformat() }}">
