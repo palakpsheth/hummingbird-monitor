@@ -310,6 +310,10 @@ def test_observations_page(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert "Observation" in r.text
     assert "obs-thumb" in r.text
+    assert "observations-table" in r.text
+    assert "data-column-controls" in r.text
+    assert 'data-col-key="snapshot"' in r.text
+    assert "column_selector.js" in r.text
     assert 'data-sort-default="desc"' in r.text
 
 
@@ -413,6 +417,10 @@ def test_individual_detail_page(tmp_path, monkeypatch):
     r = client.get(f"/individuals/{ind_id}")
     assert r.status_code == 200
     assert "Ruby" in r.text
+    assert "observations-table" in r.text
+    assert "data-column-controls" in r.text
+    assert 'data-col-key="snapshot"' in r.text
+    assert "column_selector.js" in r.text
 
 
 def test_individual_detail_not_found(tmp_path, monkeypatch):
