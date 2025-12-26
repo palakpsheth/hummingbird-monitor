@@ -80,6 +80,7 @@ def get_yolo_model():
     global _yolo_model
     if _yolo_model is None:
         from ultralytics import YOLO
+
         _yolo_model = YOLO("yolo11n.pt")
     return _yolo_model
 
@@ -264,29 +265,45 @@ class TestSensitivityParameters:
 
 
 class TestMetadataSchema:
-    """Schema validation tests for integration metadata."""
+    """Integration tests for expected metadata schemas in test cases."""
 
     def test_identification_metadata_schema(self, integration_test_data_dir: Path):
-        """Validate identification metadata structure when present."""
+        """
+        Validate identification metadata shape when present in metadata.json.
+        """
         test_cases = load_test_cases(integration_test_data_dir)
 
         if not test_cases:
             pytest.skip("No test data with snapshots available.")
 
-        required_keys = {"individual_id", "match_score"}
+        required_keys = {
+            "individual_id",
+            "match_score",
+            "species_label",
+            "species_prob",
+            "species_label_final",
+            "species_accepted",
+        }
 
         for test_dir, metadata in test_cases:
-            identification = metadata.get("identification")
+            # Prefer the newer nested structure used by the coverage branch…
+            original_observation = metadata.get("original_observation") or {}
+            extra = original_observation.get("extra") or {}
+            identification = extra.get("identification")
+
+            # …but fall back to the older top-level key if present.
+            if identification is None:
+                identification = metadata.get("identification")
+
             if identification is None:
                 continue
 
             assert isinstance(identification, dict), (
-                "Identification metadata must be a dict for "
-                f"{test_dir.name}; got {type(identification).__name__}"
+                f"Identification metadata must be a dict in {test_dir.name}, "
+                f"got {type(identification).__name__}"
             )
 
-            missing_keys = required_keys - identification.keys()
-            assert not missing_keys, (
-                "Identification metadata missing keys for "
-                f"{test_dir.name}: {sorted(missing_keys)}"
+            missing = required_keys - set(identification.keys())
+            assert not missing, (
+                f"Identification metadata missing keys {sorted(missing)} in {test_dir.name}"
             )
