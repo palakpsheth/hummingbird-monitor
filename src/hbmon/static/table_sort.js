@@ -37,6 +37,11 @@
     });
   }
 
+  function findHeaderIndex(headers, columnKey) {
+    if (!columnKey) return -1;
+    return headers.findIndex((header) => header.dataset.colKey === columnKey);
+  }
+
   function sortTable(table, columnIndex, sortType, direction) {
     const tbody = table.querySelector("tbody");
     const rows = tbody
@@ -51,6 +56,94 @@
     });
     const container = tbody || table;
     rows.forEach((row) => container.appendChild(row));
+  }
+
+  function applySort(table, headers, columnIndex, direction) {
+    const header = headers[columnIndex];
+    if (!header) return;
+    const sortType = header.dataset.sortType;
+    if (!sortType) return;
+    table.dataset.sortIndex = String(columnIndex);
+    table.dataset.sortDirection = direction;
+    setSortIndicators(headers, columnIndex, direction);
+    sortTable(table, columnIndex, sortType, direction);
+    const columnKey = header.dataset.colKey;
+    if (columnKey) {
+      table.dispatchEvent(
+        new CustomEvent("table:sorted", { detail: { columnKey, direction } })
+      );
+    }
+  }
+
+  function setupSortControls(table, headers) {
+    const tableId = table.dataset.tableId;
+    if (!tableId) return;
+    const controls = document.querySelectorAll(`[data-sort-controls][data-table-id=\"${tableId}\"]`);
+    if (!controls.length) return;
+
+    const sortIndex = Number.parseInt(table.dataset.sortIndex || "-1", 10);
+    const activeIndex = Number.isNaN(sortIndex) ? -1 : sortIndex;
+    const defaultIndex = headers.findIndex((header) => header.dataset.sortDefault);
+    const initialIndex = activeIndex >= 0 ? activeIndex : defaultIndex >= 0 ? defaultIndex : -1;
+    const initialDirection = table.dataset.sortDirection || "asc";
+
+    const updateControls = (columnKey, direction) => {
+      controls.forEach((control) => {
+        const columnSelect = control.querySelector("[data-sort-column]");
+        const directionSelect = control.querySelector("[data-sort-direction]");
+        if (columnSelect && columnKey) {
+          columnSelect.value = columnKey;
+        }
+        if (directionSelect && direction) {
+          directionSelect.value = direction;
+        }
+      });
+    };
+
+    table.addEventListener("table:sorted", (event) => {
+      const detail = event.detail || {};
+      updateControls(detail.columnKey, detail.direction);
+    });
+
+    controls.forEach((control) => {
+      const columnSelect = control.querySelector("[data-sort-column]");
+      const directionSelect = control.querySelector("[data-sort-direction]");
+      const applyButton = control.querySelector("[data-sort-apply]");
+
+      if (columnSelect && initialIndex >= 0) {
+        const key = headers[initialIndex]?.dataset?.colKey;
+        if (key) {
+          columnSelect.value = key;
+        }
+      }
+
+      if (directionSelect) {
+        directionSelect.value = initialDirection;
+      }
+
+      const apply = () => {
+        const columnKey = columnSelect?.value;
+        const columnIndex = findHeaderIndex(headers, columnKey);
+        if (columnIndex < 0) return;
+        const direction = directionSelect?.value || "asc";
+        applySort(table, headers, columnIndex, direction);
+      };
+
+      if (columnSelect) {
+        columnSelect.addEventListener("change", apply);
+      }
+      if (directionSelect) {
+        directionSelect.addEventListener("change", apply);
+      }
+      if (applyButton) {
+        applyButton.addEventListener("click", apply);
+      }
+    });
+
+    if (initialIndex >= 0) {
+      const key = headers[initialIndex]?.dataset?.colKey;
+      updateControls(key, initialDirection);
+    }
   }
 
   function setupTable(table) {
@@ -74,10 +167,7 @@
         const direction = isSameColumn
           ? (table.dataset.sortDirection === "asc" ? "desc" : "asc")
           : defaultDirection;
-        table.dataset.sortIndex = String(index);
-        table.dataset.sortDirection = direction;
-        setSortIndicators(headers, index, direction);
-        sortTable(table, index, sortType, direction);
+        applySort(table, headers, index, direction);
       });
     });
     if (defaultIndex >= 0) {
@@ -85,12 +175,10 @@
       const sortType = header.dataset.sortType;
       if (sortType) {
         const direction = header.dataset.sortDefault || "asc";
-        table.dataset.sortIndex = String(defaultIndex);
-        table.dataset.sortDirection = direction;
-        setSortIndicators(headers, defaultIndex, direction);
-        sortTable(table, defaultIndex, sortType, direction);
+        applySort(table, headers, defaultIndex, direction);
       }
     }
+    setupSortControls(table, headers);
   }
 
   function onReady(fn) {

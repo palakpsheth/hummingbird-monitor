@@ -20,3 +20,5 @@ def test_observation_detail_has_zoom_controls():
     assert "data-zoom-in" in tpl
     assert "data-zoom-out" in tpl
     assert "data-zoom-reset" in tpl
+    assert "data-snapshot-view" in tpl
+    assert "data-default-view" in tpl

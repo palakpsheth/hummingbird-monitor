@@ -78,7 +78,7 @@ This ensures the database is initialized by hbmon-web before the worker starts.
 
 ### Persistent storage
 - `/data` (volume): SQLite DB + `config.json` + exports + background image
-- `/media` (volume): snapshots + clips
+- `/media` (volume): snapshots (raw, annotated, CLIP crop) + clips
 
 ---
 
