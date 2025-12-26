@@ -11,6 +11,7 @@ Routes:
 - /individuals/{id}/split_review  Suggest A/B split & review UI
 - /individuals/{id}/split_apply   Apply split assignments
 - /calibrate              ROI calibration page
+- /background             Background image configuration page
 
 API:
 - /api/health
@@ -1264,6 +1265,9 @@ def make_app() -> Any:
                 settings=s,
                 background_configured=bool(s.background_image),
                 background_exists=bg_exists,
+                live_frame_url="/api/live_frame.jpg",
+                fallback_frame_url="/api/frame.jpg",
+                rtsp_configured=bool(s.rtsp_url),
                 observations=recent_obs,
                 obs_page=current_page,
                 obs_page_size=clamped_page_size,
@@ -1335,6 +1339,39 @@ def make_app() -> Any:
             "exists": exists,
         }
 
+    def _load_cv2() -> Any:
+        if importlib.util.find_spec("cv2") is None:
+            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
+
+        try:
+            import cv2  # type: ignore
+        except Exception:
+            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
+        return cv2
+
+    def _capture_live_frame(rtsp_url: str) -> tuple[Any, Any]:
+        cv2 = _load_cv2()
+
+        cap = cv2.VideoCapture(rtsp_url)
+        if not cap.isOpened():
+            raise HTTPException(status_code=503, detail="Unable to open RTSP stream")
+
+        try:
+            ok, frame = cap.read()
+        finally:
+            cap.release()
+
+        if not ok or frame is None:
+            raise HTTPException(status_code=503, detail="Failed to read RTSP frame")
+
+        return frame, cv2
+
+    def _encode_jpeg(frame: Any, cv2: Any, quality: int = 80) -> bytes:
+        ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if not ok:
+            raise HTTPException(status_code=500, detail="Failed to encode frame")
+        return jpeg.tobytes()
+
     @app.get("/api/background.jpg")
     def get_background_jpg() -> Any:
         """
@@ -1391,6 +1428,29 @@ def make_app() -> Any:
 
         # Update settings
         s = load_settings()
+        s.background_image = "background/background.jpg"
+        save_settings(s)
+
+        return RedirectResponse(url="/background", status_code=303)
+
+    @app.post("/api/background/from_live")
+    def set_background_from_live() -> RedirectResponse:
+        """
+        Capture a live RTSP frame and save it as the background image.
+        """
+        s = load_settings()
+        if not s.rtsp_url:
+            raise HTTPException(status_code=503, detail="RTSP URL not configured")
+
+        frame, cv2 = _capture_live_frame(s.rtsp_url)
+        jpeg_bytes = _encode_jpeg(frame, cv2, quality=85)
+
+        # Ensure background directory exists
+        bg_dir = background_dir()
+        bg_dir.mkdir(parents=True, exist_ok=True)
+        dst_path = background_image_path()
+        dst_path.write_bytes(jpeg_bytes)
+
         s.background_image = "background/background.jpg"
         save_settings(s)
 
@@ -1512,31 +1572,10 @@ def make_app() -> Any:
         if not s.rtsp_url:
             raise HTTPException(status_code=503, detail="RTSP URL not configured")
 
-        if importlib.util.find_spec("cv2") is None:
-            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
+        frame, cv2 = _capture_live_frame(s.rtsp_url)
+        jpeg_bytes = _encode_jpeg(frame, cv2, quality=80)
 
-        try:
-            import cv2  # type: ignore
-        except Exception:
-            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
-
-        cap = cv2.VideoCapture(s.rtsp_url)
-        if not cap.isOpened():
-            raise HTTPException(status_code=503, detail="Unable to open RTSP stream")
-
-        try:
-            ok, frame = cap.read()
-        finally:
-            cap.release()
-
-        if not ok or frame is None:
-            raise HTTPException(status_code=503, detail="Failed to read RTSP frame")
-
-        ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        if not ok:
-            raise HTTPException(status_code=500, detail="Failed to encode frame")
-
-        return StreamingResponse(io.BytesIO(jpeg.tobytes()), media_type="image/jpeg")
+        return StreamingResponse(io.BytesIO(jpeg_bytes), media_type="image/jpeg")
 
     @app.get("/api/stream.mjpeg")
     def stream_mjpeg() -> Any:

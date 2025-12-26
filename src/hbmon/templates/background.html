@@ -24,9 +24,49 @@
       </div>
     {% else %}
       <div class="muted" style="padding: 24px; background: var(--bg-muted); border-radius: 8px; text-align: center;">
-        No background image configured. Select an observation snapshot below or upload an image.
+        No background image configured. Capture a live snapshot, select an observation, or upload an image.
       </div>
     {% endif %}
+  </div>
+
+  <div class="card" style="margin-top: 20px;">
+    <h2 style="margin-top: 0;">Capture Live Snapshot</h2>
+    <p class="muted">
+      Preview the live RTSP stream and capture a fresh background image when the feeder is empty.
+      Use Refresh to grab a new frame; the capture button will save a new snapshot from the camera.
+    </p>
+    <div class="inline" style="gap: 12px; align-items: flex-start; flex-wrap: wrap;">
+      <div style="flex: 1; min-width: 300px;">
+        <img
+          id="live-background-frame"
+          src="{{ live_frame_url }}?ts={{ ts }}"
+          data-live-src="{{ live_frame_url }}"
+          data-fallback-src="{{ fallback_frame_url }}"
+          data-rtsp-configured="{{ '1' if rtsp_configured else '0' }}"
+          alt="Live camera frame"
+          style="max-width: 100%; height: auto; border-radius: 8px;"
+          draggable="false"
+        />
+      </div>
+      <div style="flex: 0 0 auto;">
+        <div class="inline" style="gap: 8px; flex-wrap: wrap;">
+          <button type="button" id="background-refresh">Refresh</button>
+          <form method="post" action="/api/background/from_live" style="display: inline;">
+            <button
+              type="submit"
+              id="background-capture"
+              {% if not rtsp_configured %}disabled{% endif %}
+            >
+              Use Live Snapshot
+            </button>
+          </form>
+        </div>
+        <p class="muted" style="margin-top: 8px;">
+          Captures a new frame from the camera and saves it as the background image.
+        </p>
+        <p class="muted" id="background-live-status" style="margin-top: 6px;"></p>
+      </div>
+    </div>
   </div>
 
   <div class="card" style="margin-top: 20px;">
@@ -86,4 +126,8 @@
       </p>
     {% endif %}
   </div>
+{% endblock %}
+
+{% block scripts %}
+  <script src="/static/background.js"></script>
 {% endblock %}
