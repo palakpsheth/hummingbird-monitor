@@ -582,6 +582,10 @@ def test_config_save(tmp_path, monkeypatch):
         "match_threshold": "0.30",
         "ema_alpha": "0.15",
         "timezone": "local",
+        "bg_subtraction_enabled": "1",
+        "bg_motion_threshold": "30",
+        "bg_motion_blur": "5",
+        "bg_min_overlap": "0.15",
     }, follow_redirects=False)
     assert r.status_code == 303
 
@@ -598,6 +602,10 @@ def test_config_save_invalid(tmp_path, monkeypatch):
         "min_species_prob": "0.40",
         "match_threshold": "0.30",
         "ema_alpha": "0.15",
+        "bg_subtraction_enabled": "1",
+        "bg_motion_threshold": "30",
+        "bg_motion_blur": "5",
+        "bg_min_overlap": "0.15",
     })
     assert r.status_code == 400
 

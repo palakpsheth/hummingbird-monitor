@@ -13,6 +13,10 @@ def test_validate_detection_inputs_ok(monkeypatch):
             "match_threshold": "0.20",
             "ema_alpha": "0.15",
             "timezone": "America/Los_Angeles",
+            "bg_subtraction_enabled": "1",
+            "bg_motion_threshold": "25",
+            "bg_motion_blur": "5",
+            "bg_min_overlap": "0.20",
         }
     )
     assert errors == []
@@ -24,6 +28,10 @@ def test_validate_detection_inputs_ok(monkeypatch):
     assert parsed["match_threshold"] == 0.20
     assert parsed["ema_alpha"] == 0.15
     assert parsed["timezone"] == "America/Los_Angeles"
+    assert parsed["bg_subtraction_enabled"] is True
+    assert parsed["bg_motion_threshold"] == 25
+    assert parsed["bg_motion_blur"] == 5
+    assert parsed["bg_min_overlap"] == 0.20
 
 
 def test_validate_detection_inputs_errors(monkeypatch):
@@ -38,6 +46,10 @@ def test_validate_detection_inputs_errors(monkeypatch):
             "match_threshold": "-0.1",
             "ema_alpha": "abc",
             "timezone": "Not_A_TimeZone",
+            "bg_subtraction_enabled": "1",
+            "bg_motion_threshold": "bad",
+            "bg_motion_blur": "4",
+            "bg_min_overlap": "2",
         }
     )
     assert any("between 0.05 and 0.95" in e for e in errors)
@@ -48,3 +60,6 @@ def test_validate_detection_inputs_errors(monkeypatch):
     assert any("Match threshold" in e for e in errors)
     assert any("EMA alpha" in e for e in errors)
     assert any("Timezone" in e for e in errors)
+    assert any("Background motion threshold" in e for e in errors)
+    assert any("Background motion blur" in e for e in errors)
+    assert any("Background minimum overlap" in e for e in errors)

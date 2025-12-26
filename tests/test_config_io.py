@@ -59,6 +59,58 @@ def test_crop_padding_config(monkeypatch, tmp_path):
     assert abs(s4.crop_padding - 0.10) < 1e-6
 
 
+def test_background_subtraction_config(monkeypatch, tmp_path):
+    """Test that background subtraction settings can be configured via env and persisted."""
+    monkeypatch.setenv("HBMON_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HBMON_MEDIA_DIR", str(tmp_path / "media"))
+    s = config.Settings(
+        bg_subtraction_enabled=False,
+        bg_motion_threshold=42,
+        bg_motion_blur=7,
+        bg_min_overlap=0.25,
+    )
+    config.save_settings(s)
+    s2 = config.load_settings()
+    assert s2.bg_subtraction_enabled is False
+    assert s2.bg_motion_threshold == 42
+    assert s2.bg_motion_blur == 7
+    assert abs(s2.bg_min_overlap - 0.25) < 1e-6
+
+    monkeypatch.setenv("HBMON_BG_SUBTRACTION", "1")
+    monkeypatch.setenv("HBMON_BG_MOTION_THRESHOLD", "55")
+    monkeypatch.setenv("HBMON_BG_MOTION_BLUR", "9")
+    monkeypatch.setenv("HBMON_BG_MIN_OVERLAP", "0.4")
+    s3 = config.load_settings()
+    assert s3.bg_subtraction_enabled is True
+    assert s3.bg_motion_threshold == 55
+    assert s3.bg_motion_blur == 9
+    assert abs(s3.bg_min_overlap - 0.4) < 1e-6
+
+    s4 = config.load_settings(apply_env_overrides=False)
+    assert s4.bg_subtraction_enabled is False
+    assert s4.bg_motion_threshold == 42
+    assert s4.bg_motion_blur == 7
+    assert abs(s4.bg_min_overlap - 0.25) < 1e-6
+
+
+def test_background_subtraction_config_str_bool(monkeypatch, tmp_path):
+    """Boolean strings in config.json should parse correctly for background subtraction."""
+    monkeypatch.setenv("HBMON_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HBMON_MEDIA_DIR", str(tmp_path / "media"))
+    config.ensure_dirs()
+
+    cfg = config.config_path()
+    cfg.write_text(
+        '{"bg_subtraction_enabled": "false", "bg_motion_threshold": 33, '
+        '"bg_motion_blur": 5, "bg_min_overlap": 0.2}',
+        encoding="utf-8",
+    )
+
+    s = config.load_settings()
+    assert s.bg_subtraction_enabled is False
+    assert s.bg_motion_threshold == 33
+
+
 def test_load_settings_bootstrap_uses_env(monkeypatch, tmp_path):
     """When no config file exists, load_settings seeds values from env even without overrides."""
     monkeypatch.setenv("HBMON_DATA_DIR", str(tmp_path / "data"))

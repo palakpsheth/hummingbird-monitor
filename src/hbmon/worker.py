@@ -140,6 +140,25 @@ def _load_background_image() -> np.ndarray | None:
         return None
 
 
+def _sanitize_bg_params(
+    *,
+    enabled: bool,
+    threshold: int,
+    blur: int,
+    min_overlap: float,
+) -> tuple[bool, int, int, float]:
+    threshold_safe = max(0, min(255, int(threshold)))
+    blur_safe = max(1, int(blur))
+    if blur_safe % 2 == 0:
+        blur_safe += 1
+    overlap_safe = float(min_overlap)
+    if overlap_safe < 0.0:
+        overlap_safe = 0.0
+    elif overlap_safe > 1.0:
+        overlap_safe = 1.0
+    return enabled, threshold_safe, blur_safe, overlap_safe
+
+
 def _compute_motion_mask(
     frame: np.ndarray,
     background: np.ndarray,
@@ -696,34 +715,39 @@ def run_worker() -> None:
     background_img: np.ndarray | None = _load_background_image()
     last_background_check = time.time()
 
-    # Environment variables for background subtraction tuning
-    bg_motion_threshold = int(os.getenv("HBMON_BG_MOTION_THRESHOLD", "30"))
-    # Must be a positive odd integer for use as a GaussianBlur kernel size
-    _bg_motion_blur_raw = os.getenv("HBMON_BG_MOTION_BLUR", "5")
-    try:
-        bg_motion_blur = int(_bg_motion_blur_raw)
-    except ValueError:
-        print(f"[worker] Invalid HBMON_BG_MOTION_BLUR={_bg_motion_blur_raw!r}, defaulting to 5")
-        bg_motion_blur = 5
-    if bg_motion_blur <= 0:
-        print(f"[worker] HBMON_BG_MOTION_BLUR must be positive, got {bg_motion_blur}. Defaulting to 5")
-        bg_motion_blur = 5
-    elif bg_motion_blur % 2 == 0:
-        print(f"[worker] HBMON_BG_MOTION_BLUR must be odd, got {bg_motion_blur}. "
-              f"Using {bg_motion_blur + 1} instead")
-        bg_motion_blur += 1
-    bg_min_overlap = float(os.getenv("HBMON_BG_MIN_OVERLAP", "0.15"))
-    bg_enabled = os.getenv("HBMON_BG_SUBTRACTION", "1") != "0"
+    def _parse_env_bool(value: str) -> bool:
+        return value.strip().lower() in ("1", "true", "yes", "y", "on")
 
-    if background_img is not None and bg_enabled:
-        print(f"[worker] Background subtraction enabled: threshold={bg_motion_threshold}, "
-              f"blur={bg_motion_blur}, min_overlap={bg_min_overlap}")
-    elif not bg_enabled:
-        print("[worker] Background subtraction disabled via HBMON_BG_SUBTRACTION=0")
+    bg_env_overrides: dict[str, object] = {}
+    env_bg_enabled = os.getenv("HBMON_BG_SUBTRACTION")
+    if env_bg_enabled is not None and env_bg_enabled.strip():
+        bg_env_overrides["bg_subtraction_enabled"] = _parse_env_bool(env_bg_enabled)
+
+    env_bg_threshold = os.getenv("HBMON_BG_MOTION_THRESHOLD")
+    if env_bg_threshold is not None and env_bg_threshold.strip():
+        try:
+            bg_env_overrides["bg_motion_threshold"] = int(env_bg_threshold)
+        except ValueError:
+            print(f"[worker] Invalid HBMON_BG_MOTION_THRESHOLD={env_bg_threshold!r}; ignoring.")
+
+    env_bg_blur = os.getenv("HBMON_BG_MOTION_BLUR")
+    if env_bg_blur is not None and env_bg_blur.strip():
+        try:
+            bg_env_overrides["bg_motion_blur"] = int(env_bg_blur)
+        except ValueError:
+            print(f"[worker] Invalid HBMON_BG_MOTION_BLUR={env_bg_blur!r}; ignoring.")
+
+    env_bg_overlap = os.getenv("HBMON_BG_MIN_OVERLAP")
+    if env_bg_overlap is not None and env_bg_overlap.strip():
+        try:
+            bg_env_overrides["bg_min_overlap"] = float(env_bg_overlap)
+        except ValueError:
+            print(f"[worker] Invalid HBMON_BG_MIN_OVERLAP={env_bg_overlap!r}; ignoring.")
 
     cap: 'cv2.VideoCapture | None' = None  # type: ignore[name-defined]
     last_settings_load = 0.0
     settings: Settings | None = None
+    last_bg_settings: tuple[bool, int, int, float] | None = None
 
     last_trigger = 0.0
 
@@ -746,6 +770,16 @@ def run_worker() -> None:
                 if getattr(settings, "camera_name", None) != env_camera:
                     print(f"[worker] Overriding camera_name from env: {env_camera}")
                 settings.camera_name = env_camera  # type: ignore[attr-defined]
+
+            if bg_env_overrides:
+                if "bg_subtraction_enabled" in bg_env_overrides:
+                    settings.bg_subtraction_enabled = bool(bg_env_overrides["bg_subtraction_enabled"])
+                if "bg_motion_threshold" in bg_env_overrides:
+                    settings.bg_motion_threshold = int(bg_env_overrides["bg_motion_threshold"])
+                if "bg_motion_blur" in bg_env_overrides:
+                    settings.bg_motion_blur = int(bg_env_overrides["bg_motion_blur"])
+                if "bg_min_overlap" in bg_env_overrides:
+                    settings.bg_min_overlap = float(bg_env_overrides["bg_min_overlap"])
             last_settings_load = now
         return settings
 
@@ -815,6 +849,21 @@ def run_worker() -> None:
                 background_img = None
             elif new_bg is not None:
                 background_img = new_bg
+
+        bg_enabled, bg_motion_threshold, bg_motion_blur, bg_min_overlap = _sanitize_bg_params(
+            enabled=bool(s.bg_subtraction_enabled),
+            threshold=int(s.bg_motion_threshold),
+            blur=int(s.bg_motion_blur),
+            min_overlap=float(s.bg_min_overlap),
+        )
+        bg_settings = (bg_enabled, bg_motion_threshold, bg_motion_blur, bg_min_overlap)
+        if bg_settings != last_bg_settings:
+            if background_img is not None and bg_enabled:
+                print(f"[worker] Background subtraction enabled: threshold={bg_motion_threshold}, "
+                      f"blur={bg_motion_blur}, min_overlap={bg_min_overlap}")
+            elif not bg_enabled:
+                print("[worker] Background subtraction disabled via config/env.")
+            last_bg_settings = bg_settings
 
         roi_frame, (xoff, yoff) = _apply_roi(frame, s)
 

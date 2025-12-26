@@ -307,3 +307,50 @@ class TestMetadataSchema:
             assert not missing, (
                 f"Identification metadata missing keys {sorted(missing)} in {test_dir.name}"
             )
+
+    def test_background_subtraction_metadata_schema(self, integration_test_data_dir: Path):
+        """
+        Validate background subtraction metadata shape when present in metadata.json.
+        """
+        test_cases = load_test_cases(integration_test_data_dir)
+
+        if not test_cases:
+            pytest.skip("No test data with snapshots available.")
+
+        required_keys = {
+            "bg_motion_threshold",
+            "bg_motion_blur",
+            "bg_min_overlap",
+            "bg_subtraction_enabled",
+        }
+
+        for test_dir, metadata in test_cases:
+            original_observation = metadata.get("original_observation") or {}
+            extra = original_observation.get("extra") or {}
+            sensitivity = extra.get("sensitivity")
+
+            if sensitivity is None:
+                continue
+
+            assert isinstance(sensitivity, dict), (
+                f"Sensitivity metadata must be a dict in {test_dir.name}, "
+                f"got {type(sensitivity).__name__}"
+            )
+
+            missing = required_keys - set(sensitivity.keys())
+            assert not missing, (
+                f"Sensitivity metadata missing keys {sorted(missing)} in {test_dir.name}"
+            )
+
+            assert isinstance(sensitivity["bg_subtraction_enabled"], bool), (
+                f"bg_subtraction_enabled must be boolean in {test_dir.name}"
+            )
+            assert isinstance(sensitivity["bg_motion_threshold"], int), (
+                f"bg_motion_threshold must be int in {test_dir.name}"
+            )
+            assert isinstance(sensitivity["bg_motion_blur"], int), (
+                f"bg_motion_blur must be int in {test_dir.name}"
+            )
+            assert isinstance(sensitivity["bg_min_overlap"], (float, int)), (
+                f"bg_min_overlap must be float in {test_dir.name}"
+            )
