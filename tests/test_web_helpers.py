@@ -241,6 +241,14 @@ class MockObservation:
         return self._extra
 
 
+class MockObservationWithExtras:
+    def __init__(self, extra: dict | None = None):
+        self._extra = extra
+
+    def get_extra(self) -> dict | None:
+        return self._extra
+
+
 def test_get_annotated_snapshot_path_with_valid_path(monkeypatch):
     """Test that get_annotated_snapshot_path returns path when present."""
     web = _import_web(monkeypatch)
@@ -287,3 +295,44 @@ def test_get_annotated_snapshot_path_with_missing_annotated_path(monkeypatch):
     obs = MockObservation(extra={"snapshots": {"some_other_key": "value"}})
     result = web.get_annotated_snapshot_path(obs)
     assert result is None
+
+
+def test_flatten_extra_metadata(monkeypatch):
+    web = _import_web(monkeypatch)
+    extra = {
+        "detection": {"box_confidence": 0.8756, "extra": {"foo": "bar"}},
+        "review": {"label": "ok"},
+        "flags": ["a", "b"],
+        "score": 2,
+    }
+    flattened = web._flatten_extra_metadata(extra)
+    assert flattened["detection.box_confidence"] == 0.8756
+    assert flattened["detection.extra.foo"] == "bar"
+    assert flattened["review.label"] == "ok"
+    assert flattened["flags"] == ["a", "b"]
+    assert flattened["score"] == 2
+
+
+def test_prepare_observation_extras_formats_values(monkeypatch):
+    web = _import_web(monkeypatch)
+    obs = [
+        MockObservationWithExtras(
+            extra={
+                "detection": {"box_confidence": 0.8756},
+                "review": {"label": "ok"},
+                "flags": ["a", "b"],
+            }
+        ),
+        MockObservationWithExtras(extra={"review": {"label": "bad"}, "score": 2}),
+        MockObservationWithExtras(extra=None),
+    ]
+
+    columns, sort_types, labels = web._prepare_observation_extras(obs)
+
+    assert columns[0] == "detection.box_confidence"
+    assert sort_types["detection.box_confidence"] == "number"
+    assert labels["review.label"] == "Review · Label"
+    assert obs[0].extra_display["detection.box_confidence"] == "0.876"
+    assert obs[0].extra_display["flags"] == '["a", "b"]'
+    assert obs[1].extra_sort_values["score"] == "2"
+    assert obs[2].extra_display["review.label"] == ""
