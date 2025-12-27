@@ -80,7 +80,7 @@ services:
       - HBMON_REDIS_URL=${HBMON_REDIS_URL:-redis://hbmon-redis:6379/0}
 
     volumes:
-      - ./data:/data:rw
+      - ./data:/data
     ports:
       - "8000:8000"
     depends_on:
@@ -144,7 +144,7 @@ services:
       - HBMON_YOLO_IMGSZ=1280
 
     volumes:
-      - ./data:/data:rw
+      - ./data:/data
     depends_on:
       wyze-bridge:
         condition: service_healthy
