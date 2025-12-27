@@ -136,7 +136,13 @@
             <th class="sortable" data-sort-type="number" data-col-key="individual">Individual</th>
             <th class="sortable" data-sort-type="number" data-col-key="match_score">Match score</th>
             {% for key in extra_columns %}
-              <th class="sortable" data-sort-type="{{ extra_column_sort_types[key] }}" data-col-key="{{ key }}">
+              {% set is_visible = extra_column_defaults.get(key, True) %}
+              <th
+                class="sortable{% if not is_visible %} col-hidden{% endif %}"
+                data-sort-type="{{ extra_column_sort_types[key] }}"
+                data-col-key="{{ key }}"
+                {% if not is_visible %}hidden{% endif %}
+              >
                 {{ extra_column_labels[key] }}
               </th>
             {% endfor %}
@@ -190,8 +196,14 @@
                 {{ "%.3f"|format(o.match_score) }}
               </td>
               {% for key in extra_columns %}
+                {% set is_visible = extra_column_defaults.get(key, True) %}
                 {% set display_value = o.extra_display.get(key, "") or "—" %}
-                <td data-sort-value="{{ o.extra_sort_values.get(key, '') }}" data-col-key="{{ key }}">
+                <td
+                  class="{% if not is_visible %}col-hidden{% endif %}"
+                  data-sort-value="{{ o.extra_sort_values.get(key, '') }}"
+                  data-col-key="{{ key }}"
+                  {% if not is_visible %}hidden{% endif %}
+                >
                   <span title="{{ display_value }}">{{ display_value }}</span>
                 </td>
               {% endfor %}

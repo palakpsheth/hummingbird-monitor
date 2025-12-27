@@ -18,6 +18,7 @@
 
   function setVisibility(table, columnKey, isVisible) {
     table.querySelectorAll(`[data-col-key="${columnKey}"]`).forEach((cell) => {
+      cell.hidden = !isVisible;
       cell.classList.toggle("col-hidden", !isVisible);
     });
   }
