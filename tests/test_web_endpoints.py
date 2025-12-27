@@ -348,6 +348,59 @@ def test_stream_mjpeg_returns_503_when_rtsp_not_configured(tmp_path, monkeypatch
     assert "RTSP URL not configured" in r.json()["detail"]
 
 
+def test_stream_mjpeg_streams_single_frame(tmp_path, monkeypatch):
+    """Test that /api/stream.mjpeg streams at least one frame when RTSP is configured."""
+    import numpy as np
+
+    monkeypatch.setenv("HBMON_RTSP_URL", "rtsp://example")
+
+    class DummyJpeg:
+        def __init__(self, payload: bytes):
+            self._payload = payload
+
+        def tobytes(self) -> bytes:
+            return self._payload
+
+    class DummyCV2:
+        IMWRITE_JPEG_QUALITY = 1
+        CAP_PROP_BUFFERSIZE = 2
+        _open_calls = 0
+
+        class VideoCapture:
+            def __init__(self, url: str):
+                DummyCV2._open_calls += 1
+                self._opened = DummyCV2._open_calls == 1
+                self._reads = 0
+
+            def isOpened(self) -> bool:
+                return self._opened
+
+            def read(self):
+                self._reads += 1
+                if self._opened and self._reads == 1:
+                    return True, np.zeros((8, 8, 3), dtype=np.uint8)
+                return False, None
+
+            def release(self) -> None:
+                return None
+
+            def set(self, *args, **kwargs) -> None:
+                return None
+
+        @staticmethod
+        def imencode(ext: str, frame, params):
+            return True, DummyJpeg(b"jpeg-bytes")
+
+    monkeypatch.setitem(sys.modules, "cv2", DummyCV2)
+    monkeypatch.setattr("hbmon.web.time.sleep", lambda *args, **kwargs: None)
+
+    client = _setup_app(tmp_path, monkeypatch)
+    with client.stream("GET", "/api/stream.mjpeg") as response:
+        assert response.status_code == 200
+        chunk = next(response.iter_bytes())
+        assert b"--frame" in chunk
+
+
 def test_swagger_docs_endpoint(tmp_path, monkeypatch):
     """Test that the Swagger UI docs endpoint is accessible."""
     client = _setup_app(tmp_path, monkeypatch)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 
 import pytest
+from sqlalchemy import select
 
 import hbmon.db as db
 
@@ -49,6 +50,156 @@ class TestGetAsyncDbUrl:
 
         url = db.get_async_db_url()
         assert url.startswith("sqlite+aiosqlite:///")
+
+    def test_get_async_db_url_derives_from_psycopg(self, monkeypatch):
+        monkeypatch.delenv("HBMON_DB_ASYNC_URL", raising=False)
+        monkeypatch.setenv("HBMON_DB_URL", "postgresql+psycopg://user:pass@host/db")
+
+        url = db.get_async_db_url()
+        assert url == "postgresql+asyncpg://user:pass@host/db"
+
+    def test_get_async_db_url_derives_from_postgresql(self, monkeypatch):
+        monkeypatch.delenv("HBMON_DB_ASYNC_URL", raising=False)
+        monkeypatch.setenv("HBMON_DB_URL", "postgresql://user:pass@host/db")
+
+        url = db.get_async_db_url()
+        assert url == "postgresql+asyncpg://user:pass@host/db"
+
+    def test_get_async_db_url_passthrough(self, monkeypatch):
+        monkeypatch.delenv("HBMON_DB_ASYNC_URL", raising=False)
+        monkeypatch.setenv("HBMON_DB_URL", "postgresql+asyncpg://user:pass@host/db")
+
+        url = db.get_async_db_url()
+        assert url == "postgresql+asyncpg://user:pass@host/db"
+
+    def test_get_async_db_url_returns_empty_when_unsupported(self, monkeypatch):
+        monkeypatch.delenv("HBMON_DB_ASYNC_URL", raising=False)
+        monkeypatch.setenv("HBMON_DB_URL", "mysql://user:pass@host/db")
+
+        url = db.get_async_db_url()
+        assert url == ""
+
+
+def test_pool_settings_for_non_sqlite(monkeypatch):
+    monkeypatch.setenv("HBMON_DB_POOL_SIZE", "7")
+    monkeypatch.setenv("HBMON_DB_MAX_OVERFLOW", "3")
+    monkeypatch.setenv("HBMON_DB_POOL_TIMEOUT", "11")
+    monkeypatch.setenv("HBMON_DB_POOL_RECYCLE", "123")
+    settings = db._pool_settings("postgresql://user:pass@host/db")
+    assert settings["pool_size"] == 7
+    assert settings["max_overflow"] == 3
+    assert settings["pool_timeout"] == 11
+    assert settings["pool_recycle"] == 123
+
+
+def test_session_scope_rolls_back_on_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{tmp_path/'db.sqlite'}")
+    db.reset_db_state()
+    db.init_db()
+
+    from hbmon.models import Individual
+
+    with pytest.raises(ValueError, match="boom"):
+        with db.session_scope() as session:
+            session.add(Individual(name="rollback"))
+            raise ValueError("boom")
+
+    with db.session_scope() as session:
+        assert session.query(Individual).count() == 0
+
+
+@pytest.mark.anyio
+async def test_async_session_scope_rolls_back_on_error(monkeypatch, tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
+    db.reset_db_state()
+    await db.init_async_db()
+
+    from hbmon.models import Individual
+
+    with pytest.raises(ValueError, match="boom"):
+        async with db.async_session_scope() as session:
+            session.add(Individual(name="rollback-async"))
+            raise ValueError("boom")
+
+    async with db.async_session_scope() as session:
+        result = await session.execute(select(Individual))
+        assert result.scalars().all() == []
+
+
+def test_get_async_engine_requires_url(monkeypatch):
+    monkeypatch.delenv("HBMON_DB_ASYNC_URL", raising=False)
+    monkeypatch.setenv("HBMON_DB_URL", "mysql://user:pass@host/db")
+    db.reset_db_state()
+
+    with pytest.raises(RuntimeError, match="Async DB URL is not configured"):
+        db.get_async_engine()
+
+
+def test_get_async_engine_reuses_instance(monkeypatch, tmp_path):
+    db_path = tmp_path / "db.sqlite"
+    monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
+    db.reset_db_state()
+    first = db.get_async_engine()
+    second = db.get_async_engine()
+    assert first is second
+
+
+def test_get_async_engine_unavailable(monkeypatch):
+    monkeypatch.setattr(db, "_ASYNC_SQLALCHEMY_AVAILABLE", False)
+    monkeypatch.setattr(db, "_SQLALCHEMY_AVAILABLE", True)
+    monkeypatch.setattr(db, "_ASYNC_ENGINE", None)
+
+    with pytest.raises(RuntimeError, match="async engine is not available"):
+        db.get_async_engine()
+
+
+def test_reset_db_state_handles_async_dispose_errors(monkeypatch):
+    class DummyEngine:
+        def dispose(self) -> None:
+            return None
+
+    class DummySyncEngine:
+        def dispose(self) -> None:
+            raise RuntimeError("boom")
+
+    class DummyAsyncEngine:
+        def __init__(self):
+            self.sync_engine = DummySyncEngine()
+
+    monkeypatch.setattr(db, "_ENGINE", DummyEngine())
+    monkeypatch.setattr(db, "_ASYNC_ENGINE", DummyAsyncEngine())
+    monkeypatch.setattr(db, "_SessionLocal", object())
+    monkeypatch.setattr(db, "_AsyncSessionLocal", object())
+
+    db.reset_db_state()
+    assert db._ENGINE is None
+    assert db._ASYNC_ENGINE is None
+
+
+def test_get_session_factory_initializes_engine(monkeypatch, tmp_path):
+    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{tmp_path/'db.sqlite'}")
+    db.reset_db_state()
+    factory = db.get_session_factory()
+    assert callable(factory)
+
+
+def test_get_async_session_factory_unavailable(monkeypatch):
+    monkeypatch.setattr(db, "_ASYNC_SQLALCHEMY_AVAILABLE", False)
+    monkeypatch.setattr(db, "_SQLALCHEMY_AVAILABLE", True)
+
+    with pytest.raises(RuntimeError, match="async engine is not available"):
+        db.get_async_session_factory()
+
+
+@pytest.mark.anyio
+async def test_init_async_db_unavailable(monkeypatch):
+    monkeypatch.setattr(db, "_ASYNC_SQLALCHEMY_AVAILABLE", False)
+    monkeypatch.setattr(db, "_SQLALCHEMY_AVAILABLE", True)
+
+    with pytest.raises(RuntimeError, match="async engine is not available"):
+        await db.init_async_db()
 
 
 class TestSqlalchemyAvailable:
