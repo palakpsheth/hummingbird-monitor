@@ -244,6 +244,27 @@ def get_async_session_factory() -> Callable[..., AsyncSession]:
     return _AsyncSessionLocal
 
 
+def reset_db_state() -> None:
+    """
+    Reset cached SQLAlchemy engines and session factories.
+
+    This is primarily intended for tests that override environment variables
+    between runs and need a fresh engine/session setup.
+    """
+    global _ENGINE, _SessionLocal, _ASYNC_ENGINE, _AsyncSessionLocal
+    if _ENGINE is not None:
+        _ENGINE.dispose()
+    if _ASYNC_ENGINE is not None:
+        try:
+            _ASYNC_ENGINE.sync_engine.dispose()
+        except Exception:
+            pass
+    _ENGINE = None
+    _SessionLocal = None
+    _ASYNC_ENGINE = None
+    _AsyncSessionLocal = None
+
+
 @contextmanager
 def session_scope() -> Iterator[Session]:
     """

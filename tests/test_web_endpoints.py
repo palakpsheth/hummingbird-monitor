@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from hbmon.config import background_image_path, ensure_dirs, load_settings, media_dir
-from hbmon.db import init_db, session_scope
+from hbmon.db import init_db, reset_db_state, session_scope
 from hbmon.models import Embedding, Individual, Observation, utcnow
 from hbmon.web import make_app
 
@@ -30,9 +30,12 @@ def _has_hidden_column(text: str, tag: str, column_key: str) -> bool:
 def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     data_dir = tmp_path / "data"
     media = tmp_path / "media"
+    db_path = tmp_path / "db.sqlite"
     monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
     monkeypatch.setenv("HBMON_MEDIA_DIR", str(media))
-    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{tmp_path/'db.sqlite'}")
+    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
+    reset_db_state()
     ensure_dirs()
     init_db()
     app = make_app()
