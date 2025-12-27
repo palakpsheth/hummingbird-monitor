@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from hbmon.config import background_image_path, ensure_dirs, media_dir
+from hbmon.config import background_image_path, ensure_dirs, load_settings, media_dir
 from hbmon.db import init_db, session_scope
 from hbmon.models import Embedding, Individual, Observation, utcnow
 from hbmon.web import make_app
@@ -1129,6 +1129,7 @@ def test_export_media_bundle(tmp_path, monkeypatch):
 def test_export_integration_test_bundle(tmp_path, monkeypatch):
     """Test exporting a single observation integration test bundle."""
     client = _setup_app(tmp_path, monkeypatch)
+    settings = load_settings()
 
     mdir = media_dir()
     snap_dir = mdir / "snapshots"
@@ -1199,7 +1200,27 @@ def test_export_integration_test_bundle(tmp_path, monkeypatch):
     sensitivity_tests = metadata["sensitivity_tests"]
     assert len(sensitivity_tests) == 1
     assert sensitivity_tests[0]["params"]["detect_conf"] == 0.35
+    assert sensitivity_tests[0]["params"]["detect_iou"] == settings.detect_iou
+    assert sensitivity_tests[0]["params"]["min_box_area"] == settings.min_box_area
+    assert sensitivity_tests[0]["params"]["bg_motion_threshold"] == settings.bg_motion_threshold
+    assert sensitivity_tests[0]["params"]["bg_motion_blur"] == settings.bg_motion_blur
+    assert sensitivity_tests[0]["params"]["bg_min_overlap"] == settings.bg_min_overlap
+    assert sensitivity_tests[0]["params"]["bg_subtraction_enabled"] == settings.bg_subtraction_enabled
     assert sensitivity_tests[0]["expected_detection"] == metadata["expected"]["detection"]
+    extra = metadata["original_observation"]["extra"]
+    sensitivity = extra["sensitivity"]
+    identification = extra["identification"]
+    assert sensitivity["detect_conf"] == 0.35
+    assert sensitivity["detect_iou"] == settings.detect_iou
+    assert sensitivity["min_box_area"] == settings.min_box_area
+    assert sensitivity["bg_motion_threshold"] == settings.bg_motion_threshold
+    assert sensitivity["bg_motion_blur"] == settings.bg_motion_blur
+    assert sensitivity["bg_min_overlap"] == settings.bg_min_overlap
+    assert sensitivity["bg_subtraction_enabled"] == settings.bg_subtraction_enabled
+    assert identification["species_label"] == "Anna's Hummingbird"
+    assert identification["species_prob"] == 0.93
+    assert identification["match_score"] == 0.0
+    assert identification["individual_id"] is None
 
 
 def test_dashboard_contains_live_camera_feed_section(tmp_path, monkeypatch):

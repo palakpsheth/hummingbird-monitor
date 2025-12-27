@@ -156,12 +156,41 @@
           {% if csrf_token %}
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
           {% endif %}
-          <input type="hidden" name="case_name" value="" />
-          <input type="hidden" name="description" value="" />
-          <input type="hidden" name="behavior" value="" />
-          <input type="hidden" name="location" value="" />
-          <input type="hidden" name="human_verified" value="false" />
           <button type="button" id="export-integration-test-button">Export as Integration Test</button>
+          <div
+            id="export-integration-test-fields"
+            style="display:none; margin-top:10px; padding:12px; border:1px solid #ddd; border-radius:8px;"
+          >
+            <div class="stack" style="gap:8px;">
+              <label class="stack">
+                <span class="muted">Test case folder name</span>
+                <input type="text" name="case_name" required />
+              </label>
+              <label class="stack">
+                <span class="muted">Description</span>
+                <input type="text" name="description" required />
+              </label>
+              <label class="stack">
+                <span class="muted">Behavior label</span>
+                <input type="text" name="behavior" required />
+              </label>
+              <label class="stack">
+                <span class="muted">Location</span>
+                <input type="text" name="location" />
+              </label>
+              <label class="stack">
+                <span class="muted">Human verified</span>
+                <select name="human_verified" required>
+                  <option value="false">false</option>
+                  <option value="true">true</option>
+                </select>
+              </label>
+              <div class="inline" style="gap:8px;">
+                <button type="submit">Export bundle</button>
+                <button type="button" id="export-integration-test-cancel">Cancel</button>
+              </div>
+            </div>
+          </div>
         </form>
       </div>
 
@@ -231,33 +260,34 @@
         if (!form || !button) {
           return;
         }
-        var submitForm = function(defaultLocation) {
-          var caseName = window.prompt('Test case folder name:', 'observation_{{ o.id }}');
-          if (caseName === null) {
-            return;
+        var fields = document.getElementById('export-integration-test-fields');
+        var cancelButton = document.getElementById('export-integration-test-cancel');
+        if (!fields || !cancelButton) {
+          return;
+        }
+        var caseNameInput = form.querySelector('input[name="case_name"]');
+        var descriptionInput = form.querySelector('input[name="description"]');
+        var behaviorInput = form.querySelector('input[name="behavior"]');
+        var locationInput = form.querySelector('input[name="location"]');
+        var humanVerifiedSelect = form.querySelector('select[name="human_verified"]');
+        var showForm = function(defaultLocation) {
+          if (caseNameInput && !caseNameInput.value) {
+            caseNameInput.value = 'observation_{{ o.id }}';
           }
-          var description = window.prompt(
-            'Short description for metadata:',
-            'Observation {{ o.id }} integration test'
-          );
-          if (description === null) {
-            return;
+          if (descriptionInput && !descriptionInput.value) {
+            descriptionInput.value = 'Observation {{ o.id }} integration test';
           }
-          var behavior = window.prompt('Behavior label (e.g., flying, perched):', 'unknown');
-          if (behavior === null) {
-            return;
+          if (behaviorInput && !behaviorInput.value) {
+            behaviorInput.value = 'unknown';
           }
-          var location = window.prompt('Location (optional):', defaultLocation || '');
-          if (location === null) {
-            return;
+          if (locationInput && !locationInput.value) {
+            locationInput.value = defaultLocation || '';
           }
-          var humanVerified = window.confirm('Mark this test case as human-verified?');
-          form.querySelector('input[name=\"case_name\"]').value = caseName;
-          form.querySelector('input[name=\"description\"]').value = description;
-          form.querySelector('input[name=\"behavior\"]').value = behavior;
-          form.querySelector('input[name=\"location\"]').value = location;
-          form.querySelector('input[name=\"human_verified\"]').value = humanVerified ? 'true' : 'false';
-          form.submit();
+          if (humanVerifiedSelect && !humanVerifiedSelect.value) {
+            humanVerifiedSelect.value = 'false';
+          }
+          fields.style.display = 'block';
+          button.style.display = 'none';
         };
 
         button.addEventListener('click', function() {
@@ -272,16 +302,21 @@
               function(pos) {
                 var coords = pos.coords;
                 var loc = coords ? coords.latitude.toFixed(4) + ', ' + coords.longitude.toFixed(4) : timezone;
-                submitForm(loc || timezone);
+                showForm(loc || timezone);
               },
               function() {
-                submitForm(timezone);
+                showForm(timezone);
               },
               { timeout: 3000 }
             );
           } else {
-            submitForm(timezone);
+            showForm(timezone);
           }
+        });
+
+        cancelButton.addEventListener('click', function() {
+          fields.style.display = 'none';
+          button.style.display = 'inline-block';
         });
       })();
     </script>
