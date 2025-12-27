@@ -6,26 +6,36 @@ on:
       - main
   pull_request:
 
-permissions:
-  contents: write
-  pull-requests: write
-
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     strategy:
       matrix:
         python-version: ['3.11', '3.12']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+
+      - name: Cache uv and venv
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            .venv
+            ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-${{ matrix.python-version }}-
+            uv-${{ runner.os }}-
 
       - name: Create venv
         run: uv venv
@@ -92,7 +102,7 @@ jobs:
       - name: Coverage comment
         if: matrix.python-version == '3.12' && (github.event_name == 'pull_request' || github.event_name == 'pull_request_target')
         continue-on-error: true
-        uses: orgoro/coverage@v3.2
+        uses: orgoro/coverage@3f13a558c5af7376496aa4848bf0224aead366ac
         with:
           coverageFile: coverage.xml
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -106,7 +116,7 @@ jobs:
       - name: Verify changed files
         id: verify-changed-files
         if: matrix.python-version == '3.12'
-        uses: tj-actions/verify-changed-files@v20
+        uses: tj-actions/verify-changed-files@a1c6acee9df209257a246f2cc6ae8cb6581c1edf
         with:
           files: coverage-badge.json
 
@@ -131,15 +141,17 @@ jobs:
       # pull request instead.
       - name: Push changes
         if: matrix.python-version == '3.12' && github.event_name != 'pull_request' && steps.verify-changed-files.outputs.files_changed == 'true'
-        uses: ad-m/github-push-action@master
+        uses: ad-m/github-push-action@57116acb309081ee57864270b0e3c4cedbe45452
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           branch: ${{ github.ref }}
 
   docker-build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Docker build
         run: docker build -t hbmon .
