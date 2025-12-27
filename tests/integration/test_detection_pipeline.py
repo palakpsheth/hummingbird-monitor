@@ -94,7 +94,17 @@ def get_yolo_model():
     if _yolo_model is None:
         from ultralytics import YOLO
 
-        _yolo_model = YOLO("yolo11n.pt")
+        model_path = Path("yolo11n.pt")
+        try:
+            _yolo_model = YOLO(str(model_path))
+        except RuntimeError as e:
+            message = str(e).lower()
+            if "pytorchstreamreader" in message or "corrupt" in message or "invalid header" in message:
+                if model_path.exists():
+                    model_path.unlink()
+                _yolo_model = YOLO(str(model_path))
+            else:
+                raise
     return _yolo_model
 
 
