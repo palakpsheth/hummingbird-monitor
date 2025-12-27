@@ -71,6 +71,53 @@ class TestBboxAreaRatio:
         assert worker._bbox_area_ratio(det, (0, 0)) == 0.0
 
 
+class TestObservationMediaPaths:
+    """Tests for observation media path helpers."""
+
+    def test_build_observation_media_paths_shares_uuid(self):
+        """Ensure all media paths share the same UUID."""
+        stamp = "2025-01-01"
+        paths = worker._build_observation_media_paths(stamp, observation_uuid="abc123")
+
+        assert paths.observation_uuid == "abc123"
+        assert paths.snapshot_rel == "snapshots/2025-01-01/abc123.jpg"
+        assert paths.snapshot_annotated_rel == "snapshots/2025-01-01/abc123_annotated.jpg"
+        assert paths.snapshot_clip_rel == "snapshots/2025-01-01/abc123_clip.jpg"
+        assert paths.clip_rel == "clips/2025-01-01/abc123.mp4"
+
+    def test_build_observation_media_paths_generates_uuid(self):
+        """Ensure generated UUID is consistent across all media paths."""
+        stamp = "2025-01-02"
+        paths = worker._build_observation_media_paths(stamp)
+
+        snapshot_uuid = Path(paths.snapshot_rel).stem
+        annotated_uuid = Path(paths.snapshot_annotated_rel).stem.removesuffix("_annotated")
+        clip_uuid = Path(paths.snapshot_clip_rel).stem.removesuffix("_clip")
+        video_uuid = Path(paths.clip_rel).stem
+
+        assert snapshot_uuid
+        assert snapshot_uuid == annotated_uuid
+        assert snapshot_uuid == clip_uuid
+        assert snapshot_uuid == video_uuid
+
+
+class TestObservationExtraData:
+    """Tests for observation extra data helpers."""
+
+    def test_build_observation_extra_data_includes_uuid(self):
+        """Ensure observation UUID is persisted in extra data."""
+        extra = worker._build_observation_extra_data(
+            observation_uuid="obs-123",
+            sensitivity={"detect_conf": 0.5},
+            detection={"box_confidence": 0.75},
+            identification={"species_label": "Anna's Hummingbird"},
+            snapshots={"annotated_path": "snapshots/2025-01-01/obs-123_annotated.jpg"},
+        )
+
+        assert extra["observation_uuid"] == "obs-123"
+        assert extra["review"] == {"label": None}
+
+
 class TestUtcnow:
     """Tests for the utcnow helper function."""
 
