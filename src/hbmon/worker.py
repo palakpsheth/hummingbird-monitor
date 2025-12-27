@@ -1012,7 +1012,13 @@ async def run_worker() -> None:
 
         # Record clip (best effort)
         try:
-            recorded_path = _record_clip_opencv(cap, clip_path, float(s.clip_seconds), max_fps=20.0)
+            recorded_path = await asyncio.to_thread(
+                _record_clip_opencv,
+                cap,
+                clip_path,
+                float(s.clip_seconds),
+                max_fps=20.0,
+            )
             clip_rel = str(recorded_path.relative_to(media_root))
         except Exception as e:
             print(f"[worker] clip record failed: {e}")

@@ -38,6 +38,7 @@ Notes:
 from __future__ import annotations
 
 import csv
+from contextlib import asynccontextmanager
 import json
 from json import JSONDecodeError
 import importlib.util
@@ -733,6 +734,14 @@ def make_app() -> Any:
 
     ensure_dirs()
 
+    @asynccontextmanager
+    async def _lifespan(_: FastAPI):
+        try:
+            await init_async_db()
+        except RuntimeError:
+            init_db()
+        yield
+
     app = FastAPI(
         title="hbmon",
         description=(
@@ -743,6 +752,7 @@ def make_app() -> Any:
         version=__version__,
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=_lifespan,
     )
 
     here = Path(__file__).resolve().parent
@@ -755,13 +765,6 @@ def make_app() -> Any:
     mdir = media_dir()
     mdir.mkdir(parents=True, exist_ok=True)
     app.mount("/media", StaticFiles(directory=str(mdir)), name="media")
-
-    @app.on_event("startup")
-    async def _init_db_on_startup() -> None:
-        try:
-            await init_async_db()
-        except RuntimeError:
-            init_db()
 
     def _safe_unlink_media(rel_path: str | None) -> None:
         if not rel_path:
