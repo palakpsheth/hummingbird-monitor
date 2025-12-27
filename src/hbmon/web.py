@@ -1177,6 +1177,7 @@ def make_app() -> Any:
         clip_rel = get_clip_snapshot_path(o)
         annotated_path = (media_dir() / annotated_rel) if annotated_rel else None
         clip_path = (media_dir() / clip_rel) if clip_rel else None
+        background_path = background_image_path()
 
         with tarfile.open(out_path, "w:gz") as tf:
             tf.addfile(metadata_info, io.BytesIO(metadata_bytes))
@@ -1188,6 +1189,8 @@ def make_app() -> Any:
                 tf.add(annotated_path, arcname=f"{safe_case}/snapshot_annotated.jpg")
             if clip_path and clip_path.exists():
                 tf.add(clip_path, arcname=f"{safe_case}/snapshot_clip.jpg")
+            if background_path.exists():
+                tf.add(background_path, arcname=f"{safe_case}/background.jpg")
 
         return FileResponse(str(out_path), filename=out_path.name, media_type="application/gzip")
 

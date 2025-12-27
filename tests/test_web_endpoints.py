@@ -1141,6 +1141,9 @@ def test_export_integration_test_bundle(tmp_path, monkeypatch):
     clip_path = clips_dir / "obs-test.mp4"
     snap_path.write_text("fake image")
     clip_path.write_text("fake video")
+    background_path = background_image_path()
+    background_path.parent.mkdir(parents=True, exist_ok=True)
+    background_path.write_text("fake background")
 
     extra = {
         "sensitivity": {
@@ -1188,6 +1191,7 @@ def test_export_integration_test_bundle(tmp_path, monkeypatch):
     assert "flying_99/metadata.json" in names
     assert "flying_99/snapshot.jpg" in names
     assert "flying_99/clip.mp4" in names
+    assert "flying_99/background.jpg" in names
 
     metadata_member = bundle.extractfile("flying_99/metadata.json")
     assert metadata_member is not None

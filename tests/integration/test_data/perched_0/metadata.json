@@ -35,6 +35,10 @@
                 "labeled_at_utc": "2025-12-27T00:52:00Z"
             },
             "sensitivity": {
+                "bg_min_overlap": 0.15,
+                "bg_motion_blur": 5,
+                "bg_motion_threshold": 30,
+                "bg_subtraction_enabled": false,
                 "cooldown_seconds": 1.0,
                 "crop_padding": 0.05,
                 "detect_conf": 0.1,
@@ -70,7 +74,7 @@
                 "detect_iou": 0.45,
                 "min_box_area": 1000
             }
-        },
+        }
     ],
     "source": {
         "camera": "hummingbirdcam",
