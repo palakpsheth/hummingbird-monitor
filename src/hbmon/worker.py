@@ -834,7 +834,7 @@ async def run_worker() -> None:
         s = get_settings()
         if not s.rtsp_url:
             print("[worker] HBMON_RTSP_URL not set. Sleeping...")
-            time.sleep(2.0)
+            await asyncio.sleep(2.0)
             continue
 
         # Ensure capture
@@ -848,7 +848,7 @@ async def run_worker() -> None:
                 pass
 
             # Give it a moment
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
         ok, frame = cap.read()
         if not ok or frame is None:
@@ -858,7 +858,7 @@ async def run_worker() -> None:
             except Exception:
                 pass
             cap = None
-            time.sleep(1.0)
+            await asyncio.sleep(1.0)
             continue
 
         # --- Debug: prove we are receiving frames even if YOLO never triggers ---
@@ -881,7 +881,7 @@ async def run_worker() -> None:
 
         # Throttle overall loop (CPU friendly)
         if s.fps_limit and s.fps_limit > 0:
-            time.sleep(max(0.0, 1.0 / float(s.fps_limit)))
+            await asyncio.sleep(max(0.0, 1.0 / float(s.fps_limit)))
 
         # Periodically check for background image updates (every 30 seconds)
         now_bg = time.time()
@@ -944,7 +944,7 @@ async def run_worker() -> None:
             )
         except Exception as e:
             print(f"[worker] YOLO error: {e}")
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             continue
 
         if os.getenv("HBMON_DEBUG_YOLO", "0") == "1":

@@ -115,7 +115,7 @@ from hbmon.config import (
     save_settings,
 )
 from hbmon.cache import cache_get_json, cache_set_json
-from hbmon.db import get_async_db, init_db
+from hbmon.db import get_async_db, init_async_db, init_db
 from hbmon.models import Embedding, Individual, Observation, _to_utc
 from hbmon.schema import HealthOut, RoiOut
 from hbmon.clustering import l2_normalize, suggest_split_two_groups
@@ -732,7 +732,6 @@ def make_app() -> Any:
         )
 
     ensure_dirs()
-    init_db()
 
     app = FastAPI(
         title="hbmon",
@@ -756,6 +755,13 @@ def make_app() -> Any:
     mdir = media_dir()
     mdir.mkdir(parents=True, exist_ok=True)
     app.mount("/media", StaticFiles(directory=str(mdir)), name="media")
+
+    @app.on_event("startup")
+    async def _init_db_on_startup() -> None:
+        try:
+            await init_async_db()
+        except RuntimeError:
+            init_db()
 
     def _safe_unlink_media(rel_path: str | None) -> None:
         if not rel_path:
