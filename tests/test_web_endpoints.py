@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import io
 import sys
 from types import SimpleNamespace
@@ -11,6 +12,17 @@ from hbmon.config import background_image_path, ensure_dirs, media_dir
 from hbmon.db import init_db, session_scope
 from hbmon.models import Embedding, Individual, Observation, utcnow
 from hbmon.web import make_app
+
+
+def _has_hidden_column(text: str, tag: str, column_key: str) -> bool:
+    pattern = (
+        rf"<{tag}"
+        rf"(?=[^>]*data-col-key=\"{re.escape(column_key)}\")"
+        r"(?=[^>]*col-hidden)"
+        r"(?=[^>]*\bhidden\b)"
+        r"[^>]*>"
+    )
+    return re.search(pattern, text) is not None
 
 
 def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
@@ -404,6 +416,27 @@ def test_observations_page(tmp_path, monkeypatch):
     assert 'data-sort-default="desc"' in r.text
 
 
+def test_observations_page_hides_sensitivity_columns_by_default(tmp_path, monkeypatch):
+    """Test that sensitivity columns start hidden when unchecked by default."""
+    client = _setup_app(tmp_path, monkeypatch)
+
+    with session_scope() as db:
+        obs = Observation(
+            species_label="Anna's Hummingbird",
+            species_prob=0.8,
+            snapshot_path="snap.jpg",
+            video_path="vid.mp4",
+        )
+        obs.set_extra({"sensitivity": {"bg_motion_threshold": 30}})
+        db.add(obs)
+        db.commit()
+
+    r = client.get("/observations")
+    assert r.status_code == 200
+    assert _has_hidden_column(r.text, "th", "sensitivity.bg_motion_threshold")
+    assert _has_hidden_column(r.text, "td", "sensitivity.bg_motion_threshold")
+
+
 def test_observations_page_with_filter(tmp_path, monkeypatch):
     """Test the observations page with individual filter."""
     client = _setup_app(tmp_path, monkeypatch)
@@ -508,6 +541,32 @@ def test_individual_detail_page(tmp_path, monkeypatch):
     assert "data-column-controls" in r.text
     assert 'data-col-key="snapshot"' in r.text
     assert "column_selector.js" in r.text
+
+
+def test_individual_detail_hides_sensitivity_columns_by_default(tmp_path, monkeypatch):
+    """Test that sensitivity columns start hidden on individual pages."""
+    client = _setup_app(tmp_path, monkeypatch)
+
+    with session_scope() as db:
+        ind = Individual(name="Ruby", visit_count=5)
+        db.add(ind)
+        db.commit()
+        obs = Observation(
+            individual_id=ind.id,
+            species_label="Anna's Hummingbird",
+            species_prob=0.85,
+            snapshot_path="snap.jpg",
+            video_path="vid.mp4",
+        )
+        obs.set_extra({"sensitivity": {"bg_motion_threshold": 30}})
+        db.add(obs)
+        db.commit()
+        ind_id = ind.id
+
+    r = client.get(f"/individuals/{ind_id}")
+    assert r.status_code == 200
+    assert _has_hidden_column(r.text, "th", "sensitivity.bg_motion_threshold")
+    assert _has_hidden_column(r.text, "td", "sensitivity.bg_motion_threshold")
 
 
 def test_individual_detail_not_found(tmp_path, monkeypatch):
