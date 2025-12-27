@@ -62,8 +62,10 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 
 ### Containers (recommended)
 - **wyze-bridge**: logs into Wyze and exposes RTSP streams (using [IDisposable fork](https://github.com/IDisposable/docker-wyze-bridge) for improved performance and camera support)
-- **hbmon-worker**: reads RTSP, runs detection + CLIP + re-ID, writes to SQLite
-- **hbmon-web**: FastAPI + Jinja UI, serves `/media` and exports
+- **hbmon-db**: PostgreSQL database for concurrent reads/writes with pooling
+- **hbmon-redis**: Redis cache for hot query results (latest observations, health checks)
+- **hbmon-worker**: reads RTSP, runs detection + CLIP + re-ID, writes to PostgreSQL
+- **hbmon-web**: FastAPI + Jinja UI served by Gunicorn + Uvicorn workers, serves `/media` and exports
 - **nginx** (optional): reverse proxy on port 80 (nice “just open IP” UX)
 
 ### Container Startup Order & Healthchecks
@@ -71,21 +73,25 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 The `docker-compose.yml` uses healthchecks to ensure containers start in the correct order:
 
 ```
-wyze-bridge (healthy) → hbmon-web (healthy) → hbmon-worker
-                                            → hbmon-proxy
+wyze-bridge (healthy) → hbmon-db (healthy) → hbmon-web (healthy) → hbmon-worker
+                       → hbmon-redis (healthy)                  → hbmon-proxy
 ```
 
-| Container     | Healthcheck                           | Wait for                |
-|---------------|---------------------------------------|-------------------------|
-| wyze-bridge   | HTTP check on port 5000               | -                       |
-| hbmon-web     | HTTP check on `/health` endpoint      | wyze-bridge healthy     |
-| hbmon-worker  | Process check for `hbmon.worker`      | wyze-bridge & hbmon-web |
-| hbmon-proxy   | HTTP check on port 80                 | hbmon-web healthy       |
+| Container     | Healthcheck                           | Wait for                       |
+|---------------|---------------------------------------|--------------------------------|
+| wyze-bridge   | HTTP check on port 5000               | -                              |
+| hbmon-db      | `pg_isready`                          | -                              |
+| hbmon-redis   | `redis-cli ping`                      | -                              |
+| hbmon-web     | HTTP check on `/health` endpoint      | wyze-bridge + db + redis       |
+| hbmon-worker  | Process check for `hbmon.worker`      | wyze-bridge + hbmon-web + db   |
+| hbmon-proxy   | HTTP check on port 80                 | hbmon-web healthy              |
 
 This ensures the database is initialized by hbmon-web before the worker starts.
 
 ### Persistent storage
-- `/data` (volume): SQLite DB + `config.json` + exports + background image
+- `/data` (volume): `config.json`, exports, background image
+- `/data/postgres` (volume): PostgreSQL data files
+- `/data/redis` (volume): Redis append-only files
 - `/media` (volume): snapshots (raw, annotated, CLIP crop) + clips
 
 ---
@@ -118,6 +124,12 @@ rtsp://wyze-bridge:8554/<YOUR_CAMERA_NAME>
 
 Optional:
 - `GIT_COMMIT`: footer label shown in the UI; usually injected by CI/build. Defaults to `unknown`.
+- `HBMON_WEB_WORKERS`: number of Gunicorn workers for the web app (default: 4)
+- `HBMON_DB_ASYNC_URL`: PostgreSQL connection string for the web app + worker (async driver)
+- `HBMON_DB_URL`: sync connection string for optional tooling/tests (unused in Docker)
+- `HBMON_REDIS_URL`: Redis cache connection string (optional but recommended)
+- `HBMON_REDIS_TTL_SECONDS`: Redis cache TTL in seconds (default: 5)
+- `HBMON_SQLITE_BUSY_TIMEOUT_MS`: SQLite busy timeout for fallback/testing (default: 5000)
 
 ### 2) Run
 ```bash
@@ -138,6 +150,27 @@ hostname -I
 # or
 ip a
 ```
+
+---
+
+## Database & cache configuration
+
+The Docker setup runs PostgreSQL for the database and Redis for short-lived cache entries. Both the
+web service and worker use the async driver (`HBMON_DB_ASYNC_URL`).
+
+Pool tuning (optional):
+- `HBMON_DB_POOL_SIZE`: base pool size (default: 5)
+- `HBMON_DB_MAX_OVERFLOW`: extra connections allowed during bursts (default: 10)
+- `HBMON_DB_POOL_TIMEOUT`: seconds to wait for a connection (default: 30)
+- `HBMON_DB_POOL_RECYCLE`: seconds before recycling connections (default: 1800)
+
+Cache tuning (optional):
+- `HBMON_REDIS_URL`: Redis connection string
+- `HBMON_REDIS_TTL_SECONDS`: cache TTL in seconds (default: 5)
+
+SQLite fallback/testing:
+- `HBMON_DB_URL`: sync SQLite/Postgres URL for local tooling/tests (default: SQLite path)
+- `HBMON_SQLITE_BUSY_TIMEOUT_MS`: SQLite busy timeout in milliseconds (default: 5000)
 
 ---
 
@@ -355,7 +388,7 @@ If CUDA is available, the worker can run CLIP and YOLO faster.
 
 ### What to back up
 If you want a complete backup, copy:
-- `/data` (SQLite DB + config + exports)
+- `/data` (config + exports + background + PostgreSQL + Redis data)
 - `/media` (all images/videos)
 
 ---

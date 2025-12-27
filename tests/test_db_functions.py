@@ -33,6 +33,24 @@ class TestGetDbUrl:
         assert "hbmon.sqlite" in url
 
 
+class TestGetAsyncDbUrl:
+    """Tests for the get_async_db_url function."""
+
+    def test_get_async_db_url_prefers_env_override(self, monkeypatch):
+        monkeypatch.setenv("HBMON_DB_ASYNC_URL", "postgresql+asyncpg://user:pass@host/db")
+        monkeypatch.setenv("HBMON_DB_URL", "sqlite:///ignored.db")
+
+        url = db.get_async_db_url()
+        assert url == "postgresql+asyncpg://user:pass@host/db"
+
+    def test_get_async_db_url_derives_from_sqlite(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("HBMON_DB_ASYNC_URL", raising=False)
+        monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{tmp_path/'db.sqlite'}")
+
+        url = db.get_async_db_url()
+        assert url.startswith("sqlite+aiosqlite:///")
+
+
 class TestSqlalchemyAvailable:
     """Tests for SQLAlchemy availability detection."""
 

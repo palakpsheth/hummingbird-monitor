@@ -7,14 +7,22 @@ SQLAlchemy database helpers for hbmon.
 - Safe for use with FastAPI dependency injection.
 
 Environment:
-- HBMON_DB_URL: override the database URL
+- HBMON_DB_URL: override the database URL (sync engine)
   default: sqlite:////data/hbmon.sqlite
+- HBMON_DB_ASYNC_URL: override the async database URL (web app)
+  default: derived from HBMON_DB_URL when possible (sqlite+aiosqlite or postgresql+asyncpg)
+- HBMON_DB_POOL_SIZE: SQLAlchemy pool size for non-SQLite engines (default: 5)
+- HBMON_DB_MAX_OVERFLOW: SQLAlchemy pool overflow for non-SQLite engines (default: 10)
+- HBMON_DB_POOL_TIMEOUT: SQLAlchemy pool timeout seconds (default: 30)
+- HBMON_DB_POOL_RECYCLE: SQLAlchemy pool recycle seconds (default: 1800)
+- HBMON_SQLITE_BUSY_TIMEOUT_MS: PRAGMA busy_timeout value in ms for SQLite (default: 5000)
 """
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import Iterator, Optional, Callable, Any
+from contextlib import asynccontextmanager, contextmanager
+import importlib.util
+from typing import Iterator, Optional, Callable, Any, AsyncIterator
 
 """
 Database helpers for hbmon.
@@ -32,6 +40,7 @@ try:
     from sqlalchemy import create_engine, event  # type: ignore
     from sqlalchemy.engine import Engine  # type: ignore
     from sqlalchemy.orm import Session, sessionmaker  # type: ignore
+    from sqlalchemy.pool import NullPool  # type: ignore
     _SQLALCHEMY_AVAILABLE = True
 except Exception:  # pragma: no cover
     # SQLAlchemy is not available.  Create stub types and mark flag.
@@ -39,14 +48,32 @@ except Exception:  # pragma: no cover
     Engine = object  # type: ignore
     Session = object  # type: ignore
     sessionmaker = None  # type: ignore
+    NullPool = object  # type: ignore
     _SQLALCHEMY_AVAILABLE = False
 
 from hbmon.config import db_path, env_int, env_str, ensure_dirs
+
+if _SQLALCHEMY_AVAILABLE and importlib.util.find_spec("sqlalchemy.ext.asyncio"):
+    from sqlalchemy.ext.asyncio import (  # type: ignore
+        AsyncEngine,
+        AsyncSession,
+        async_sessionmaker,
+        create_async_engine,
+    )
+    _ASYNC_SQLALCHEMY_AVAILABLE = True
+else:  # pragma: no cover - optional dependency
+    AsyncEngine = object  # type: ignore
+    AsyncSession = object  # type: ignore
+    async_sessionmaker = None  # type: ignore
+    create_async_engine = None  # type: ignore
+    _ASYNC_SQLALCHEMY_AVAILABLE = False
 
 
 # Session factory is initialized lazily to allow env overrides before first use.
 _ENGINE: Optional[Engine] = None
 _SessionLocal: Optional[Callable[..., Session]] = None  # sessionmaker type
+_ASYNC_ENGINE: Optional[AsyncEngine] = None
+_AsyncSessionLocal: Optional[Callable[..., AsyncSession]] = None
 
 
 def get_db_url() -> str:
@@ -63,6 +90,36 @@ def get_db_url() -> str:
     # sqlite absolute path must be 4 slashes: sqlite:////abs/path
     return f"sqlite:////{p.as_posix().lstrip('/')}"
 
+def get_async_db_url() -> str:
+    """
+    Choose async DB URL from env, else derive from HBMON_DB_URL when possible.
+    """
+    url = env_str("HBMON_DB_ASYNC_URL", "")
+    if url:
+        return url
+
+    sync_url = get_db_url()
+    if sync_url.startswith("sqlite:"):
+        return sync_url.replace("sqlite:", "sqlite+aiosqlite:", 1)
+    if sync_url.startswith("postgresql+psycopg"):
+        return sync_url.replace("postgresql+psycopg", "postgresql+asyncpg", 1)
+    if sync_url.startswith("postgresql://"):
+        return sync_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if "+asyncpg" in sync_url or "+aiosqlite" in sync_url:
+        return sync_url
+    return ""
+
+
+def _pool_settings(url: str) -> dict[str, Any]:
+    if url.startswith("sqlite:"):
+        return {}
+    return {
+        "pool_size": env_int("HBMON_DB_POOL_SIZE", 5),
+        "max_overflow": env_int("HBMON_DB_MAX_OVERFLOW", 10),
+        "pool_timeout": env_int("HBMON_DB_POOL_TIMEOUT", 30),
+        "pool_recycle": env_int("HBMON_DB_POOL_RECYCLE", 1800),
+    }
+
 
 def get_engine() -> Engine:
     global _ENGINE, _SessionLocal
@@ -77,10 +134,12 @@ def get_engine() -> Engine:
     url = get_db_url()
 
     busy_timeout_ms = env_int("HBMON_SQLITE_BUSY_TIMEOUT_MS", 5000)
-    connect_args = {}
+    connect_args: dict[str, Any] = {}
+    engine_kwargs = _pool_settings(url)
     if url.startswith("sqlite:"):
         # Required for SQLite + threads (FastAPI/uvicorn)
         connect_args = {"check_same_thread": False}
+        engine_kwargs["poolclass"] = NullPool
 
     assert create_engine is not None  # for mypy
     _ENGINE = create_engine(
@@ -88,6 +147,7 @@ def get_engine() -> Engine:
         future=True,
         pool_pre_ping=True,
         connect_args=connect_args,
+        **engine_kwargs,
     )  # type: ignore[assignment]
 
     if url.startswith("sqlite:"):
@@ -110,6 +170,55 @@ def get_engine() -> Engine:
     )
     return _ENGINE  # type: ignore[return-value]
 
+def get_async_engine() -> AsyncEngine:
+    global _ASYNC_ENGINE, _AsyncSessionLocal
+    if not (_SQLALCHEMY_AVAILABLE and _ASYNC_SQLALCHEMY_AVAILABLE):
+        raise RuntimeError(
+            "SQLAlchemy async engine is not available; database functions are unavailable."
+        )
+    if _ASYNC_ENGINE is not None:
+        return _ASYNC_ENGINE  # type: ignore[return-value]
+
+    url = get_async_db_url()
+    if not url:
+        raise RuntimeError("Async DB URL is not configured.")
+
+    busy_timeout_ms = env_int("HBMON_SQLITE_BUSY_TIMEOUT_MS", 5000)
+    connect_args: dict[str, Any] = {}
+    engine_kwargs = _pool_settings(url)
+    if url.startswith("sqlite:"):
+        connect_args = {"timeout": float(busy_timeout_ms) / 1000.0}
+        engine_kwargs["poolclass"] = NullPool
+
+    assert create_async_engine is not None
+    _ASYNC_ENGINE = create_async_engine(
+        url,
+        future=True,
+        pool_pre_ping=True,
+        connect_args=connect_args,
+        **engine_kwargs,
+    )  # type: ignore[assignment]
+
+    if url.startswith("sqlite:"):
+        def _set_sqlite_pragmas(dbapi_connection: Any, connection_record: Any) -> None:  # type: ignore[override]
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+                cursor.close()
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"[db] failed to set async PRAGMA busy_timeout: {exc}")
+
+        event.listen(_ASYNC_ENGINE.sync_engine, "connect", _set_sqlite_pragmas)
+
+    assert async_sessionmaker is not None
+    _AsyncSessionLocal = async_sessionmaker(
+        bind=_ASYNC_ENGINE,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
+    return _ASYNC_ENGINE  # type: ignore[return-value]
+
 
 def get_session_factory() -> Callable[..., Session]:
     global _SessionLocal
@@ -121,6 +230,18 @@ def get_session_factory() -> Callable[..., Session]:
         get_engine()
     assert _SessionLocal is not None
     return _SessionLocal
+
+
+def get_async_session_factory() -> Callable[..., AsyncSession]:
+    global _AsyncSessionLocal
+    if not (_SQLALCHEMY_AVAILABLE and _ASYNC_SQLALCHEMY_AVAILABLE):
+        raise RuntimeError(
+            "SQLAlchemy async engine is not available; database functions are unavailable."
+        )
+    if _AsyncSessionLocal is None:
+        get_async_engine()
+    assert _AsyncSessionLocal is not None
+    return _AsyncSessionLocal
 
 
 @contextmanager
@@ -147,6 +268,27 @@ def session_scope() -> Iterator[Session]:
     finally:
         db.close()
 
+@asynccontextmanager
+async def async_session_scope() -> AsyncIterator[AsyncSession]:
+    """
+    Async context manager for short-lived DB transactions.
+    Commits on success, rolls back on exception.
+    """
+    if not (_SQLALCHEMY_AVAILABLE and _ASYNC_SQLALCHEMY_AVAILABLE):
+        raise RuntimeError(
+            "SQLAlchemy async engine is not available; cannot create a database session."
+        )
+    SessionLocal = get_async_session_factory()
+    db = SessionLocal()  # type: ignore[call-arg]
+    try:
+        yield db
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
+
 
 def init_db() -> None:
     """
@@ -169,6 +311,22 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
 
 
+async def init_async_db() -> None:
+    """
+    Create tables if they do not exist (async engine).
+    """
+    if not (_SQLALCHEMY_AVAILABLE and _ASYNC_SQLALCHEMY_AVAILABLE):
+        raise RuntimeError(
+            "SQLAlchemy async engine is not available; cannot initialize the database."
+        )
+    from hbmon import models  # noqa: F401  # type: ignore
+    from hbmon.models import Base  # type: ignore
+
+    engine = get_async_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
 # FastAPI dependency
 def get_db() -> Iterator[Session]:
     """
@@ -184,3 +342,20 @@ def get_db() -> Iterator[Session]:
         yield db
     finally:
         db.close()
+
+
+# FastAPI dependency (async)
+async def get_async_db() -> AsyncIterator[AsyncSession]:
+    """
+    FastAPI dependency: yields an AsyncSession.
+    """
+    if not (_SQLALCHEMY_AVAILABLE and _ASYNC_SQLALCHEMY_AVAILABLE):
+        raise RuntimeError(
+            "SQLAlchemy async engine is not available; cannot provide a database session."
+        )
+    SessionLocal = get_async_session_factory()
+    db = SessionLocal()  # type: ignore[call-arg]
+    try:
+        yield db
+    finally:
+        await db.close()
