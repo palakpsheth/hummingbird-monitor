@@ -82,6 +82,51 @@ class Det:
         return max(0, self.x2 - self.x1) * max(0, self.y2 - self.y1)
 
 
+@dataclass(frozen=True)
+class ObservationMediaPaths:
+    """Relative media paths for a single observation."""
+
+    observation_uuid: str
+    snapshot_rel: str
+    snapshot_annotated_rel: str
+    snapshot_clip_rel: str
+    clip_rel: str
+
+
+def _build_observation_media_paths(stamp: str, observation_uuid: str | None = None) -> ObservationMediaPaths:
+    """Build the observation media paths with a shared UUID."""
+
+    obs_uuid = observation_uuid or uuid.uuid4().hex
+    return ObservationMediaPaths(
+        observation_uuid=obs_uuid,
+        snapshot_rel=f"snapshots/{stamp}/{obs_uuid}.jpg",
+        snapshot_annotated_rel=f"snapshots/{stamp}/{obs_uuid}_annotated.jpg",
+        snapshot_clip_rel=f"snapshots/{stamp}/{obs_uuid}_clip.jpg",
+        clip_rel=f"clips/{stamp}/{obs_uuid}.mp4",
+    )
+
+
+def _build_observation_extra_data(
+    *,
+    observation_uuid: str,
+    sensitivity: dict[str, Any],
+    detection: dict[str, Any],
+    identification: dict[str, Any],
+    snapshots: dict[str, Any],
+    review: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the extra metadata payload for an observation."""
+
+    return {
+        "observation_uuid": observation_uuid,
+        "sensitivity": sensitivity,
+        "detection": detection,
+        "identification": identification,
+        "snapshots": snapshots,
+        "review": review if review is not None else {"label": None},
+    }
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -932,11 +977,12 @@ def run_worker() -> None:
         # Snapshot paths (relative under /media)
         # We save two images: raw (original) and annotated (with bbox + confidence)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        snap_id = uuid.uuid4().hex
-        snap_rel = f"snapshots/{stamp}/{snap_id}.jpg"
-        snap_annotated_rel = f"snapshots/{stamp}/{snap_id}_annotated.jpg"
-        snap_clip_rel = f"snapshots/{stamp}/{snap_id}_clip.jpg"
-        clip_rel = f"clips/{stamp}/{uuid.uuid4().hex}.mp4"
+        media_paths = _build_observation_media_paths(stamp)
+        snap_id = media_paths.observation_uuid
+        snap_rel = media_paths.snapshot_rel
+        snap_annotated_rel = media_paths.snapshot_annotated_rel
+        snap_clip_rel = media_paths.snapshot_clip_rel
+        clip_rel = media_paths.clip_rel
 
         media_root = snapshots_dir().parent  # /media
         snap_path = media_root / snap_rel
@@ -1016,45 +1062,48 @@ def run_worker() -> None:
             if clip_snapshot_rel:
                 snapshots_data["clip_path"] = clip_snapshot_rel
 
-            extra_data = {
-                "sensitivity": {
-                    "detect_conf": float(s.detect_conf),
-                    "detect_iou": float(s.detect_iou),
-                    "min_box_area": int(s.min_box_area),
-                    "cooldown_seconds": float(s.cooldown_seconds),
-                    "min_species_prob": float(s.min_species_prob),
-                    "match_threshold": float(s.match_threshold),
-                    "ema_alpha": float(s.ema_alpha),
-                    "crop_padding": float(s.crop_padding),
-                    "bg_motion_threshold": int(bg_motion_threshold),
-                    "bg_motion_blur": int(bg_motion_blur),
-                    "bg_min_overlap": float(bg_min_overlap),
-                    "bg_subtraction_enabled": bg_active,
-                    "bg_subtraction_configured": bool(bg_enabled),
-                    "background_image_available": bool(background_img is not None),
-                },
-                "detection": {
-                    "box_confidence": float(det_full.conf),
-                    "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
-                    "bbox_area": int(det_full.area),
-                    "bbox_area_ratio": float(_bbox_area_ratio(det_full, (h, w))),
-                    "bbox_area_ratio_frame": float(_bbox_area_ratio(det_full, (h, w))),
-                    "bbox_area_ratio_roi": float(_bbox_area_ratio(det, roi_frame.shape[:2])),
-                    "roi_offset_xy": [int(xoff), int(yoff)],
-                    "background_subtraction_enabled": bg_active,
-                    "nms_iou_threshold": float(s.detect_iou),
-                },
-                "identification": {
-                    "individual_id": individual_id,
-                    "match_score": float(match_score),
-                    "species_label": raw_species_label,
-                    "species_prob": float(raw_species_prob),
-                    "species_label_final": species_label,
-                    "species_accepted": species_prob >= float(s.min_species_prob),
-                },
-                "snapshots": snapshots_data,
-                "review": {"label": None},
+            sensitivity_data = {
+                "detect_conf": float(s.detect_conf),
+                "detect_iou": float(s.detect_iou),
+                "min_box_area": int(s.min_box_area),
+                "cooldown_seconds": float(s.cooldown_seconds),
+                "min_species_prob": float(s.min_species_prob),
+                "match_threshold": float(s.match_threshold),
+                "ema_alpha": float(s.ema_alpha),
+                "crop_padding": float(s.crop_padding),
+                "bg_motion_threshold": int(bg_motion_threshold),
+                "bg_motion_blur": int(bg_motion_blur),
+                "bg_min_overlap": float(bg_min_overlap),
+                "bg_subtraction_enabled": bg_active,
+                "bg_subtraction_configured": bool(bg_enabled),
+                "background_image_available": bool(background_img is not None),
             }
+            detection_data = {
+                "box_confidence": float(det_full.conf),
+                "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
+                "bbox_area": int(det_full.area),
+                "bbox_area_ratio": float(_bbox_area_ratio(det_full, (h, w))),
+                "bbox_area_ratio_frame": float(_bbox_area_ratio(det_full, (h, w))),
+                "bbox_area_ratio_roi": float(_bbox_area_ratio(det, roi_frame.shape[:2])),
+                "roi_offset_xy": [int(xoff), int(yoff)],
+                "background_subtraction_enabled": bg_active,
+                "nms_iou_threshold": float(s.detect_iou),
+            }
+            identification_data = {
+                "individual_id": individual_id,
+                "match_score": float(match_score),
+                "species_label": raw_species_label,
+                "species_prob": float(raw_species_prob),
+                "species_label_final": species_label,
+                "species_accepted": species_prob >= float(s.min_species_prob),
+            }
+            extra_data = _build_observation_extra_data(
+                observation_uuid=snap_id,
+                sensitivity=sensitivity_data,
+                detection=detection_data,
+                identification=identification_data,
+                snapshots=snapshots_data,
+            )
 
             obs = Observation(
                 ts=utcnow(),
