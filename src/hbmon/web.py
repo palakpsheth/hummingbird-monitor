@@ -37,6 +37,7 @@ Notes:
 
 from __future__ import annotations
 
+import asyncio
 import csv
 from contextlib import asynccontextmanager
 import json
@@ -53,7 +54,7 @@ import time
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, AsyncIterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import anyio
@@ -116,7 +117,7 @@ from hbmon.config import (
     save_settings,
 )
 from hbmon.cache import cache_get_json, cache_set_json
-from hbmon.db import get_async_db, init_async_db, init_db
+from hbmon.db import get_async_db, get_db, init_async_db, init_db, is_async_db_available
 from hbmon.models import Embedding, Individual, Observation, _to_utc
 from hbmon.schema import HealthOut, RoiOut
 from hbmon.clustering import l2_normalize, suggest_split_two_groups
@@ -227,7 +228,44 @@ async def _run_blocking(func: Any, *args: Any, **kwargs: Any) -> Any:
     return await anyio.to_thread.run_sync(partial(func, *args, **kwargs))
 
 
-async def _get_latest_observation_data(db: AsyncSession) -> dict[str, Any] | None:
+class _AsyncSessionAdapter:
+    def __init__(self, session: Session):
+        self._session = session
+
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        return await asyncio.to_thread(self._session.execute, *args, **kwargs)
+
+    async def get(self, *args: Any, **kwargs: Any) -> Any:
+        return await asyncio.to_thread(self._session.get, *args, **kwargs)
+
+    async def commit(self) -> None:
+        await asyncio.to_thread(self._session.commit)
+
+    async def rollback(self) -> None:
+        await asyncio.to_thread(self._session.rollback)
+
+    async def flush(self) -> None:
+        await asyncio.to_thread(self._session.flush)
+
+    async def close(self) -> None:
+        await asyncio.to_thread(self._session.close)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._session, name)
+
+
+async def get_db_dep() -> AsyncIterator[AsyncSession | _AsyncSessionAdapter]:
+    if is_async_db_available():
+        async for session in get_async_db():
+            yield session
+    else:
+        for session in get_db():
+            yield _AsyncSessionAdapter(session)
+
+
+async def _get_latest_observation_data(
+    db: AsyncSession | _AsyncSessionAdapter,
+) -> dict[str, Any] | None:
     cache_key = "hbmon:latest_observation"
     cached = await cache_get_json(cache_key)
     if isinstance(cached, dict):
@@ -286,7 +324,7 @@ def get_annotated_snapshot_path(obs: Observation) -> str | None:
 
 
 async def select_prototype_observations(
-    db: AsyncSession,
+    db: AsyncSession | _AsyncSessionAdapter,
     individual_ids: list[int],
 ) -> dict[int, Observation]:
     """
@@ -776,7 +814,10 @@ def make_app() -> Any:
             # Best-effort cleanup; log for visibility but do not block user action.
             print(f"[web] failed to remove media file {p}")
 
-    async def _recompute_individual_stats(db: AsyncSession, individual_id: int) -> None:
+    async def _recompute_individual_stats(
+        db: AsyncSession | _AsyncSessionAdapter,
+        individual_id: int,
+    ) -> None:
         """Update visit_count/last_seen_at for an individual. Caller must commit."""
         ind = await db.get(Individual, individual_id)
         if ind is None:
@@ -791,7 +832,11 @@ def make_app() -> Any:
         ind.visit_count = int(rows[0] or 0)
         ind.last_seen_at = rows[1]
 
-    async def _commit_with_retry(db: AsyncSession, retries: int = 3, delay: float = 0.5) -> None:
+    async def _commit_with_retry(
+        db: AsyncSession | _AsyncSessionAdapter,
+        retries: int = 3,
+        delay: float = 0.5,
+    ) -> None:
         for i in range(max(1, retries)):
             try:
                 await db.commit()
@@ -848,7 +893,7 @@ def make_app() -> Any:
         request: Request,
         page: int = 1,
         page_size: int = 10,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
         title = "Hummingbird Monitor"
@@ -956,7 +1001,7 @@ def make_app() -> Any:
         request: Request,
         individual_id: int | None = None,
         limit: int = 200,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
 
@@ -1010,7 +1055,7 @@ def make_app() -> Any:
     async def observation_detail(
         obs_id: int,
         request: Request,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         o = await db.get(Observation, obs_id)
         if o is None:
@@ -1065,7 +1110,7 @@ def make_app() -> Any:
     async def label_observation(
         obs_id: int,
         label: str = Form(...),
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> RedirectResponse:
         """Update the review label for a single observation and redirect to its detail page.
 
@@ -1125,7 +1170,7 @@ def make_app() -> Any:
     @app.post("/observations/{obs_id}/delete")
     async def delete_observation(
         obs_id: int,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> RedirectResponse:
         o = await db.get(Observation, obs_id)
         if o is None:
@@ -1157,7 +1202,7 @@ def make_app() -> Any:
         behavior: str = Form(""),
         location: str = Form(""),
         human_verified: str = Form("false"),
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> FileResponse:
         o = await db.get(Observation, obs_id)
         if o is None:
@@ -1298,7 +1343,7 @@ def make_app() -> Any:
     async def bulk_delete_observations(
         obs_ids: list[int] = Form([]),
         redirect_to: str | None = Form(None),
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> RedirectResponse:
         redirect_path = _sanitize_redirect_path(redirect_to)
         ids = sorted({int(obs_id) for obs_id in obs_ids if int(obs_id) > 0})
@@ -1330,7 +1375,7 @@ def make_app() -> Any:
         request: Request,
         sort: str = "visits",
         limit: int = 200,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         limit = max(10, min(int(limit), 5000))
         sort = (sort or "visits").lower()
@@ -1371,7 +1416,7 @@ def make_app() -> Any:
     async def individual_detail(
         individual_id: int,
         request: Request,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         ind = await db.get(Individual, individual_id)
         if ind is None:
@@ -1443,7 +1488,7 @@ def make_app() -> Any:
     async def rename_individual(
         individual_id: int,
         name: str = Form(...),
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> RedirectResponse:
         ind = await db.get(Individual, individual_id)
         if ind is None:
@@ -1460,7 +1505,7 @@ def make_app() -> Any:
     @app.post("/individuals/{individual_id}/delete")
     async def delete_individual(
         individual_id: int,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> RedirectResponse:
         ind = await db.get(Individual, individual_id)
         if ind is None:
@@ -1491,7 +1536,7 @@ def make_app() -> Any:
     @app.post("/individuals/{individual_id}/refresh_embedding")
     async def refresh_embedding(
         individual_id: int,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> RedirectResponse:
         ind = await db.get(Individual, individual_id)
         if ind is None:
@@ -1520,7 +1565,7 @@ def make_app() -> Any:
     async def split_review(
         individual_id: int,
         request: Request,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         ind = await db.get(Individual, individual_id)
         if ind is None:
@@ -1591,7 +1636,7 @@ def make_app() -> Any:
     async def split_apply(
         individual_id: int,
         request: Request,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> RedirectResponse:
         ind_a = await db.get(Individual, individual_id)
         if ind_a is None:
@@ -1761,7 +1806,7 @@ def make_app() -> Any:
         request: Request,
         page: int = 1,
         page_size: int = 20,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         """
         Background image configuration page.
@@ -1819,7 +1864,7 @@ def make_app() -> Any:
     # ----------------------------
 
     @app.get("/api/health", response_model=HealthOut)
-    async def health(db: AsyncSession = Depends(get_async_db)) -> HealthOut:
+    async def health(db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep)) -> HealthOut:
         s = load_settings()
         db_ok = True
         try:
@@ -1943,7 +1988,7 @@ def make_app() -> Any:
     @app.post("/api/background/from_observation/{obs_id}")
     async def set_background_from_observation(
         obs_id: int,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> RedirectResponse:
         """
         Set the background image by copying a snapshot from an existing observation.
@@ -2083,7 +2128,9 @@ def make_app() -> Any:
         return RedirectResponse(url="/background", status_code=303)
 
     @app.get("/api/frame.jpg")
-    async def frame_jpg(db: AsyncSession = Depends(get_async_db)) -> Any:
+    async def frame_jpg(
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Any:
         """
         Return latest snapshot image, or a placeholder if none exist yet.
         """
@@ -2217,7 +2264,7 @@ def make_app() -> Any:
     @app.get("/api/video_info/{obs_id}")
     async def video_info(
         obs_id: int,
-        db: AsyncSession = Depends(get_async_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> dict[str, Any]:
         """
         Return diagnostic information about a video file for troubleshooting.
@@ -2326,7 +2373,9 @@ def make_app() -> Any:
         return StreamingResponse(gen(), media_type="text/csv")
 
     @app.get("/export/observations.csv")
-    async def export_observations_csv(db: AsyncSession = Depends(get_async_db)) -> StreamingResponse:
+    async def export_observations_csv(
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> StreamingResponse:
         q = (await db.execute(select(Observation).order_by(desc(Observation.ts)))).scalars().all()
 
         def rows() -> Iterator[list[Any]]:
@@ -2361,7 +2410,9 @@ def make_app() -> Any:
         )
 
     @app.get("/export/individuals.csv")
-    async def export_individuals_csv(db: AsyncSession = Depends(get_async_db)) -> StreamingResponse:
+    async def export_individuals_csv(
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> StreamingResponse:
         q = (await db.execute(select(Individual).order_by(desc(Individual.visit_count)))).scalars().all()
 
         def rows() -> Iterator[list[Any]]:

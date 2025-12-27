@@ -244,6 +244,10 @@ def get_async_session_factory() -> Callable[..., AsyncSession]:
     return _AsyncSessionLocal
 
 
+def is_async_db_available() -> bool:
+    return _SQLALCHEMY_AVAILABLE and _ASYNC_SQLALCHEMY_AVAILABLE
+
+
 def reset_db_state() -> None:
     """
     Reset cached SQLAlchemy engines and session factories.

@@ -42,6 +42,21 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     return TestClient(app)
 
 
+def _setup_app_sync(tmp_path: Path, monkeypatch) -> TestClient:
+    data_dir = tmp_path / "data"
+    media = tmp_path / "media"
+    db_path = tmp_path / "db.sqlite"
+    monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("HBMON_MEDIA_DIR", str(media))
+    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.delenv("HBMON_DB_ASYNC_URL", raising=False)
+    reset_db_state()
+    ensure_dirs()
+    init_db()
+    app = make_app()
+    return TestClient(app)
+
+
 def _install_live_cv2_stub(monkeypatch) -> None:
     class DummyCap:
         def __init__(self, url: str):
@@ -75,6 +90,7 @@ def _install_live_cv2_stub(monkeypatch) -> None:
     monkeypatch.setattr("hbmon.web.importlib.util.find_spec", lambda name: object())
     monkeypatch.setitem(sys.modules, "cv2", stub_cv2)
 
+
 def test_label_observation_and_clear(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     with session_scope() as db:
@@ -103,6 +119,17 @@ def test_label_observation_and_clear(tmp_path, monkeypatch):
         assert o is not None
         extra = o.get_extra() or {}
         assert "review" not in extra or not extra["review"]
+
+
+def test_health_endpoint_sync_fallback(tmp_path, monkeypatch):
+    import hbmon.db as db_module
+
+    monkeypatch.setattr(db_module, "_ASYNC_SQLALCHEMY_AVAILABLE", False)
+    monkeypatch.setattr(db_module, "_SQLALCHEMY_AVAILABLE", True)
+    client = _setup_app_sync(tmp_path, monkeypatch)
+
+    response = client.get("/api/health")
+    assert response.status_code == 200
 
 
 def test_delete_observation_cleans_media_and_stats(tmp_path, monkeypatch):

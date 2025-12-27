@@ -129,7 +129,11 @@ async def test_run_worker_single_iteration(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "_load_background_image", lambda: None)
     monkeypatch.setattr(worker, "_write_jpeg", lambda *args, **kwargs: None)
     monkeypatch.setattr(worker, "_draw_bbox", lambda frame, det, **kwargs: frame)
-    monkeypatch.setattr(worker, "_record_clip_opencv", lambda cap, out_path, seconds, max_fps=20.0: out_path)
+    monkeypatch.setattr(
+        worker,
+        "_record_clip_from_rtsp",
+        lambda rtsp_url, out_path, seconds, max_fps=20.0: out_path,
+    )
     async def _noop_sleep(*args, **kwargs):
         return None
 

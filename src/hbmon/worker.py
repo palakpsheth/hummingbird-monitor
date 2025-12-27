@@ -600,6 +600,38 @@ def _record_clip_opencv(
     return final_path
 
 
+def _record_clip_from_rtsp(
+    rtsp_url: str,
+    out_path: Path,
+    seconds: float,
+    *,
+    max_fps: float = 20.0,
+) -> Path:
+    if not _CV2_AVAILABLE:
+        raise RuntimeError("OpenCV is not available for clip recording")
+    assert cv2 is not None  # for type checkers
+
+    cap = cv2.VideoCapture(rtsp_url)
+    if not cap.isOpened():
+        try:
+            cap.release()
+        except Exception:
+            pass
+        raise RuntimeError("Unable to open RTSP stream for clip recording")
+
+    try:
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+        except Exception:
+            pass
+        return _record_clip_opencv(cap, out_path, seconds, max_fps=max_fps)
+    finally:
+        try:
+            cap.release()
+        except Exception:
+            pass
+
+
 def _bbox_with_padding(det: Det, frame_shape: tuple[int, int], pad_frac: float = 0.18) -> tuple[int, int, int, int]:
     """
     Expand bbox by pad_frac in each direction, clamped to frame.
@@ -1013,8 +1045,8 @@ async def run_worker() -> None:
         # Record clip (best effort)
         try:
             recorded_path = await asyncio.to_thread(
-                _record_clip_opencv,
-                cap,
+                _record_clip_from_rtsp,
+                s.rtsp_url,
                 clip_path,
                 float(s.clip_seconds),
                 max_fps=20.0,
