@@ -8,7 +8,7 @@ High-level pipeline per loop:
 - Apply ROI crop (if configured)
 - Run YOLO (ultralytics) to detect "bird" class (COCO 'bird' class)
 - Pick best detection (largest area)
-- If not in cooldown: save snapshot + record clip
+- If not in cooldown: save snapshots (raw, annotated, CLIP crop) + record clip
 - Crop around bbox (with configurable padding) for CLIP classification + embedding
 - Match embedding to an Individual prototype (cosine distance threshold)
 - Insert Observation + (optional) Embedding, update Individual stats/prototype
@@ -82,6 +82,51 @@ class Det:
         return max(0, self.x2 - self.x1) * max(0, self.y2 - self.y1)
 
 
+@dataclass(frozen=True)
+class ObservationMediaPaths:
+    """Relative media paths for a single observation."""
+
+    observation_uuid: str
+    snapshot_rel: str
+    snapshot_annotated_rel: str
+    snapshot_clip_rel: str
+    clip_rel: str
+
+
+def _build_observation_media_paths(stamp: str, observation_uuid: str | None = None) -> ObservationMediaPaths:
+    """Build the observation media paths with a shared UUID."""
+
+    obs_uuid = observation_uuid or uuid.uuid4().hex
+    return ObservationMediaPaths(
+        observation_uuid=obs_uuid,
+        snapshot_rel=f"snapshots/{stamp}/{obs_uuid}.jpg",
+        snapshot_annotated_rel=f"snapshots/{stamp}/{obs_uuid}_annotated.jpg",
+        snapshot_clip_rel=f"snapshots/{stamp}/{obs_uuid}_clip.jpg",
+        clip_rel=f"clips/{stamp}/{obs_uuid}.mp4",
+    )
+
+
+def _build_observation_extra_data(
+    *,
+    observation_uuid: str,
+    sensitivity: dict[str, Any],
+    detection: dict[str, Any],
+    identification: dict[str, Any],
+    snapshots: dict[str, Any],
+    review: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the extra metadata payload for an observation."""
+
+    return {
+        "observation_uuid": observation_uuid,
+        "sensitivity": sensitivity,
+        "detection": detection,
+        "identification": identification,
+        "snapshots": snapshots,
+        "review": review if review is not None else {"label": None},
+    }
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -138,6 +183,25 @@ def _load_background_image() -> np.ndarray | None:
     except Exception as e:
         print(f"[worker] Error loading background image: {e}")
         return None
+
+
+def _sanitize_bg_params(
+    *,
+    enabled: bool,
+    threshold: int,
+    blur: int,
+    min_overlap: float,
+) -> tuple[bool, int, int, float]:
+    threshold_safe = max(0, min(255, int(threshold)))
+    blur_safe = max(1, int(blur))
+    if blur_safe % 2 == 0:
+        blur_safe += 1
+    overlap_safe = float(min_overlap)
+    if overlap_safe < 0.0:
+        overlap_safe = 0.0
+    elif overlap_safe > 1.0:
+        overlap_safe = 1.0
+    return enabled, threshold_safe, blur_safe, overlap_safe
 
 
 def _compute_motion_mask(
@@ -321,10 +385,10 @@ def _draw_bbox(
         det: Detection with bounding box coordinates.
         color: BGR color for the box (default: green).
         thickness: Line thickness in pixels (default: 2).
-        show_confidence: If True, draw the detection confidence above the box.
+        show_confidence: If True, draw the detection confidence and bbox area above the box.
 
     Returns:
-        A copy of the frame with the bounding box and optional confidence drawn.
+        A copy of the frame with the bounding box and optional label drawn.
     """
     if not _CV2_AVAILABLE:
         raise RuntimeError("OpenCV (cv2) is not installed; cannot draw bounding boxes")
@@ -334,7 +398,7 @@ def _draw_bbox(
     cv2.rectangle(annotated, (det.x1, det.y1), (det.x2, det.y2), color, thickness)
 
     if show_confidence:
-        label = f"{det.conf:.2f}"
+        label = _format_bbox_label(det)
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.6
         font_thickness = 2
@@ -362,6 +426,20 @@ def _draw_bbox(
         cv2.putText(annotated, label, (text_x + 2, text_y), font, font_scale, (0, 0, 0), font_thickness)
 
     return annotated
+
+
+def _format_bbox_label(det: Det) -> str:
+    """Format a label that includes detection confidence and bounding-box area."""
+    return f"{det.conf:.2f} | {det.area}px^2"
+
+
+def _bbox_area_ratio(det: Det, frame_shape: tuple[int, int]) -> float:
+    """Return the fraction of the reference area occupied by the detection's bbox area."""
+    h, w = frame_shape
+    frame_area = max(h, 0) * max(w, 0)
+    if frame_area <= 0:
+        return 0.0
+    return det.area / frame_area
 
 
 def _ffmpeg_available() -> bool:
@@ -682,34 +760,39 @@ def run_worker() -> None:
     background_img: np.ndarray | None = _load_background_image()
     last_background_check = time.time()
 
-    # Environment variables for background subtraction tuning
-    bg_motion_threshold = int(os.getenv("HBMON_BG_MOTION_THRESHOLD", "30"))
-    # Must be a positive odd integer for use as a GaussianBlur kernel size
-    _bg_motion_blur_raw = os.getenv("HBMON_BG_MOTION_BLUR", "5")
-    try:
-        bg_motion_blur = int(_bg_motion_blur_raw)
-    except ValueError:
-        print(f"[worker] Invalid HBMON_BG_MOTION_BLUR={_bg_motion_blur_raw!r}, defaulting to 5")
-        bg_motion_blur = 5
-    if bg_motion_blur <= 0:
-        print(f"[worker] HBMON_BG_MOTION_BLUR must be positive, got {bg_motion_blur}. Defaulting to 5")
-        bg_motion_blur = 5
-    elif bg_motion_blur % 2 == 0:
-        print(f"[worker] HBMON_BG_MOTION_BLUR must be odd, got {bg_motion_blur}. "
-              f"Using {bg_motion_blur + 1} instead")
-        bg_motion_blur += 1
-    bg_min_overlap = float(os.getenv("HBMON_BG_MIN_OVERLAP", "0.15"))
-    bg_enabled = os.getenv("HBMON_BG_SUBTRACTION", "1") != "0"
+    def _parse_env_bool(value: str) -> bool:
+        return value.strip().lower() in ("1", "true", "yes", "y", "on")
 
-    if background_img is not None and bg_enabled:
-        print(f"[worker] Background subtraction enabled: threshold={bg_motion_threshold}, "
-              f"blur={bg_motion_blur}, min_overlap={bg_min_overlap}")
-    elif not bg_enabled:
-        print("[worker] Background subtraction disabled via HBMON_BG_SUBTRACTION=0")
+    bg_env_overrides: dict[str, object] = {}
+    env_bg_enabled = os.getenv("HBMON_BG_SUBTRACTION")
+    if env_bg_enabled is not None and env_bg_enabled.strip():
+        bg_env_overrides["bg_subtraction_enabled"] = _parse_env_bool(env_bg_enabled)
+
+    env_bg_threshold = os.getenv("HBMON_BG_MOTION_THRESHOLD")
+    if env_bg_threshold is not None and env_bg_threshold.strip():
+        try:
+            bg_env_overrides["bg_motion_threshold"] = int(env_bg_threshold)
+        except ValueError:
+            print(f"[worker] Invalid HBMON_BG_MOTION_THRESHOLD={env_bg_threshold!r}; ignoring.")
+
+    env_bg_blur = os.getenv("HBMON_BG_MOTION_BLUR")
+    if env_bg_blur is not None and env_bg_blur.strip():
+        try:
+            bg_env_overrides["bg_motion_blur"] = int(env_bg_blur)
+        except ValueError:
+            print(f"[worker] Invalid HBMON_BG_MOTION_BLUR={env_bg_blur!r}; ignoring.")
+
+    env_bg_overlap = os.getenv("HBMON_BG_MIN_OVERLAP")
+    if env_bg_overlap is not None and env_bg_overlap.strip():
+        try:
+            bg_env_overrides["bg_min_overlap"] = float(env_bg_overlap)
+        except ValueError:
+            print(f"[worker] Invalid HBMON_BG_MIN_OVERLAP={env_bg_overlap!r}; ignoring.")
 
     cap: 'cv2.VideoCapture | None' = None  # type: ignore[name-defined]
     last_settings_load = 0.0
     settings: Settings | None = None
+    last_bg_settings: tuple[bool, int, int, float] | None = None
 
     last_trigger = 0.0
 
@@ -732,6 +815,16 @@ def run_worker() -> None:
                 if getattr(settings, "camera_name", None) != env_camera:
                     print(f"[worker] Overriding camera_name from env: {env_camera}")
                 settings.camera_name = env_camera  # type: ignore[attr-defined]
+
+            if bg_env_overrides:
+                if "bg_subtraction_enabled" in bg_env_overrides:
+                    settings.bg_subtraction_enabled = bool(bg_env_overrides["bg_subtraction_enabled"])
+                if "bg_motion_threshold" in bg_env_overrides:
+                    settings.bg_motion_threshold = int(bg_env_overrides["bg_motion_threshold"])
+                if "bg_motion_blur" in bg_env_overrides:
+                    settings.bg_motion_blur = int(bg_env_overrides["bg_motion_blur"])
+                if "bg_min_overlap" in bg_env_overrides:
+                    settings.bg_min_overlap = float(bg_env_overrides["bg_min_overlap"])
             last_settings_load = now
         return settings
 
@@ -802,6 +895,21 @@ def run_worker() -> None:
             elif new_bg is not None:
                 background_img = new_bg
 
+        bg_enabled, bg_motion_threshold, bg_motion_blur, bg_min_overlap = _sanitize_bg_params(
+            enabled=bool(s.bg_subtraction_enabled),
+            threshold=int(s.bg_motion_threshold),
+            blur=int(s.bg_motion_blur),
+            min_overlap=float(s.bg_min_overlap),
+        )
+        bg_settings = (bg_enabled, bg_motion_threshold, bg_motion_blur, bg_min_overlap)
+        if bg_settings != last_bg_settings:
+            if background_img is not None and bg_enabled:
+                print(f"[worker] Background subtraction enabled: threshold={bg_motion_threshold}, "
+                      f"blur={bg_motion_blur}, min_overlap={bg_min_overlap}")
+            elif not bg_enabled:
+                print("[worker] Background subtraction disabled via config/env.")
+            last_bg_settings = bg_settings
+
         roi_frame, (xoff, yoff) = _apply_roi(frame, s)
 
         # Compute motion mask for background subtraction (if enabled and background available)
@@ -869,14 +977,17 @@ def run_worker() -> None:
         # Snapshot paths (relative under /media)
         # We save two images: raw (original) and annotated (with bbox + confidence)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        snap_id = uuid.uuid4().hex
-        snap_rel = f"snapshots/{stamp}/{snap_id}.jpg"
-        snap_annotated_rel = f"snapshots/{stamp}/{snap_id}_annotated.jpg"
-        clip_rel = f"clips/{stamp}/{uuid.uuid4().hex}.mp4"
+        media_paths = _build_observation_media_paths(stamp)
+        snap_id = media_paths.observation_uuid
+        snap_rel = media_paths.snapshot_rel
+        snap_annotated_rel = media_paths.snapshot_annotated_rel
+        snap_clip_rel = media_paths.snapshot_clip_rel
+        clip_rel = media_paths.clip_rel
 
         media_root = snapshots_dir().parent  # /media
         snap_path = media_root / snap_rel
         snap_annotated_path = media_root / snap_annotated_rel
+        snap_clip_path = media_root / snap_clip_rel
         clip_path = media_root / clip_rel
 
         # Save both raw and annotated snapshots
@@ -911,16 +1022,24 @@ def run_worker() -> None:
         h, w = frame.shape[:2]
         x1, y1, x2, y2 = _bbox_with_padding(det_full, (h, w), pad_frac=float(s.crop_padding))
         crop = frame[y1:y2, x1:x2].copy()
+        clip_snapshot_rel = ""
+        try:
+            _write_jpeg(snap_clip_path, crop)
+            clip_snapshot_rel = snap_clip_rel
+        except Exception as e:
+            print(f"[worker] clip snapshot write failed: {e}")
 
         # Species + embedding
         try:
-            species_label, species_prob = clip.predict_species_label_prob(crop)
+            raw_species_label, raw_species_prob = clip.predict_species_label_prob(crop)
             emb = clip.encode_embedding(crop)
         except Exception as e:
             print(f"[worker] CLIP error: {e}")
-            species_label, species_prob = "Hummingbird (unknown species)", 0.0
+            raw_species_label, raw_species_prob = "Hummingbird (unknown species)", 0.0
             emb = None
 
+        species_label = raw_species_label
+        species_prob = float(raw_species_prob)
         if species_prob < float(s.min_species_prob):
             species_label = "Hummingbird (unknown species)"
 
@@ -938,28 +1057,53 @@ def run_worker() -> None:
                     ema_alpha=float(s.ema_alpha),
                 )
 
-            extra_data = {
-                "sensitivity": {
-                    "detect_conf": float(s.detect_conf),
-                    "detect_iou": float(s.detect_iou),
-                    "min_box_area": int(s.min_box_area),
-                    "cooldown_seconds": float(s.cooldown_seconds),
-                    "min_species_prob": float(s.min_species_prob),
-                    "match_threshold": float(s.match_threshold),
-                    "ema_alpha": float(s.ema_alpha),
-                    "crop_padding": float(s.crop_padding),
-                },
-                "detection": {
-                    "box_confidence": float(det_full.conf),
-                    "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
-                    "roi_offset_xy": [int(xoff), int(yoff)],
-                    "background_subtraction_enabled": bg_enabled and background_img is not None,
-                },
-                "snapshots": {
-                    "annotated_path": snap_annotated_rel,
-                },
-                "review": {"label": None},
+            bg_active = bool(bg_enabled and background_img is not None)
+            snapshots_data = {"annotated_path": snap_annotated_rel}
+            if clip_snapshot_rel:
+                snapshots_data["clip_path"] = clip_snapshot_rel
+
+            sensitivity_data = {
+                "detect_conf": float(s.detect_conf),
+                "detect_iou": float(s.detect_iou),
+                "min_box_area": int(s.min_box_area),
+                "cooldown_seconds": float(s.cooldown_seconds),
+                "min_species_prob": float(s.min_species_prob),
+                "match_threshold": float(s.match_threshold),
+                "ema_alpha": float(s.ema_alpha),
+                "crop_padding": float(s.crop_padding),
+                "bg_motion_threshold": int(bg_motion_threshold),
+                "bg_motion_blur": int(bg_motion_blur),
+                "bg_min_overlap": float(bg_min_overlap),
+                "bg_subtraction_enabled": bg_active,
+                "bg_subtraction_configured": bool(bg_enabled),
+                "background_image_available": bool(background_img is not None),
             }
+            detection_data = {
+                "box_confidence": float(det_full.conf),
+                "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
+                "bbox_area": int(det_full.area),
+                "bbox_area_ratio": float(_bbox_area_ratio(det_full, (h, w))),
+                "bbox_area_ratio_frame": float(_bbox_area_ratio(det_full, (h, w))),
+                "bbox_area_ratio_roi": float(_bbox_area_ratio(det, roi_frame.shape[:2])),
+                "roi_offset_xy": [int(xoff), int(yoff)],
+                "background_subtraction_enabled": bg_active,
+                "nms_iou_threshold": float(s.detect_iou),
+            }
+            identification_data = {
+                "individual_id": individual_id,
+                "match_score": float(match_score),
+                "species_label": raw_species_label,
+                "species_prob": float(raw_species_prob),
+                "species_label_final": species_label,
+                "species_accepted": species_prob >= float(s.min_species_prob),
+            }
+            extra_data = _build_observation_extra_data(
+                observation_uuid=snap_id,
+                sensitivity=sensitivity_data,
+                detection=detection_data,
+                identification=identification_data,
+                snapshots=snapshots_data,
+            )
 
             obs = Observation(
                 ts=utcnow(),

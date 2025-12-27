@@ -59,13 +59,20 @@ services:
       - HBMON_CONFIG_PATH=${HBMON_CONFIG_PATH}
 
     volumes:
-      - ./data:/data
+      - ./data:/data:rw
     ports:
       - "8000:8000"
     depends_on:
       wyze-bridge:
         condition: service_healthy
     restart: unless-stopped
+    # Healthcheck: FastAPI health endpoint
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   hbmon-worker:
     build: .
@@ -108,19 +115,36 @@ services:
       - HBMON_YOLO_IMGSZ=1280
 
     volumes:
-      - ./data:/data
+      - ./data:/data:rw
     depends_on:
       wyze-bridge:
         condition: service_healthy
+      hbmon-web:
+        condition: service_healthy
     restart: unless-stopped
+    # Healthcheck: worker is healthy if process is running
+    healthcheck:
+      test: [ "CMD", "pgrep", "-f", "hbmon.worker" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   hbmon-proxy:
     image: nginx:alpine
     container_name: hbmon-proxy
     depends_on:
-      - hbmon-web
+      hbmon-web:
+        condition: service_healthy
     ports:
       - "80:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
+    # Healthcheck: nginx responds on port 80
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

@@ -87,6 +87,44 @@
         <input type="number" name="ema_alpha" step="0.01" min="0" max="1" value="{{ form_values.ema_alpha }}" required />
       </label>
 
+      <h2 style="margin-top: 12px;">Background subtraction</h2>
+      <p class="muted">
+        Motion-based filtering uses the configured
+        <a href="/background">background image</a> to reduce false positives.
+      </p>
+
+      <label class="inline" style="align-items: center; gap: 10px;">
+        <input type="checkbox" name="bg_subtraction_enabled" value="1"
+               {% if form_values.bg_subtraction_enabled == "1" %}checked{% endif %} />
+        <span>
+          <strong>Enable background subtraction</strong>
+        </span>
+      </label>
+
+      <label class="stack">
+        <span>
+          <strong>Background motion threshold:</strong>
+          <span class="muted">(0–255). Lower values are more sensitive to change.</span>
+        </span>
+        <input type="number" name="bg_motion_threshold" step="1" min="0" max="255" value="{{ form_values.bg_motion_threshold }}" required />
+      </label>
+
+      <label class="stack">
+        <span>
+          <strong>Background motion blur:</strong>
+          <span class="muted">(odd integer). Higher values smooth noise but can miss small motion.</span>
+        </span>
+        <input type="number" name="bg_motion_blur" step="2" min="1" max="99" value="{{ form_values.bg_motion_blur }}" required />
+      </label>
+
+      <label class="stack">
+        <span>
+          <strong>Background minimum overlap:</strong>
+          <span class="muted">(0–1). Fraction of detection area that must contain motion.</span>
+        </span>
+        <input type="number" name="bg_min_overlap" step="0.01" min="0" max="1" value="{{ form_values.bg_min_overlap }}" required />
+      </label>
+
       <div class="inline">
         <button type="submit">Save</button>
         <span class="muted">Saved values persist to /data/config.json.</span>

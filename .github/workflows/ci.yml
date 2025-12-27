@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+  pull_request_target:
 
 permissions:
   contents: write
@@ -36,22 +37,35 @@ jobs:
       - name: Ruff
         run: uv run ruff check .
 
-      # Run the test suite with coverage enabled.  This command
-      # produces a `.coverage` file in the repository root which is
-      # used by the coverage-badge action below.  The `--cov`
-      # option points at the `hbmon` package and `--cov-report=term` prints
-      # a summary to the console.
-      - name: Tests (with coverage)
+      # Run unit tests (non-integration) with coverage in parallel
+      - name: Unit Tests
         run: |
-          uv run pytest --cov=hbmon --cov-report=term --cov-report=xml
+          uv run pytest -m "not integration" -n auto --cov=hbmon --cov-report=term
+
+      # Run integration tests with coverage (appends to existing coverage data) in parallel
+      - name: Integration Tests
+        run: |
+          uv run pytest -m "integration" -n auto --cov=hbmon --cov-append --cov-report=term
+
+      # Generate combined coverage report (XML for PR comment, term for logs)
+      # The coverage report includes an 80% threshold (non-critical - does not fail the build)
+      - name: Generate Coverage Report
+        run: |
+          uv run coverage xml
+          uv run coverage report --fail-under=80 || true
 
       # Post coverage report as a PR comment
+      # Shows 80% threshold with pass/fail icon, but does NOT fail the workflow
+      # Runs on both pull_request and pull_request_target events
       - name: Coverage comment
-        if: matrix.python-version == '3.12' && github.event_name == 'pull_request'
+        if: matrix.python-version == '3.12' && (github.event_name == 'pull_request' || github.event_name == 'pull_request_target')
+        continue-on-error: true
         uses: orgoro/coverage@v3.2
         with:
           coverageFile: coverage.xml
           token: ${{ secrets.GITHUB_TOKEN }}
+          # 80% cov should pass but tool uses > not >=
+          thresholdAll: 0.80
 
       # Generate a coverage badge based on the `.coverage` data file.
       # This uses the `tj-actions/coverage-badge-py` GitHub Action to

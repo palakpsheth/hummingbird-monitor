@@ -27,20 +27,34 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Individual re-identification**: “bird A vs bird B” using image embeddings
 - **Name individuals** in the UI
 - **Counts & last-seen** stats per individual
+- **Prototypical snapshots** shown per individual (list + detail, embedding-closest when available)
+- **Multiple snapshot views** per observation: raw, annotated, and CLIP crop
 - **Background image configuration**: define a standard background picture without hummingbirds
 - **Cross-linked** navigation:
   - Individuals list → individual page → all observations
   - Observation detail → linked individual
+- **Observation detail metadata**: detector confidence, bbox area (frame/ROI ratios), IoU thresholds, sensitivity settings, identification match details (species + individual), plus a copy-ready `original_observation` JSON panel
 - **Exports**
   - CSV: observations and individuals
   - `tar.gz` bundle: snapshots + clips (generated under `/data/exports/`)
+  - Per-observation integration test bundle (downloadable from the observation detail page after completing
+    the metadata form, including a human-verified true/false selection), containing:
+    - `metadata.json` with `expected`, `source`, `sensitivity_tests`, and `original_observation`
+    - `snapshot.jpg` (raw snapshot)
+    - `clip.mp4` (video clip)
+    - Optional `snapshot_annotated.jpg` and `snapshot_clip.jpg` when available
+  - Missing sensitivity/identification fields are backfilled with current defaults when exporting older observations.
 
 ### Web UI pages
 - **Dashboard**: recent observations + top individuals
-- **Observations**: filterable gallery + detail page
-- **Individuals**: sortable list + detail page
+- **Observations**: filterable, sortable table (including dynamic extra metadata fields such as
+  detector confidence) with compact thumbnails, column visibility checklist (sensitivity fields hidden
+  by default), links to raw/annotated/clip snapshots + video, multi-select + bulk delete, and horizontal
+  scrolling for wide metadata + detail page
+- **Individuals**: sortable list + detail page with prototypical snapshot
 - **ROI calibration**: draw a box on the latest snapshot
-- **Background image**: configure a reference background (select from observations or upload)
+- **Config**: tune detection thresholds, re-ID thresholds, and background subtraction settings
+- **Background image**: configure a reference background (select from observations, upload, or capture a live snapshot)
 - **API Docs**: interactive Swagger UI for API exploration (`/docs`)
 
 ---
@@ -53,9 +67,27 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **hbmon-web**: FastAPI + Jinja UI, serves `/media` and exports
 - **nginx** (optional): reverse proxy on port 80 (nice “just open IP” UX)
 
+### Container Startup Order & Healthchecks
+
+The `docker-compose.yml` uses healthchecks to ensure containers start in the correct order:
+
+```
+wyze-bridge (healthy) → hbmon-web (healthy) → hbmon-worker
+                                            → hbmon-proxy
+```
+
+| Container     | Healthcheck                           | Wait for                |
+|---------------|---------------------------------------|-------------------------|
+| wyze-bridge   | HTTP check on port 5000               | -                       |
+| hbmon-web     | HTTP check on `/health` endpoint      | wyze-bridge healthy     |
+| hbmon-worker  | Process check for `hbmon.worker`      | wyze-bridge & hbmon-web |
+| hbmon-proxy   | HTTP check on port 80                 | hbmon-web healthy       |
+
+This ensures the database is initialized by hbmon-web before the worker starts.
+
 ### Persistent storage
 - `/data` (volume): SQLite DB + `config.json` + exports + background image
-- `/media` (volume): snapshots + clips
+- `/media` (volume): snapshots (raw, annotated, CLIP crop) + clips
 
 ---
 
@@ -110,13 +142,39 @@ ip a
 
 ---
 
+## Developer shortcuts (Makefile)
+
+For local development, the repo includes a `Makefile` with common tasks. The targets use
+`uv` to manage the virtual environment and run commands (matching CI expectations).
+
+```bash
+make venv            # create .venv via uv
+make sync            # install dev dependencies from pyproject.toml
+make lint            # ruff check
+make test            # full pytest + coverage
+make test-unit       # unit tests + coverage (marker: not integration)
+make test-integration # integration/UI tests + coverage (marker: integration)
+make docker-build    # docker compose build
+make docker-up       # docker compose up -d --build
+make docker-down     # docker compose down
+make clean-db        # remove local database file only (defaults to ./data)
+make clean-media     # remove local media files (defaults to ./data/media)
+make clean-data      # remove all local data (defaults to ./data)
+```
+
+Run `make help` to list all available targets.
+
+---
+
 ## Recommended setup steps
 
 ### Calibrate ROI (biggest accuracy + performance win)
-1. Wait until you have at least one snapshot (a bird visit helps).
-2. Open **Calibrate ROI**.
-3. Drag a tight rectangle around the feeder/perch region.
-4. Save.
+1. Open **Calibrate ROI** (uses a live snapshot from the RTSP feed when available).
+2. Drag a tight rectangle around the feeder/perch region.
+3. Save.
+
+If the live feed is unavailable, the calibration page falls back to the most recent observation snapshot. If there
+are no observations yet, you will see a placeholder image prompting you to start the worker and wait for a visit.
 
 Why ROI matters:
 - reduces CPU (YOLO runs on fewer pixels)
@@ -199,6 +257,8 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 
 ### Background subtraction (motion filtering)
 When a background image is configured via the UI (`/background`), the worker can use it to filter out false positives by detecting motion.
+These tuning values can be adjusted on the **Config** page (`/config`) and are persisted to `config.json`. Environment variables
+continue to override them when set.
 
 - `HBMON_BG_SUBTRACTION` (default "1")
   - Set to "0" to disable background subtraction even if a background image is configured
@@ -217,7 +277,7 @@ When a background image is configured via the UI (`/background`), the worker can
   - Set to "1" to enable debug logging for motion mask errors
 
 **How it works:**
-1. Configure a background image showing the feeder without any birds
+1. Configure a background image showing the feeder without any birds (upload, pick an observation, or capture a live snapshot)
 2. The worker computes a motion mask by comparing each frame to the background
 3. YOLO detections are filtered: only those overlapping significantly with motion areas are kept
 4. This reduces false positives from static objects or lighting changes
@@ -445,28 +505,65 @@ If video clips don't stream properly in Chrome/Firefox:
 
 ## Testing & Coverage
 
-The `hbmon` package includes a suite of unit tests located in the `tests/` directory.  These
-tests are designed to exercise the core logic of the application without requiring
-heavy optional dependencies such as SQLAlchemy, FastAPI, PyTorch or OpenCV.  To run
-the tests you need to install [pytest](https://pytest.org) and the
-[`pytest‑cov`](https://github.com/pytest-dev/pytest-cov) plugin.  Once installed,
-you can execute the test suite with coverage.  If you’re using [uv](https://github.com/astral-sh/uv)
-to manage your virtual environment (as in the CI pipeline), prefix the command with
-`uv run` so that the correct interpreter and dependencies are used:
+The `hbmon` package includes a comprehensive test suite with both **unit tests** and **integration tests**. The coverage badge and PR reports always reflect coverage of **all tests**.
+
+### Running Tests
 
 ```bash
-# Running with uv
+# Run all tests with coverage (default)
 uv run pytest --cov=hbmon --cov-report=term --cov-report=html
 
-# Or, if you installed dependencies with plain pip
-pytest --cov=hbmon --cov-report=term --cov-report=html
+# Run only unit tests (skip integration tests)
+uv run pytest -m "not integration"
+
+# Run only integration tests
+uv run pytest -m integration
 ```
 
-These commands print a coverage summary to the terminal and produce an HTML report
-in the `htmlcov/` directory.  The coverage badge displayed at the top of this
-README reflects the percentage of code covered by the tests.  If you modify the
-code or add new tests, be sure to regenerate the coverage report so the badge
-stays accurate.
+### Unit Tests
+
+Unit tests exercise the core logic without requiring heavy ML dependencies. They are lightweight and fast.
+
+### Integration Tests
+
+Integration tests require ML dependencies (PyTorch, YOLO, CLIP) and real test data. They are marked with `@pytest.mark.integration`.
+
+### Test Data Structure
+
+Integration test data is located in `tests/integration/test_data/`. Each test case folder contains:
+
+```text
+tests/integration/test_data/
+├── README.md                    # Full documentation
+├── flying_0/                    # Test case: flying hummingbird
+│   ├── snapshot.jpg             # Captured image
+│   ├── clip.mp4                 # Video clip
+│   └── metadata.json            # Expected labels & sensitivity tests
+├── perched_0/                   # Test case: perched bird
+│   └── ...
+├── feeding_0/                   # Test case: bird at feeder
+│   └── ...
+└── edge_cases/                  # Edge case scenarios
+    ├── low_light_0/
+    └── motion_blur_0/
+```
+
+Each `metadata.json` includes:
+- **expected**: Detection/classification ground truth (when human_verified=true)
+- **sensitivity_tests**: Parameter variations to test
+- **original_observation**: Raw observation data from the worker
+
+See `tests/integration/test_data/README.md` for the complete schema.
+
+### Coverage Reports
+
+Test coverage is automatically reported on every PR. The coverage badge at the top of this README reflects coverage of **all tests (unit + integration)**.
+
+```bash
+# Generate HTML coverage report
+uv run pytest --cov=hbmon --cov-report=html
+# Open htmlcov/index.html in browser
+```
 
 ## Pre‑commit hooks
 

@@ -14,13 +14,16 @@
   const img = document.getElementById("frame");
   const currentRoiBox = document.getElementById("current-roi-box");
   const proposedRoiBox = document.getElementById("proposed-roi-box");
-  const refreshBtn = document.getElementById("refresh");
-  const clearBtn = document.getElementById("clear-selection");
-
   if (!img || !currentRoiBox || !proposedRoiBox) {
     // Page not loaded or missing expected elements
     return;
   }
+
+  const refreshBtn = document.getElementById("refresh");
+  const clearBtn = document.getElementById("clear-selection");
+  const liveSrc = img.dataset.liveSrc || "";
+  const fallbackSrc = img.dataset.fallbackSrc || "";
+  let usingFallback = !liveSrc;
 
   let start = null;   // {x, y} in normalized coords during drawing
   let proposedRect = null;    // {x, y, w, h} normalized for proposed ROI
@@ -110,6 +113,10 @@
     }
   }
 
+  function stripQuery(src) {
+    return src ? src.split("?")[0] : "";
+  }
+
   // Prevent default drag behavior on image
   img.addEventListener("dragstart", (e) => {
     e.preventDefault();
@@ -165,10 +172,21 @@
 
   if (refreshBtn) {
     refreshBtn.addEventListener("click", () => {
-      // Bust cache to force latest frame
-      img.src = "/api/frame.jpg?ts=" + Date.now();
+      const base = liveSrc || fallbackSrc;
+      if (base) {
+        usingFallback = !liveSrc || base === fallbackSrc;
+        img.src = base + "?ts=" + Date.now();
+      }
     });
   }
+
+  img.addEventListener("error", () => {
+    if (usingFallback || !fallbackSrc || stripQuery(img.src) === fallbackSrc) {
+      return;
+    }
+    usingFallback = true;
+    img.src = fallbackSrc + "?ts=" + Date.now();
+  });
 
   if (clearBtn) {
     clearBtn.addEventListener("click", () => {

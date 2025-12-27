@@ -15,6 +15,7 @@ Key directories (defaults):
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import time
@@ -133,6 +134,10 @@ class Settings:
     # Background image: relative path from data_dir (e.g., "background/background.jpg")
     # This is the path to a static copy of the background image.
     background_image: str = ""
+    bg_subtraction_enabled: bool = True
+    bg_motion_threshold: int = 30
+    bg_motion_blur: int = 5
+    bg_min_overlap: float = 0.15
 
     # misc
     timezone: str = "local"
@@ -165,6 +170,10 @@ class Settings:
         s.ema_alpha = env_float("HBMON_EMA_ALPHA", s.ema_alpha)
         s.crop_padding = env_float("HBMON_CROP_PADDING", s.crop_padding)
         s.timezone = env_str("HBMON_TIMEZONE", s.timezone)
+        s.bg_subtraction_enabled = env_bool("HBMON_BG_SUBTRACTION", s.bg_subtraction_enabled)
+        s.bg_motion_threshold = env_int("HBMON_BG_MOTION_THRESHOLD", s.bg_motion_threshold)
+        s.bg_motion_blur = env_int("HBMON_BG_MOTION_BLUR", s.bg_motion_blur)
+        s.bg_min_overlap = env_float("HBMON_BG_MIN_OVERLAP", s.bg_min_overlap)
 
         # ROI can also be overridden via env for debugging
         roi_env = env_str("HBMON_ROI", "")
@@ -224,7 +233,14 @@ def _ensure_dir(path: Path) -> Path:
     try:
         path.mkdir(parents=True, exist_ok=True)
         return path
-    except PermissionError:
+    except (PermissionError, OSError) as exc:
+        if isinstance(exc, OSError) and exc.errno not in {
+            errno.EACCES,
+            errno.ENOENT,
+            errno.EROFS,
+            errno.EPERM,
+        }:
+            raise
         fallback = Path.cwd() / path.name
         fallback.mkdir(parents=True, exist_ok=True)
         return fallback
@@ -251,6 +267,21 @@ def ensure_dirs() -> None:
 # ----------------------------
 
 def _settings_from_dict(d: dict[str, Any]) -> Settings:
+    def _parse_bool(value: Any, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            cleaned = value.strip().lower()
+            if cleaned in {"1", "true", "yes", "y", "on"}:
+                return True
+            if cleaned in {"0", "false", "no", "n", "off"}:
+                return False
+        return default
+
     roi = None
     if isinstance(d.get("roi"), dict):
         rr = d["roi"]
@@ -280,6 +311,10 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
         timezone=str(d.get("timezone", "local")),
         roi=roi,
         background_image=str(d.get("background_image", "")),
+        bg_subtraction_enabled=_parse_bool(d.get("bg_subtraction_enabled"), True),
+        bg_motion_threshold=int(d.get("bg_motion_threshold", 30)),
+        bg_motion_blur=int(d.get("bg_motion_blur", 5)),
+        bg_min_overlap=float(d.get("bg_min_overlap", 0.15)),
         last_updated_utc=float(d.get("last_updated_utc", 0.0)),
     )
     return s

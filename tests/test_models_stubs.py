@@ -7,13 +7,43 @@ serialization/deserialization works, that properties compute as expected,
 and that extra JSON metadata round-trips correctly.
 """
 
+import builtins
+import importlib.util
 import json
 from datetime import datetime, timezone
+from pathlib import Path
+import sys
 
 import numpy as np
-import pytest
 
 import hbmon.models as models
+
+
+def _load_models_without_sqlalchemy(monkeypatch) -> object:
+    module_path = Path(models.__file__).resolve()
+    original_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name.startswith("sqlalchemy"):
+            raise ImportError("Forced missing SQLAlchemy for stub tests")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    spec = importlib.util.spec_from_file_location("hbmon.models_stub", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load hbmon.models for stub tests")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _get_stub_models(monkeypatch):
+    sa_available = getattr(models, "_SQLALCHEMY_AVAILABLE", True)
+    if not sa_available:
+        return models
+    return _load_models_without_sqlalchemy(monkeypatch)
 
 
 def test_embedding_pack_unpack_roundtrip():
@@ -27,12 +57,9 @@ def test_embedding_pack_unpack_roundtrip():
 
 
 def test_individual_stub_prototype_and_last_seen(monkeypatch):
-    # Only run this test when SQLAlchemy is not available (stubs active)
-    sa_available = getattr(models, "_SQLALCHEMY_AVAILABLE", True)
-    if sa_available:
-        pytest.skip("SQLAlchemy installed; skipping stub tests")
+    stub_models = _get_stub_models(monkeypatch)
 
-    ind = models.Individual(id=42)
+    ind = stub_models.Individual(id=42)
     assert ind.visit_count == 0
     # Set and retrieve prototype vector
     vec = np.random.randn(5).astype(np.float32)
@@ -50,11 +77,9 @@ def test_individual_stub_prototype_and_last_seen(monkeypatch):
 
 
 def test_observation_stub_bbox_and_extra(monkeypatch):
-    sa_available = getattr(models, "_SQLALCHEMY_AVAILABLE", True)
-    if sa_available:
-        pytest.skip("SQLAlchemy installed; skipping stub tests")
+    stub_models = _get_stub_models(monkeypatch)
 
-    obs = models.Observation(
+    obs = stub_models.Observation(
         id=1,
         bbox_x1=1,
         bbox_y1=2,
@@ -81,11 +106,9 @@ def test_observation_stub_bbox_and_extra(monkeypatch):
 
 
 def test_embedding_stub_set_get_vector(monkeypatch):
-    sa_available = getattr(models, "_SQLALCHEMY_AVAILABLE", True)
-    if sa_available:
-        pytest.skip("SQLAlchemy installed; skipping stub tests")
+    stub_models = _get_stub_models(monkeypatch)
 
-    emb = models.Embedding(id=1, observation_id=1)
+    emb = stub_models.Embedding(id=1, observation_id=1)
     vec = np.random.randn(6).astype(np.float32)
     emb.set_vec(vec)
     out = emb.get_vec()

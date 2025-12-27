@@ -11,10 +11,12 @@ Routes:
 - /individuals/{id}/split_review  Suggest A/B split & review UI
 - /individuals/{id}/split_apply   Apply split assignments
 - /calibrate              ROI calibration page
+- /background             Background image configuration page
 
 API:
 - /api/health
 - /api/frame.jpg          Latest snapshot (or placeholder)
+- /api/live_frame.jpg     Single snapshot from live RTSP feed
 - /api/roi  (GET/POST)    Get/set ROI (POST accepts form)
 - /api/video_info/{id}    Video file diagnostics for troubleshooting
 
@@ -38,17 +40,21 @@ from __future__ import annotations
 import csv
 import json
 from json import JSONDecodeError
+import importlib.util
 import io
 import math
 import os
+import re
 import subprocess
 import shutil
 import tarfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import numpy as np
 
 """
 FastAPI web application for hbmon.
@@ -97,6 +103,7 @@ from hbmon.config import (
     Roi,
     background_dir,
     background_image_path,
+    data_dir,
     ensure_dirs,
     load_settings,
     media_dir,
@@ -170,6 +177,13 @@ def _timezone_label(tz: str | None) -> str:
     return "Browser local" if clean.lower() == "local" else clean
 
 
+def _sanitize_redirect_path(raw: str | None, default: str = "/observations") -> str:
+    if not raw:
+        return default
+    text = str(raw)
+    return text if text.startswith("/") else default
+
+
 def _get_git_commit() -> str:
     env_commit = os.getenv("HBMON_GIT_COMMIT")
     # Treat "unknown" (any casing) as unset so fallback methods are tried during Docker builds
@@ -237,6 +251,109 @@ def get_annotated_snapshot_path(obs: Observation) -> str | None:
     return snapshots_data.get("annotated_path")
 
 
+def select_prototype_observations(
+    db: Session,
+    individual_ids: list[int],
+) -> dict[int, Observation]:
+    """
+    Select a per-individual prototype observation.
+
+    Prefer observation embeddings closest to the stored prototype embedding.
+    Falls back to highest match score (then newest timestamp/id) when no
+    embeddings are available.
+    """
+    if not individual_ids:
+        return {}
+
+    selected: dict[int, Observation] = {}
+
+    proto_rows = db.execute(
+        select(Individual).where(Individual.id.in_(individual_ids), Individual.prototype_blob.isnot(None))
+    ).scalars().all()
+    proto_map: dict[int, np.ndarray] = {}
+    for ind in proto_rows:
+        vec = ind.get_prototype()
+        if vec is None:
+            continue
+        proto_map[int(ind.id)] = l2_normalize(vec)
+
+    if proto_map:
+        emb_rows = db.execute(
+            select(Embedding).where(Embedding.individual_id.in_(list(proto_map.keys())))
+        ).scalars().all()
+        best_obs_id: dict[int, int] = {}
+        best_score: dict[int, float] = {}
+        for emb in emb_rows:
+            if emb.individual_id is None:
+                continue
+            proto = proto_map.get(int(emb.individual_id))
+            if proto is None:
+                continue
+            emb_vec = l2_normalize(emb.get_vec())
+            similarity = float(np.dot(proto, emb_vec))
+            if similarity > best_score.get(int(emb.individual_id), float("-inf")):
+                best_score[int(emb.individual_id)] = similarity
+                best_obs_id[int(emb.individual_id)] = int(emb.observation_id)
+        if best_obs_id:
+            obs_rows = db.execute(
+                select(Observation).where(Observation.id.in_(list(best_obs_id.values())))
+            ).scalars().all()
+            obs_by_id = {int(o.id): o for o in obs_rows}
+            for ind_id, obs_id in best_obs_id.items():
+                obs = obs_by_id.get(obs_id)
+                if obs is not None:
+                    selected[ind_id] = obs
+
+    remaining = [ind_id for ind_id in individual_ids if ind_id not in selected]
+    if not remaining:
+        return selected
+
+    ranked = (
+        select(
+            Observation.id.label("obs_id"),
+            func.row_number()
+            .over(
+                partition_by=Observation.individual_id,
+                order_by=(
+                    desc(Observation.match_score),
+                    desc(Observation.ts),
+                    desc(Observation.id),
+                ),
+            )
+            .label("rn"),
+        )
+        .where(Observation.individual_id.in_(remaining))
+        .subquery()
+    )
+
+    rows = db.execute(
+        select(Observation)
+        .join(ranked, Observation.id == ranked.c.obs_id)
+        .where(ranked.c.rn == 1)
+    ).scalars().all()
+
+    for obs in rows:
+        if obs.individual_id is None:
+            continue
+        selected[int(obs.individual_id)] = obs
+    return selected
+
+
+def get_clip_snapshot_path(obs: Observation) -> str | None:
+    """
+    Get the CLIP crop snapshot path for an observation from its extra_json.
+
+    Returns the CLIP snapshot path if available, otherwise None.
+    """
+    extra = obs.get_extra()
+    if not extra or not isinstance(extra, dict):
+        return None
+    snapshots_data = extra.get("snapshots")
+    if not isinstance(snapshots_data, dict):
+        return None
+    return snapshots_data.get("clip_path")
+
+
 def build_hour_heatmap(hours_rows: list[tuple[int, int]]) -> list[dict[str, int]]:
     """
     hours_rows: [(hour_int, count_int), ...]
@@ -281,6 +398,28 @@ def pretty_json(text: str | None) -> str | None:
         return text
 
 
+def pretty_json_obj(obj: Any | None) -> str | None:
+    """
+    Best-effort pretty formatting of a JSON-serializable object.
+
+    Returns ``None`` if formatting fails.
+    """
+    if obj is None:
+        return None
+    try:
+        return json.dumps(obj, indent=4, sort_keys=True)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sanitize_case_name(raw: str | None, fallback: str) -> str:
+    if not raw:
+        return fallback
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", raw.strip())
+    cleaned = cleaned.strip("-_")
+    return cleaned or fallback
+
+
 def _as_utc_str(dt: datetime | None) -> str | None:
     """
     Convert a datetime to a UTC ISO 8601 string with a trailing "Z".
@@ -291,6 +430,127 @@ def _as_utc_str(dt: datetime | None) -> str | None:
     if dt is None:
         return None
     return _to_utc(dt).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _flatten_extra_metadata(extra: dict[str, Any] | None, prefix: str = "") -> dict[str, Any]:
+    if not extra or not isinstance(extra, dict):
+        return {}
+    flattened: dict[str, Any] = {}
+    for key, value in extra.items():
+        key_str = str(key)
+        path = f"{prefix}.{key_str}" if prefix else key_str
+        if isinstance(value, dict):
+            flattened.update(_flatten_extra_metadata(value, prefix=path))
+            continue
+        flattened[path] = value
+    return flattened
+
+
+def _is_sensitivity_key(key: str) -> bool:
+    """Return True when the extra metadata key belongs to sensitivity settings."""
+    return key.startswith("sensitivity.")
+
+
+def _is_snapshot_key(key: str) -> bool:
+    """Return True when the extra metadata key refers to snapshot paths."""
+    return key.startswith("snapshots.")
+
+
+def _format_extra_label(key: str) -> str:
+    parts = key.replace("_", " ").split(".")
+    return " · ".join(part.title() for part in parts)
+
+
+def _format_extra_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.3f}"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, (list, dict)):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except TypeError:
+            return str(value)
+    return str(value)
+
+
+def _extra_sort_type(values: list[Any]) -> str:
+    if not values:
+        return "text"
+    has_value = False
+    for value in values:
+        if value is None:
+            continue
+        has_value = True
+        if isinstance(value, bool):
+            return "text"
+        if not isinstance(value, (int, float)):
+            return "text"
+    return "number" if has_value else "text"
+
+
+def _format_sort_value(value: Any, sort_type: str) -> str:
+    if value is None:
+        return ""
+    if sort_type == "number":
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        if isinstance(value, (int, float)):
+            return str(value)
+        return ""
+    if isinstance(value, (list, dict)):
+        try:
+            return json.dumps(value, ensure_ascii=False).lower()
+        except TypeError:
+            return str(value).lower()
+    return str(value).lower()
+
+
+def _order_extra_columns(keys: Iterator[str]) -> list[str]:
+    preferred = ["detection.box_confidence"]
+    key_list = list(keys)
+    ordered = [key for key in preferred if key in key_list]
+    ordered.extend(sorted(key for key in key_list if key not in preferred))
+    return ordered
+
+
+def _default_extra_column_visibility(columns: Iterable[str]) -> dict[str, bool]:
+    """Define default visibility for extra columns by key."""
+    return {key: not _is_sensitivity_key(key) for key in columns}
+
+
+def _prepare_observation_extras(
+    observations: list["Observation"],
+) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    values_by_key: dict[str, list[Any]] = {}
+    for o in observations:
+        extra_flat = _flatten_extra_metadata(o.get_extra() or {})
+        o.extra_flat = extra_flat  # type: ignore[attr-defined]
+        for key, value in extra_flat.items():
+            if _is_snapshot_key(key):
+                continue
+            values_by_key.setdefault(key, []).append(value)
+
+    columns = _order_extra_columns(values_by_key.keys())
+    sort_types = {key: _extra_sort_type(values_by_key.get(key, [])) for key in columns}
+    labels = {key: _format_extra_label(key) for key in columns}
+
+    for o in observations:
+        extra_display: dict[str, str] = {}
+        extra_sort_values: dict[str, str] = {}
+        for key in columns:
+            value = o.extra_flat.get(key)  # type: ignore[attr-defined]
+            sort_type = sort_types[key]
+            extra_display[key] = _format_extra_value(value)
+            extra_sort_values[key] = _format_sort_value(value, sort_type)
+        o.extra_display = extra_display  # type: ignore[attr-defined]
+        o.extra_sort_values = extra_sort_values  # type: ignore[attr-defined]
+
+    return columns, sort_types, labels
 
 
 def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
@@ -305,6 +565,9 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
         - min_box_area: int in [1, 200000]
         - cooldown_seconds: float in [0.0, 120.0]
         - min_species_prob, match_threshold, ema_alpha: float in [0.0, 1.0]
+        - bg_motion_threshold: int in [0, 255]
+        - bg_motion_blur: odd int in [1, 99]
+        - bg_min_overlap: float in [0.0, 1.0]
 
     Returns
     -------
@@ -325,6 +588,25 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
             return
         if not (lo <= val <= hi):
             errors.append(f"{label} must be between {lo} and {hi}.")
+            return
+        parsed[key] = val
+
+    def parse_odd_int(key: str, label: str, lo: int, hi: int) -> None:
+        text = str(raw.get(key, "")).strip()
+        try:
+            val_float = float(text)
+        except ValueError:
+            errors.append(f"{label} must be a whole number.")
+            return
+        if not val_float.is_integer():
+            errors.append(f"{label} must be a whole number.")
+            return
+        val = int(val_float)
+        if not (lo <= val <= hi):
+            errors.append(f"{label} must be between {lo} and {hi}.")
+            return
+        if val % 2 == 0:
+            errors.append(f"{label} must be an odd number.")
             return
         parsed[key] = val
 
@@ -351,6 +633,12 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
     parse_float("min_species_prob", "Minimum species probability", 0.0, 1.0)
     parse_float("match_threshold", "Match threshold", 0.0, 1.0)
     parse_float("ema_alpha", "EMA alpha", 0.0, 1.0)
+    parse_int("bg_motion_threshold", "Background motion threshold", 0, 255)
+    parse_odd_int("bg_motion_blur", "Background motion blur", 1, 99)
+    parse_float("bg_min_overlap", "Background minimum overlap", 0.0, 1.0)
+
+    bg_enabled_raw = str(raw.get("bg_subtraction_enabled", "")).strip().lower()
+    parsed["bg_subtraction_enabled"] = bg_enabled_raw in {"1", "true", "yes", "on"}
 
     tz_text = str(raw.get("timezone", "")).strip()
     if not tz_text:
@@ -478,6 +766,10 @@ def make_app() -> Any:
             "match_threshold": f"{float(settings.match_threshold):.2f}",
             "ema_alpha": f"{float(settings.ema_alpha):.2f}",
             "timezone": str(getattr(settings, "timezone", "local")),
+            "bg_subtraction_enabled": "1" if getattr(settings, "bg_subtraction_enabled", True) else "0",
+            "bg_motion_threshold": str(int(getattr(settings, "bg_motion_threshold", 30))),
+            "bg_motion_blur": str(int(getattr(settings, "bg_motion_blur", 5))),
+            "bg_min_overlap": f"{float(getattr(settings, 'bg_min_overlap', 0.15)):.2f}",
         }
         if raw:
             for k, v in raw.items():
@@ -592,6 +884,11 @@ def make_app() -> Any:
             # Use annotated snapshot if available, otherwise fall back to raw
             annotated = get_annotated_snapshot_path(o)
             o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
+            o.annotated_snapshot_path = annotated  # type: ignore[attr-defined]
+            o.clip_snapshot_path = get_clip_snapshot_path(o)  # type: ignore[attr-defined]
+
+        extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
+        extra_column_defaults = _default_extra_column_visibility(extra_columns)
 
         inds = db.execute(
             select(Individual).order_by(desc(Individual.visit_count)).limit(2000)
@@ -607,6 +904,10 @@ def make_app() -> Any:
                 settings=s,
                 observations=obs,
                 individuals=inds,
+                extra_columns=extra_columns,
+                extra_column_sort_types=extra_sort_types,
+                extra_column_labels=extra_labels,
+                extra_column_defaults=extra_column_defaults,
                 selected_individual=individual_id,
                 selected_limit=limit,
                 count_shown=len(obs),
@@ -623,10 +924,19 @@ def make_app() -> Any:
 
         o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
         extra = o.get_extra() or {}
-        o.extra_json_pretty = pretty_json(o.extra_json)  # type: ignore[attr-defined]
+        bbox_xyxy = list(o.bbox_xyxy) if o.bbox_xyxy else None
+        original_observation = {
+            "species_label": o.species_label,
+            "species_prob": o.species_prob,
+            "bbox_xyxy": bbox_xyxy,
+            "match_score": o.match_score,
+            "extra": extra,
+        }
+        o.original_observation_pretty = pretty_json_obj(original_observation)  # type: ignore[attr-defined]
 
         # Get annotated snapshot path from extra data (if available)
         annotated_snapshot_path = get_annotated_snapshot_path(o)
+        clip_snapshot_path = get_clip_snapshot_path(o)
 
         # Video file diagnostics
         video_info: dict[str, Any] | None = None
@@ -653,6 +963,7 @@ def make_app() -> Any:
                 allowed_review_labels=ALLOWED_REVIEW_LABELS,
                 video_info=video_info,
                 annotated_snapshot_path=annotated_snapshot_path,
+                clip_snapshot_path=clip_snapshot_path,
             ),
         )
 
@@ -728,6 +1039,8 @@ def make_app() -> Any:
         # Clean up media
         _safe_unlink_media(o.snapshot_path)
         _safe_unlink_media(o.video_path)
+        _safe_unlink_media(get_annotated_snapshot_path(o))
+        _safe_unlink_media(get_clip_snapshot_path(o))
 
         db.execute(delete(Embedding).where(Embedding.observation_id == obs_id))
         db.delete(o)
@@ -735,9 +1048,182 @@ def make_app() -> Any:
 
         if ind_id is not None:
             _recompute_individual_stats(db, int(ind_id))
-            _commit_with_retry(db)
+        _commit_with_retry(db)
 
         return RedirectResponse(url="/observations", status_code=303)
+
+    @app.post("/observations/{obs_id}/export_integration_test")
+    def export_observation_integration_test(
+        obs_id: int,
+        case_name: str = Form(""),
+        description: str = Form(""),
+        behavior: str = Form(""),
+        location: str = Form(""),
+        human_verified: str = Form("false"),
+        db: Session = Depends(get_db),
+    ) -> FileResponse:
+        o = db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        extra = o.get_extra() or {}
+        bbox_xyxy = list(o.bbox_xyxy) if o.bbox_xyxy else None
+        settings = load_settings()
+
+        default_sensitivity = {
+            "detect_conf": settings.detect_conf,
+            "detect_iou": settings.detect_iou,
+            "min_box_area": settings.min_box_area,
+            "bg_motion_threshold": settings.bg_motion_threshold,
+            "bg_motion_blur": settings.bg_motion_blur,
+            "bg_min_overlap": settings.bg_min_overlap,
+            "bg_subtraction_enabled": settings.bg_subtraction_enabled,
+        }
+        default_identification = {
+            "individual_id": o.individual_id,
+            "match_score": o.match_score,
+            "species_label": o.species_label,
+            "species_prob": o.species_prob,
+            "species_label_final": o.species_label,
+            "species_accepted": False,
+        }
+
+        extra_copy = extra.copy() if isinstance(extra, dict) else {}
+        raw_sensitivity = extra_copy.get("sensitivity")
+        raw_identification = extra_copy.get("identification")
+
+        sensitivity: dict[str, Any] = {}
+        if isinstance(raw_sensitivity, dict):
+            sensitivity.update(raw_sensitivity)
+        for key, default_value in default_sensitivity.items():
+            if sensitivity.get(key) is None:
+                sensitivity[key] = default_value
+        extra_copy["sensitivity"] = sensitivity
+
+        identification: dict[str, Any] = {}
+        if isinstance(raw_identification, dict):
+            identification.update(raw_identification)
+        for key, default_value in default_identification.items():
+            if identification.get(key) is None:
+                identification[key] = default_value
+        extra_copy["identification"] = identification
+
+        species_label_final = identification.get("species_label_final")
+        species_accepted = identification.get("species_accepted")
+
+        original_observation = {
+            "species_label": o.species_label,
+            "species_prob": o.species_prob,
+            "bbox_xyxy": bbox_xyxy,
+            "match_score": o.match_score,
+            "extra": extra_copy,
+        }
+
+        expected = {
+            "detection": o.bbox_xyxy is not None,
+            "species_label": o.species_label,
+            "species_label_final": species_label_final or o.species_label,
+            "species_accepted": bool(species_accepted) if species_accepted is not None else False,
+            "behavior": behavior or "unknown",
+            "human_verified": human_verified.strip().lower() in {"1", "true", "yes", "y", "on"},
+        }
+        expected_detection = expected["detection"]
+
+        sensitivity_params: dict[str, Any] = {}
+        for key in (
+            "detect_conf",
+            "detect_iou",
+            "min_box_area",
+            "bg_motion_threshold",
+            "bg_motion_blur",
+            "bg_min_overlap",
+            "bg_subtraction_enabled",
+        ):
+            sensitivity_params[key] = sensitivity.get(key)
+
+        metadata = {
+            "description": description or f"Observation {o.id} integration test",
+            "expected": expected,
+            "source": {
+                "camera": o.camera_name or "",
+                "timestamp_utc": o.ts_utc,
+                "location": location or "",
+            },
+            "sensitivity_tests": [
+                {
+                    "name": "default",
+                    "params": sensitivity_params,
+                    "expected_detection": expected_detection,
+                }
+            ],
+            "original_observation": original_observation,
+        }
+
+        ensure_dirs()
+        out_dir = data_dir() / "exports"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        safe_case = _sanitize_case_name(case_name, f"observation_{o.id}")
+        out_path = out_dir / f"hbmon-integration-{safe_case}-{stamp}.tar.gz"
+
+        metadata_bytes = json.dumps(metadata, indent=4, sort_keys=True).encode("utf-8")
+        metadata_info = tarfile.TarInfo(name=f"{safe_case}/metadata.json")
+        metadata_info.size = len(metadata_bytes)
+
+        snapshot_path = media_dir() / o.snapshot_path
+        video_path = media_dir() / o.video_path
+        annotated_rel = get_annotated_snapshot_path(o)
+        clip_rel = get_clip_snapshot_path(o)
+        annotated_path = (media_dir() / annotated_rel) if annotated_rel else None
+        clip_path = (media_dir() / clip_rel) if clip_rel else None
+        background_path = background_image_path()
+
+        with tarfile.open(out_path, "w:gz") as tf:
+            tf.addfile(metadata_info, io.BytesIO(metadata_bytes))
+            if snapshot_path.exists():
+                tf.add(snapshot_path, arcname=f"{safe_case}/snapshot.jpg")
+            if video_path.exists():
+                tf.add(video_path, arcname=f"{safe_case}/clip.mp4")
+            if annotated_path and annotated_path.exists():
+                tf.add(annotated_path, arcname=f"{safe_case}/snapshot_annotated.jpg")
+            if clip_path and clip_path.exists():
+                tf.add(clip_path, arcname=f"{safe_case}/snapshot_clip.jpg")
+            if background_path.exists():
+                tf.add(background_path, arcname=f"{safe_case}/background.jpg")
+
+        return FileResponse(str(out_path), filename=out_path.name, media_type="application/gzip")
+
+    @app.post("/observations/bulk_delete")
+    def bulk_delete_observations(
+        obs_ids: list[int] = Form([]),
+        redirect_to: str | None = Form(None),
+        db: Session = Depends(get_db),
+    ) -> RedirectResponse:
+        redirect_path = _sanitize_redirect_path(redirect_to)
+        ids = sorted({int(obs_id) for obs_id in obs_ids if int(obs_id) > 0})
+        if not ids:
+            return RedirectResponse(url=redirect_path, status_code=303)
+
+        obs_rows = db.execute(select(Observation).where(Observation.id.in_(ids))).scalars().all()
+        if not obs_rows:
+            return RedirectResponse(url=redirect_path, status_code=303)
+
+        individual_ids = {o.individual_id for o in obs_rows if o.individual_id is not None}
+
+        for o in obs_rows:
+            _safe_unlink_media(o.snapshot_path)
+            _safe_unlink_media(o.video_path)
+
+        db.execute(delete(Embedding).where(Embedding.observation_id.in_(ids)))
+        db.execute(delete(Observation).where(Observation.id.in_(ids)))
+        _commit_with_retry(db)
+
+        for ind_id in individual_ids:
+            _recompute_individual_stats(db, int(ind_id))
+        _commit_with_retry(db)
+
+        return RedirectResponse(url=redirect_path, status_code=303)
 
     @app.get("/individuals", response_class=HTMLResponse)
     def individuals(
@@ -759,6 +1245,14 @@ def make_app() -> Any:
 
         inds = db.execute(q.limit(limit)).scalars().all()
         total = db.execute(select(func.count(Individual.id))).scalar_one()
+        prototype_map = select_prototype_observations(db, [int(ind.id) for ind in inds])
+        for ind in inds:
+            proto_obs = prototype_map.get(int(ind.id))
+            if proto_obs is None:
+                continue
+            annotated = get_annotated_snapshot_path(proto_obs)
+            proto_obs.display_snapshot_path = annotated if annotated else proto_obs.snapshot_path  # type: ignore[attr-defined]
+            ind.prototype_observation = proto_obs  # type: ignore[attr-defined]
 
         return templates.TemplateResponse(
             "individuals.html",
@@ -795,6 +1289,11 @@ def make_app() -> Any:
             # Use annotated snapshot if available, otherwise fall back to raw
             annotated = get_annotated_snapshot_path(o)
             o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
+            o.annotated_snapshot_path = annotated  # type: ignore[attr-defined]
+            o.clip_snapshot_path = get_clip_snapshot_path(o)  # type: ignore[attr-defined]
+
+        extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
+        extra_column_defaults = _default_extra_column_visibility(extra_columns)
 
         total = int(ind.visit_count)
 
@@ -812,6 +1311,11 @@ def make_app() -> Any:
 
         hours_rows: list[tuple[int, int]] = [(int(hh), int(cnt)) for (hh, cnt) in rows if hh is not None]
         heatmap = build_hour_heatmap(hours_rows)
+        prototype_map = select_prototype_observations(db, [individual_id])
+        proto_obs = prototype_map.get(individual_id)
+        if proto_obs is not None:
+            annotated = get_annotated_snapshot_path(proto_obs)
+            proto_obs.display_snapshot_path = annotated if annotated else proto_obs.snapshot_path  # type: ignore[attr-defined]
 
         return templates.TemplateResponse(
             "individual_detail.html",
@@ -820,9 +1324,14 @@ def make_app() -> Any:
                 f"Individual {ind.id}",
                 individual=ind,
                 observations=obs,
+                extra_columns=extra_columns,
+                extra_column_sort_types=extra_sort_types,
+                extra_column_labels=extra_labels,
+                extra_column_defaults=extra_column_defaults,
                 heatmap=heatmap,
                 total=total,
                 last_seen=last_seen,
+                prototype_observation=proto_obs,
             ),
         )
 
@@ -1051,9 +1560,13 @@ def make_app() -> Any:
             "min_species_prob",
             "match_threshold",
             "ema_alpha",
+            "bg_motion_threshold",
+            "bg_motion_blur",
+            "bg_min_overlap",
         )
         raw = {name: str(form.get(name, "") or "").strip() for name in field_names}
         raw["timezone"] = str(form.get("timezone", "") or "").strip()
+        raw["bg_subtraction_enabled"] = "1" if form.get("bg_subtraction_enabled") else "0"
         parsed, errors = _validate_detection_inputs(raw)
 
         if errors:
@@ -1078,6 +1591,10 @@ def make_app() -> Any:
         s.match_threshold = parsed["match_threshold"]
         s.ema_alpha = parsed["ema_alpha"]
         s.timezone = parsed["timezone"]
+        s.bg_subtraction_enabled = parsed["bg_subtraction_enabled"]
+        s.bg_motion_threshold = parsed["bg_motion_threshold"]
+        s.bg_motion_blur = parsed["bg_motion_blur"]
+        s.bg_min_overlap = parsed["bg_min_overlap"]
         save_settings(s)
 
         return RedirectResponse(url="/config?saved=1", status_code=303)
@@ -1094,6 +1611,8 @@ def make_app() -> Any:
                 settings=s,
                 roi=s.roi,
                 roi_str=roi_str,
+                live_frame_url="/api/live_frame.jpg",
+                fallback_frame_url="/api/frame.jpg",
                 ts=int(time.time()),
             ),
         )
@@ -1146,6 +1665,9 @@ def make_app() -> Any:
                 settings=s,
                 background_configured=bool(s.background_image),
                 background_exists=bg_exists,
+                live_frame_url="/api/live_frame.jpg",
+                fallback_frame_url="/api/frame.jpg",
+                rtsp_configured=bool(s.rtsp_url),
                 observations=recent_obs,
                 obs_page=current_page,
                 obs_page_size=clamped_page_size,
@@ -1217,6 +1739,39 @@ def make_app() -> Any:
             "exists": exists,
         }
 
+    def _load_cv2() -> Any:
+        if importlib.util.find_spec("cv2") is None:
+            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
+
+        try:
+            import cv2  # type: ignore
+        except Exception:
+            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
+        return cv2
+
+    def _capture_live_frame(rtsp_url: str) -> tuple[Any, Any]:
+        cv2 = _load_cv2()
+
+        cap = cv2.VideoCapture(rtsp_url)
+        if not cap.isOpened():
+            raise HTTPException(status_code=503, detail="Unable to open RTSP stream")
+
+        try:
+            ok, frame = cap.read()
+        finally:
+            cap.release()
+
+        if not ok or frame is None:
+            raise HTTPException(status_code=503, detail="Failed to read RTSP frame")
+
+        return frame, cv2
+
+    def _encode_jpeg(frame: Any, cv2: Any, quality: int = 80) -> bytes:
+        ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if not ok:
+            raise HTTPException(status_code=500, detail="Failed to encode frame")
+        return jpeg.tobytes()
+
     @app.get("/api/background.jpg")
     def get_background_jpg() -> Any:
         """
@@ -1273,6 +1828,29 @@ def make_app() -> Any:
 
         # Update settings
         s = load_settings()
+        s.background_image = "background/background.jpg"
+        save_settings(s)
+
+        return RedirectResponse(url="/background", status_code=303)
+
+    @app.post("/api/background/from_live")
+    def set_background_from_live() -> RedirectResponse:
+        """
+        Capture a live RTSP frame and save it as the background image.
+        """
+        s = load_settings()
+        if not s.rtsp_url:
+            raise HTTPException(status_code=503, detail="RTSP URL not configured")
+
+        frame, cv2 = _capture_live_frame(s.rtsp_url)
+        jpeg_bytes = _encode_jpeg(frame, cv2, quality=85)
+
+        # Ensure background directory exists
+        bg_dir = background_dir()
+        bg_dir.mkdir(parents=True, exist_ok=True)
+        dst_path = background_image_path()
+        dst_path.write_bytes(jpeg_bytes)
+
         s.background_image = "background/background.jpg"
         save_settings(s)
 
@@ -1384,6 +1962,20 @@ def make_app() -> Any:
         img.save(buf, format="JPEG", quality=85)
         buf.seek(0)
         return StreamingResponse(buf, media_type="image/jpeg")
+
+    @app.get("/api/live_frame.jpg")
+    def live_frame_jpg() -> Any:
+        """
+        Return a single snapshot from the live RTSP stream.
+        """
+        s = load_settings()
+        if not s.rtsp_url:
+            raise HTTPException(status_code=503, detail="RTSP URL not configured")
+
+        frame, cv2 = _capture_live_frame(s.rtsp_url)
+        jpeg_bytes = _encode_jpeg(frame, cv2, quality=80)
+
+        return StreamingResponse(io.BytesIO(jpeg_bytes), media_type="image/jpeg")
 
     @app.get("/api/stream.mjpeg")
     def stream_mjpeg() -> Any:
@@ -1666,5 +2258,22 @@ def make_app() -> Any:
     return app
 
 
-# Default ASGI app for uvicorn
-app = make_app()
+# Default ASGI app for uvicorn - lazy initialization to avoid
+# running make_app() at import time (which causes issues in tests)
+_app_instance: Any = None
+
+
+def get_app() -> Any:
+    """Get or create the FastAPI app instance (lazy singleton)."""
+    global _app_instance
+    if _app_instance is None:
+        _app_instance = make_app()
+    return _app_instance
+
+
+# For uvicorn: create app lazily on first access
+def __getattr__(name: str) -> Any:
+    """Module-level __getattr__ for lazy app initialization."""
+    if name == "app":
+        return get_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
