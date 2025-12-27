@@ -15,25 +15,25 @@ dependencies = [
   "python-multipart>=0.0.9,<1",
   "SQLAlchemy>=2.0,<3",
   "opencv-python-headless>=4.8,<5",
-  "numpy>=1.26,<2.0",
+  "numpy>=1.26,<3.0",
 
   # ML stack
   "scikit-learn>=1.4,<2",
   "ultralytics>=8.3.0,<9",
   "torch>=2.2,<3",
   "torchvision>=0.17,<1",
-  "open-clip-torch>=2.20,<3",
-  "pillow>=10,<12",
+  "open-clip-torch>=2.20,<4",
+  "pillow>=10,<13",
 ]
 
 # MOVED FROM [project.optional-dependencies] to [dependency-groups]
 [dependency-groups]
 dev = [
-  "pytest>=8,<9",
+  "pytest>=8,<10",
   "pytest-xdist>=3.5,<4",
   "ruff>=0.6,<1",
-  "pytest-cov>=4,<5",
-  "pre-commit>=3.6,<4",
+  "pytest-cov>=4,<8",
+  "pre-commit>=3.6,<5",
   "pytest-sugar>=1.1.1",
 ]
 
