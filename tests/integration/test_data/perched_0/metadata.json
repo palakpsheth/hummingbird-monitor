@@ -1,35 +1,80 @@
 {
-    "description": "Example perched hummingbird test case - PLACEHOLDER: Replace with actual test data",
+    "description": "Real bird perching and feeding",
     "expected": {
-        "detection": true,
-        "species_label": null,
         "behavior": "perched",
-        "human_verified": false
+        "detection": true,
+        "human_verified": true,
+        "species_accepted": false,
+        "species_label": "Hummingbird (unknown species)",
+        "species_label_final": "Hummingbird (unknown species)"
     },
-    "source": {
-        "camera": "hummingbirdcam",
-        "timestamp_utc": null,
-        "location": null
+    "original_observation": {
+        "bbox_xyxy": [
+            1090,
+            678,
+            1240,
+            781
+        ],
+        "extra": {
+            "detection": {
+                "background_subtraction_enabled": false,
+                "bbox_xyxy": [
+                    1090,
+                    678,
+                    1240,
+                    781
+                ],
+                "box_confidence": 0.7873638272285461,
+                "roi_offset_xy": [
+                    528,
+                    0
+                ]
+            },
+            "review": {
+                "label": "true_positive",
+                "labeled_at_utc": "2025-12-27T00:52:00Z"
+            },
+            "sensitivity": {
+                "cooldown_seconds": 1.0,
+                "crop_padding": 0.05,
+                "detect_conf": 0.1,
+                "detect_iou": 0.45,
+                "ema_alpha": 0.1,
+                "match_threshold": 0.25,
+                "min_box_area": 100,
+                "min_species_prob": 0.2
+            },
+            "snapshots": {
+                "annotated_path": "snapshots/2025-12-25/3054f81d75a240f58cf3000b0c777932_annotated.jpg"
+            }
+        },
+        "match_score": 0.9496868252754211,
+        "species_label": "Hummingbird (unknown species)",
+        "species_prob": 0.07271277960763296
     },
     "sensitivity_tests": [
         {
+            "expected_detection": true,
             "name": "default",
             "params": {
-                "detect_conf": 0.35,
+                "detect_conf": 0.1,
                 "detect_iou": 0.45,
-                "min_box_area": 600
-            },
-            "expected_detection": true
+                "min_box_area": 100
+            }
         },
         {
+            "expected_detection": true,
             "name": "high_confidence",
             "params": {
-                "detect_conf": 0.75,
+                "detect_conf": 0.65,
                 "detect_iou": 0.45,
-                "min_box_area": 600
-            },
-            "expected_detection": null
-        }
+                "min_box_area": 1000
+            }
+        },
     ],
-    "original_observation": null
+    "source": {
+        "camera": "hummingbirdcam",
+        "location": "America/Los_Angeles",
+        "timestamp_utc": "2025-12-25T23:08:32Z"
+    }
 }
