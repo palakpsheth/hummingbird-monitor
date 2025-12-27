@@ -46,7 +46,23 @@ services:
         # If not provided via the GIT_COMMIT environment variable (e.g. in .env), defaults to "unknown".
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
     container_name: hbmon-web
-    command: [ "uvicorn", "hbmon.web:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info" ]
+    command:
+      [
+        "gunicorn",
+        "hbmon.web:app",
+        "-k",
+        "uvicorn.workers.UvicornWorker",
+        "--workers",
+        "${HBMON_WEB_WORKERS:-4}",
+        "--bind",
+        "0.0.0.0:8000",
+        "--log-level",
+        "info",
+        "--access-logfile",
+        "-",
+        "--error-logfile",
+        "-"
+      ]
     environment:
       - TZ=America/Los_Angeles
 
@@ -57,6 +73,13 @@ services:
       - HBMON_MEDIA_DIR=${HBMON_MEDIA_DIR}
       - HBMON_DB_PATH=${HBMON_DB_PATH}
       - HBMON_CONFIG_PATH=${HBMON_CONFIG_PATH}
+      - HBMON_DB_URL=${HBMON_DB_URL:-postgresql+psycopg://hbmon:hbmon@hbmon-db:5432/hbmon}
+      - HBMON_DB_ASYNC_URL=${HBMON_DB_ASYNC_URL:-postgresql+asyncpg://hbmon:hbmon@hbmon-db:5432/hbmon}
+      - HBMON_DB_POOL_SIZE=${HBMON_DB_POOL_SIZE:-5}
+      - HBMON_DB_MAX_OVERFLOW=${HBMON_DB_MAX_OVERFLOW:-10}
+      - HBMON_DB_POOL_TIMEOUT=${HBMON_DB_POOL_TIMEOUT:-30}
+      - HBMON_DB_POOL_RECYCLE=${HBMON_DB_POOL_RECYCLE:-1800}
+      - HBMON_REDIS_URL=${HBMON_REDIS_URL:-redis://hbmon-redis:6379/0}
 
     volumes:
       - ./data:/data:rw
@@ -64,6 +87,10 @@ services:
       - "8000:8000"
     depends_on:
       wyze-bridge:
+        condition: service_healthy
+      hbmon-db:
+        condition: service_healthy
+      hbmon-redis:
         condition: service_healthy
     restart: unless-stopped
     # Healthcheck: FastAPI health endpoint
@@ -87,6 +114,11 @@ services:
       - HBMON_MEDIA_DIR=${HBMON_MEDIA_DIR}
       - HBMON_DB_PATH=${HBMON_DB_PATH}
       - HBMON_CONFIG_PATH=${HBMON_CONFIG_PATH}
+      - HBMON_DB_URL=${HBMON_DB_URL:-postgresql+psycopg://hbmon:hbmon@hbmon-db:5432/hbmon}
+      - HBMON_DB_POOL_SIZE=${HBMON_DB_POOL_SIZE:-5}
+      - HBMON_DB_MAX_OVERFLOW=${HBMON_DB_MAX_OVERFLOW:-10}
+      - HBMON_DB_POOL_TIMEOUT=${HBMON_DB_POOL_TIMEOUT:-30}
+      - HBMON_DB_POOL_RECYCLE=${HBMON_DB_POOL_RECYCLE:-1800}
 
       - HBMON_CAMERA_NAME=${HBMON_CAMERA_NAME}
 
@@ -119,6 +151,8 @@ services:
     depends_on:
       wyze-bridge:
         condition: service_healthy
+      hbmon-db:
+        condition: service_healthy
       hbmon-web:
         condition: service_healthy
     restart: unless-stopped
@@ -148,3 +182,32 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  hbmon-db:
+    image: postgres:16-alpine
+    container_name: hbmon-db
+    environment:
+      - POSTGRES_DB=hbmon
+      - POSTGRES_USER=hbmon
+      - POSTGRES_PASSWORD=hbmon
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hbmon -d hbmon"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  hbmon-redis:
+    image: redis:7-alpine
+    container_name: hbmon-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
