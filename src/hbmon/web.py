@@ -977,6 +977,7 @@ def make_app() -> Any:
         rtsp = s.rtsp_url or ""
 
         return templates.TemplateResponse(
+            request,
             "index.html",
             _context(
                 request,
@@ -1032,6 +1033,7 @@ def make_app() -> Any:
         total = (await db.execute(select(func.count(Observation.id)))).scalar_one()
 
         return templates.TemplateResponse(
+            request,
             "observations.html",
             _context(
                 request,
@@ -1093,6 +1095,7 @@ def make_app() -> Any:
             video_info = {"exists": exists, "size_kb": size_kb, "suffix": suffix}
 
         return templates.TemplateResponse(
+            request,
             "observation_detail.html",
             _context(
                 request,
@@ -1400,6 +1403,7 @@ def make_app() -> Any:
             ind.prototype_observation = proto_obs  # type: ignore[attr-defined]
 
         return templates.TemplateResponse(
+            request,
             "individuals.html",
             _context(
                 request,
@@ -1467,6 +1471,7 @@ def make_app() -> Any:
             proto_obs.display_snapshot_path = annotated if annotated else proto_obs.snapshot_path  # type: ignore[attr-defined]
 
         return templates.TemplateResponse(
+            request,
             "individual_detail.html",
             _context(
                 request,
@@ -1622,6 +1627,7 @@ def make_app() -> Any:
             pass
 
         return templates.TemplateResponse(
+            request,
             "split_review.html",
             _context(
                 request,
@@ -1721,6 +1727,7 @@ def make_app() -> Any:
         s = load_settings()
         saved = request.query_params.get("saved") == "1"
         return templates.TemplateResponse(
+            request,
             "config.html",
             _context(
                 request,
@@ -1755,6 +1762,7 @@ def make_app() -> Any:
 
         if errors:
             return templates.TemplateResponse(
+                request,
                 "config.html",
                 _context(
                     request,
@@ -1788,6 +1796,7 @@ def make_app() -> Any:
         s = load_settings()
         roi_str = roi_to_str(s.roi) if s.roi else ""
         return templates.TemplateResponse(
+            request,
             "calibrate.html",
             _context(
                 request,
@@ -1840,6 +1849,7 @@ def make_app() -> Any:
             o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
 
         return templates.TemplateResponse(
+            request,
             "background.html",
             _context(
                 request,

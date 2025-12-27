@@ -132,6 +132,34 @@ def test_health_endpoint_sync_fallback(tmp_path, monkeypatch):
     assert response.status_code == 200
 
 
+def test_sync_fallback_adapter_executes_queries(tmp_path, monkeypatch):
+    import hbmon.db as db_module
+
+    monkeypatch.setattr(db_module, "_ASYNC_SQLALCHEMY_AVAILABLE", False)
+    monkeypatch.setattr(db_module, "_SQLALCHEMY_AVAILABLE", True)
+    client = _setup_app_sync(tmp_path, monkeypatch)
+
+    with session_scope() as db:
+        obs = Observation(
+            ts=utcnow(),
+            species_label="Ruby-throated Hummingbird",
+            species_prob=0.9,
+            snapshot_path="snap.jpg",
+            video_path="vid.mp4",
+        )
+        db.add(obs)
+        db.commit()
+        obs_id = obs.id
+
+    response = client.get("/observations")
+    assert response.status_code == 200
+    assert "Ruby-throated Hummingbird" in response.text
+
+    response = client.get(f"/observations/{obs_id}")
+    assert response.status_code == 200
+    assert "Ruby-throated Hummingbird" in response.text
+
+
 def test_delete_observation_cleans_media_and_stats(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     mdir = media_dir()
