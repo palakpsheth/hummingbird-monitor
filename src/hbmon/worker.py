@@ -25,6 +25,7 @@ Expected env vars (common):
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import subprocess
@@ -36,11 +37,12 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from sqlalchemy import select  # type: ignore
 
 from hbmon.clip_model import ClipModel
 from hbmon.clustering import l2_normalize, update_prototype_ema, cosine_distance
 from hbmon.config import Settings, background_image_path, ensure_dirs, load_settings, snapshots_dir
-from hbmon.db import init_db, session_scope
+from hbmon.db import async_session_scope, init_async_db
 from hbmon.models import Embedding, Individual, Observation
 
 # ---------------------------------------------------------------------------
@@ -598,6 +600,38 @@ def _record_clip_opencv(
     return final_path
 
 
+def _record_clip_from_rtsp(
+    rtsp_url: str,
+    out_path: Path,
+    seconds: float,
+    *,
+    max_fps: float = 20.0,
+) -> Path:
+    if not _CV2_AVAILABLE:
+        raise RuntimeError("OpenCV is not available for clip recording")
+    assert cv2 is not None  # for type checkers
+
+    cap = cv2.VideoCapture(rtsp_url)
+    if not cap.isOpened():
+        try:
+            cap.release()
+        except Exception:
+            pass
+        raise RuntimeError("Unable to open RTSP stream for clip recording")
+
+    try:
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+        except Exception:
+            pass
+        return _record_clip_opencv(cap, out_path, seconds, max_fps=max_fps)
+    finally:
+        try:
+            cap.release()
+        except Exception:
+            pass
+
+
 def _bbox_with_padding(det: Det, frame_shape: tuple[int, int], pad_frac: float = 0.18) -> tuple[int, int, int, int]:
     """
     Expand bbox by pad_frac in each direction, clamped to frame.
@@ -605,8 +639,8 @@ def _bbox_with_padding(det: Det, frame_shape: tuple[int, int], pad_frac: float =
     h, w = frame_shape
     bw = det.x2 - det.x1
     bh = det.y2 - det.y1
-    pad_x = int(bw * pad_frac)
-    pad_y = int(bh * pad_frac)
+    pad_x = int(np.ceil(bw * pad_frac))
+    pad_y = int(np.ceil(bh * pad_frac))
 
     x1 = max(0, det.x1 - pad_x)
     y1 = max(0, det.y1 - pad_y)
@@ -616,11 +650,11 @@ def _bbox_with_padding(det: Det, frame_shape: tuple[int, int], pad_frac: float =
     return x1, y1, x2, y2
 
 
-def _load_individuals_for_matching(db: Any) -> list[tuple[int, np.ndarray, int]]:
+async def _load_individuals_for_matching(db: Any) -> list[tuple[int, np.ndarray, int]]:
     """
     Returns [(id, prototype_vec, visit_count), ...] for individuals that have prototypes.
     """
-    rows = db.query(Individual).all()
+    rows = (await db.execute(select(Individual))).scalars().all()
     out: list[tuple[int, np.ndarray, int]] = []
     for ind in rows:
         proto = ind.get_prototype()
@@ -630,7 +664,7 @@ def _load_individuals_for_matching(db: Any) -> list[tuple[int, np.ndarray, int]]
     return out
 
 
-def _match_or_create_individual(
+async def _match_or_create_individual(
     db: Any,
     emb: np.ndarray,
     *,
@@ -645,14 +679,14 @@ def _match_or_create_individual(
     """
     emb = l2_normalize(emb)
 
-    candidates = _load_individuals_for_matching(db)
+    candidates = await _load_individuals_for_matching(db)
     if not candidates:
         ind = Individual(name="(unnamed)", visit_count=0, last_seen_at=None, last_species_label=species_label)
         ind.set_prototype(emb)
         ind.visit_count = 1
         ind.last_seen_at = utcnow()
         db.add(ind)
-        db.flush()
+        await db.flush()
         return int(ind.id), 0.0
 
     best_id = None
@@ -671,7 +705,7 @@ def _match_or_create_individual(
     sim = float(1.0 - best_dist)
 
     if best_dist <= match_threshold:
-        ind = db.get(Individual, best_id)
+        ind = await db.get(Individual, best_id)
         assert ind is not None
         proto = ind.get_prototype()
         if proto is None:
@@ -695,11 +729,11 @@ def _match_or_create_individual(
     ind.visit_count = 1
     ind.last_seen_at = utcnow()
     db.add(ind)
-    db.flush()
+    await db.flush()
     return int(ind.id), 0.0
 
 
-def run_worker() -> None:
+async def run_worker() -> None:
     """
     Main loop for the hummingbird monitoring worker.  Requires OpenCV,
     ultralytics and the ClipModel dependencies.  If any of these are not
@@ -718,7 +752,7 @@ def run_worker() -> None:
         )
 
     ensure_dirs()
-    init_db()
+    await init_async_db()
 
     # Load models once
     yolo_model_name = os.getenv("HBMON_YOLO_MODEL", "yolo11n.pt")
@@ -832,7 +866,7 @@ def run_worker() -> None:
         s = get_settings()
         if not s.rtsp_url:
             print("[worker] HBMON_RTSP_URL not set. Sleeping...")
-            time.sleep(2.0)
+            await asyncio.sleep(2.0)
             continue
 
         # Ensure capture
@@ -846,7 +880,7 @@ def run_worker() -> None:
                 pass
 
             # Give it a moment
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
         ok, frame = cap.read()
         if not ok or frame is None:
@@ -856,7 +890,7 @@ def run_worker() -> None:
             except Exception:
                 pass
             cap = None
-            time.sleep(1.0)
+            await asyncio.sleep(1.0)
             continue
 
         # --- Debug: prove we are receiving frames even if YOLO never triggers ---
@@ -879,7 +913,7 @@ def run_worker() -> None:
 
         # Throttle overall loop (CPU friendly)
         if s.fps_limit and s.fps_limit > 0:
-            time.sleep(max(0.0, 1.0 / float(s.fps_limit)))
+            await asyncio.sleep(max(0.0, 1.0 / float(s.fps_limit)))
 
         # Periodically check for background image updates (every 30 seconds)
         now_bg = time.time()
@@ -942,7 +976,7 @@ def run_worker() -> None:
             )
         except Exception as e:
             print(f"[worker] YOLO error: {e}")
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             continue
 
         if os.getenv("HBMON_DEBUG_YOLO", "0") == "1":
@@ -1010,7 +1044,13 @@ def run_worker() -> None:
 
         # Record clip (best effort)
         try:
-            recorded_path = _record_clip_opencv(cap, clip_path, float(s.clip_seconds), max_fps=20.0)
+            recorded_path = await asyncio.to_thread(
+                _record_clip_from_rtsp,
+                s.rtsp_url,
+                clip_path,
+                float(s.clip_seconds),
+                max_fps=20.0,
+            )
             clip_rel = str(recorded_path.relative_to(media_root))
         except Exception as e:
             print(f"[worker] clip record failed: {e}")
@@ -1044,12 +1084,12 @@ def run_worker() -> None:
             species_label = "Hummingbird (unknown species)"
 
         # Write DB
-        with session_scope() as db:
+        async with async_session_scope() as db:
             individual_id = None
             match_score = 0.0
 
             if emb is not None:
-                individual_id, match_score = _match_or_create_individual(
+                individual_id, match_score = await _match_or_create_individual(
                     db,
                     emb,
                     species_label=species_label,
@@ -1122,7 +1162,7 @@ def run_worker() -> None:
             )
             obs.set_extra(extra_data)
             db.add(obs)
-            db.flush()  # get obs.id
+            await db.flush()  # get obs.id
 
             if emb is not None:
                 e = Embedding(observation_id=int(obs.id), individual_id=individual_id)
@@ -1140,7 +1180,7 @@ def run_worker() -> None:
 
 
 def main() -> None:
-    run_worker()
+    asyncio.run(run_worker())
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from concurrent.futures import Future
 import io
 import json
 import re
@@ -9,9 +10,11 @@ import tarfile
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import pytest
+from sqlalchemy import select
 
 from hbmon.config import background_image_path, ensure_dirs, load_settings, media_dir
-from hbmon.db import init_db, session_scope
+from hbmon.db import init_db, reset_db_state, session_scope
 from hbmon.models import Embedding, Individual, Observation, utcnow
 from hbmon.web import make_app
 
@@ -30,9 +33,27 @@ def _has_hidden_column(text: str, tag: str, column_key: str) -> bool:
 def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     data_dir = tmp_path / "data"
     media = tmp_path / "media"
+    db_path = tmp_path / "db.sqlite"
     monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
     monkeypatch.setenv("HBMON_MEDIA_DIR", str(media))
-    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{tmp_path/'db.sqlite'}")
+    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
+    reset_db_state()
+    ensure_dirs()
+    init_db()
+    app = make_app()
+    return TestClient(app)
+
+
+def _setup_app_sync(tmp_path: Path, monkeypatch) -> TestClient:
+    data_dir = tmp_path / "data"
+    media = tmp_path / "media"
+    db_path = tmp_path / "db.sqlite"
+    monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("HBMON_MEDIA_DIR", str(media))
+    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.delenv("HBMON_DB_ASYNC_URL", raising=False)
+    reset_db_state()
     ensure_dirs()
     init_db()
     app = make_app()
@@ -72,6 +93,7 @@ def _install_live_cv2_stub(monkeypatch) -> None:
     monkeypatch.setattr("hbmon.web.importlib.util.find_spec", lambda name: object())
     monkeypatch.setitem(sys.modules, "cv2", stub_cv2)
 
+
 def test_label_observation_and_clear(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     with session_scope() as db:
@@ -100,6 +122,103 @@ def test_label_observation_and_clear(tmp_path, monkeypatch):
         assert o is not None
         extra = o.get_extra() or {}
         assert "review" not in extra or not extra["review"]
+
+
+def test_health_endpoint_sync_fallback(tmp_path, monkeypatch):
+    import hbmon.db as db_module
+
+    monkeypatch.setattr(db_module, "_ASYNC_SQLALCHEMY_AVAILABLE", False)
+    monkeypatch.setattr(db_module, "_SQLALCHEMY_AVAILABLE", True)
+    client = _setup_app_sync(tmp_path, monkeypatch)
+
+    response = client.get("/api/health")
+    assert response.status_code == 200
+
+
+def test_sync_fallback_adapter_executes_queries(tmp_path, monkeypatch):
+    import hbmon.db as db_module
+
+    monkeypatch.setattr(db_module, "_ASYNC_SQLALCHEMY_AVAILABLE", False)
+    monkeypatch.setattr(db_module, "_SQLALCHEMY_AVAILABLE", True)
+    client = _setup_app_sync(tmp_path, monkeypatch)
+
+    with session_scope() as db:
+        obs = Observation(
+            ts=utcnow(),
+            species_label="Ruby-throated Hummingbird",
+            species_prob=0.9,
+            snapshot_path="snap.jpg",
+            video_path="vid.mp4",
+        )
+        db.add(obs)
+        db.commit()
+        obs_id = obs.id
+
+    response = client.get("/observations")
+    assert response.status_code == 200
+    assert "Ruby-throated Hummingbird" in response.text
+
+    response = client.get(f"/observations/{obs_id}")
+    assert response.status_code == 200
+    assert "Ruby-throated Hummingbird" in response.text
+
+
+def test_sync_fallback_adapter_allows_attribute_access(tmp_path, monkeypatch):
+    import asyncio
+    import hbmon.db as db_module
+    import hbmon.web as web_module
+
+    monkeypatch.setattr(db_module, "_ASYNC_SQLALCHEMY_AVAILABLE", False)
+    monkeypatch.setattr(db_module, "_SQLALCHEMY_AVAILABLE", True)
+    reset_db_state()
+    ensure_dirs()
+    init_db()
+
+    adapter = web_module._AsyncSessionAdapter(db_module.get_session_factory())
+    assert adapter.bind is not None
+    asyncio.run(adapter.close())
+
+@pytest.mark.anyio
+async def test_sync_fallback_adapter_cleanup_runs(tmp_path, monkeypatch):
+    import hbmon.db as db_module
+    import hbmon.web as web_module
+
+    class DummyExecutor:
+        def __init__(self, max_workers: int = 1):
+            self.shutdown_called = False
+
+        def submit(self, fn, *args, **kwargs):
+            fut: Future = Future()
+            try:
+                result = fn(*args, **kwargs)
+            except Exception as exc:
+                fut.set_exception(exc)
+            else:
+                fut.set_result(result)
+            return fut
+
+        def shutdown(self, wait: bool = True) -> None:
+            self.shutdown_called = True
+
+    created: list[DummyExecutor] = []
+
+    def _executor_factory(max_workers: int = 1) -> DummyExecutor:
+        executor = DummyExecutor(max_workers=max_workers)
+        created.append(executor)
+        return executor
+
+    monkeypatch.setattr(db_module, "_ASYNC_SQLALCHEMY_AVAILABLE", False)
+    monkeypatch.setattr(db_module, "_SQLALCHEMY_AVAILABLE", True)
+    monkeypatch.setattr(web_module, "ThreadPoolExecutor", _executor_factory)
+    reset_db_state()
+    ensure_dirs()
+    init_db()
+
+    async for adapter in web_module.get_db_dep():
+        await adapter.execute(select(Observation).limit(1))
+
+    assert created
+    assert created[-1].shutdown_called is True
 
 
 def test_delete_observation_cleans_media_and_stats(tmp_path, monkeypatch):
@@ -343,6 +462,59 @@ def test_stream_mjpeg_returns_503_when_rtsp_not_configured(tmp_path, monkeypatch
     r = client.get("/api/stream.mjpeg")
     assert r.status_code == 503
     assert "RTSP URL not configured" in r.json()["detail"]
+
+
+def test_stream_mjpeg_streams_single_frame(tmp_path, monkeypatch):
+    """Test that /api/stream.mjpeg streams at least one frame when RTSP is configured."""
+    import numpy as np
+
+    monkeypatch.setenv("HBMON_RTSP_URL", "rtsp://example")
+
+    class DummyJpeg:
+        def __init__(self, payload: bytes):
+            self._payload = payload
+
+        def tobytes(self) -> bytes:
+            return self._payload
+
+    class DummyCV2:
+        IMWRITE_JPEG_QUALITY = 1
+        CAP_PROP_BUFFERSIZE = 2
+        _open_calls = 0
+
+        class VideoCapture:
+            def __init__(self, url: str):
+                DummyCV2._open_calls += 1
+                self._opened = DummyCV2._open_calls == 1
+                self._reads = 0
+
+            def isOpened(self) -> bool:
+                return self._opened
+
+            def read(self):
+                self._reads += 1
+                if self._opened and self._reads == 1:
+                    return True, np.zeros((8, 8, 3), dtype=np.uint8)
+                return False, None
+
+            def release(self) -> None:
+                return None
+
+            def set(self, *args, **kwargs) -> None:
+                return None
+
+        @staticmethod
+        def imencode(ext: str, frame, params):
+            return True, DummyJpeg(b"jpeg-bytes")
+
+    monkeypatch.setitem(sys.modules, "cv2", DummyCV2)
+    monkeypatch.setattr("hbmon.web.time.sleep", lambda *args, **kwargs: None)
+
+    client = _setup_app(tmp_path, monkeypatch)
+    with client.stream("GET", "/api/stream.mjpeg") as response:
+        assert response.status_code == 200
+        chunk = next(response.iter_bytes())
+        assert b"--frame" in chunk
 
 
 def test_swagger_docs_endpoint(tmp_path, monkeypatch):
