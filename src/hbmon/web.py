@@ -38,6 +38,7 @@ Notes:
 from __future__ import annotations
 
 import asyncio
+import atexit
 from concurrent.futures import ThreadPoolExecutor
 import weakref
 import csv
@@ -236,13 +237,29 @@ async def _run_blocking(func: Any, *args: Any, **kwargs: Any) -> Any:
     return await anyio.to_thread.run_sync(partial(func, *args, **kwargs))
 
 
+def _shutdown_async_session_executors() -> None:
+    for executor in list(_AsyncSessionAdapter._executors):
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            executor.shutdown(wait=False)
+
+
 class _AsyncSessionAdapter:
+    _executors: "weakref.WeakSet[ThreadPoolExecutor]" = weakref.WeakSet()
+
     def __init__(self, session_factory: Callable[..., Session]):
         self._session_factory = session_factory
         self._session: Session | None = None
         self._executor = ThreadPoolExecutor(max_workers=1)
+        self._executors.add(self._executor)
         self._closed = False
-        self._finalizer = weakref.finalize(self, self._shutdown_executor, wait=False)
+        self._finalizer = weakref.finalize(
+            self,
+            self._finalize_executor,
+            weakref.ref(self),
+            wait=False,
+        )
 
     async def _run(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         loop = asyncio.get_running_loop()
@@ -255,8 +272,18 @@ class _AsyncSessionAdapter:
             self._executor.shutdown(wait=wait, cancel_futures=True)
         except TypeError:
             self._executor.shutdown(wait=wait)
+        self._executors.discard(self._executor)
         self._closed = True
 
+    @staticmethod
+    def _finalize_executor(
+        self_ref: weakref.ReferenceType["_AsyncSessionAdapter"],
+        wait: bool,
+    ) -> None:
+        self = self_ref()
+        if self is None:
+            return
+        self._shutdown_executor(wait=wait)
     async def _ensure_session(self) -> Session:
         if self._session is None:
             self._session = await self._run(self._session_factory)
@@ -292,6 +319,9 @@ class _AsyncSessionAdapter:
         if self._session is None:
             self._session = self._executor.submit(self._session_factory).result()
         return getattr(self._session, name)
+
+
+atexit.register(_shutdown_async_session_executors)
 
 
 async def get_db_dep() -> AsyncIterator[AsyncSession | _AsyncSessionAdapter]:

@@ -221,6 +221,42 @@ async def test_sync_fallback_adapter_cleanup_runs(tmp_path, monkeypatch):
     assert created[-1].shutdown_called is True
 
 
+def test_shutdown_async_session_executors_handles_cancel_futures(monkeypatch):
+    import hbmon.web as web_module
+
+    class DummyExecutor:
+        def __init__(self) -> None:
+            self.shutdown_calls: list[dict[str, bool]] = []
+
+        def shutdown(self, *, wait: bool, cancel_futures: bool) -> None:
+            self.shutdown_calls.append({"wait": wait, "cancel_futures": cancel_futures})
+
+    dummy = DummyExecutor()
+    monkeypatch.setattr(web_module._AsyncSessionAdapter, "_executors", {dummy})
+
+    web_module._shutdown_async_session_executors()
+
+    assert dummy.shutdown_calls == [{"wait": False, "cancel_futures": True}]
+
+
+def test_shutdown_async_session_executors_fallbacks_without_cancel_futures(monkeypatch):
+    import hbmon.web as web_module
+
+    class DummyExecutor:
+        def __init__(self) -> None:
+            self.shutdown_calls: list[dict[str, bool]] = []
+
+        def shutdown(self, *, wait: bool) -> None:
+            self.shutdown_calls.append({"wait": wait})
+
+    dummy = DummyExecutor()
+    monkeypatch.setattr(web_module._AsyncSessionAdapter, "_executors", {dummy})
+
+    web_module._shutdown_async_session_executors()
+
+    assert dummy.shutdown_calls == [{"wait": False}]
+
+
 def test_delete_observation_cleans_media_and_stats(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     mdir = media_dir()
