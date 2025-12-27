@@ -17,6 +17,7 @@ import hbmon.config as config
 
 def test_ensure_dirs_fallback(monkeypatch, tmp_path):
     """Ensure that ensure_dirs falls back to cwd when target paths are unwritable."""
+    monkeypatch.chdir(tmp_path)
     # Point the environment to directories under a known-unwritable parent.
     # We use distinct names to avoid collisions with existing directories on the system.
     candidates = [Path("/proc"), Path("/sys"), Path("/root")]
