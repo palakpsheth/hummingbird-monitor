@@ -1068,27 +1068,56 @@ def make_app() -> Any:
 
         extra = o.get_extra() or {}
         bbox_xyxy = list(o.bbox_xyxy) if o.bbox_xyxy else None
+        settings = load_settings()
+
+        default_sensitivity = {
+            "detect_conf": settings.detect_conf,
+            "detect_iou": settings.detect_iou,
+            "min_box_area": settings.min_box_area,
+            "bg_motion_threshold": settings.bg_motion_threshold,
+            "bg_motion_blur": settings.bg_motion_blur,
+            "bg_min_overlap": settings.bg_min_overlap,
+            "bg_subtraction_enabled": settings.bg_subtraction_enabled,
+        }
+        default_identification = {
+            "individual_id": o.individual_id,
+            "match_score": o.match_score,
+            "species_label": o.species_label,
+            "species_prob": o.species_prob,
+            "species_label_final": o.species_label,
+            "species_accepted": False,
+        }
+
+        extra_copy = extra.copy() if isinstance(extra, dict) else {}
+        raw_sensitivity = extra_copy.get("sensitivity")
+        raw_identification = extra_copy.get("identification")
+
+        sensitivity: dict[str, Any] = {}
+        if isinstance(raw_sensitivity, dict):
+            sensitivity.update(raw_sensitivity)
+        for key, default_value in default_sensitivity.items():
+            if sensitivity.get(key) is None:
+                sensitivity[key] = default_value
+        extra_copy["sensitivity"] = sensitivity
+
+        identification: dict[str, Any] = {}
+        if isinstance(raw_identification, dict):
+            identification.update(raw_identification)
+        for key, default_value in default_identification.items():
+            if identification.get(key) is None:
+                identification[key] = default_value
+        extra_copy["identification"] = identification
+
+        species_label_final = identification.get("species_label_final")
+        species_accepted = identification.get("species_accepted")
+
         original_observation = {
             "species_label": o.species_label,
             "species_prob": o.species_prob,
             "bbox_xyxy": bbox_xyxy,
             "match_score": o.match_score,
-            "extra": extra,
+            "extra": extra_copy,
         }
-
-        identification = extra.get("identification") if isinstance(extra, dict) else {}
-        sensitivity = extra.get("sensitivity") if isinstance(extra, dict) else {}
-
-        species_label_final = (
-            identification.get("species_label_final")
-            if isinstance(identification, dict)
-            else None
-        )
-        species_accepted = (
-            identification.get("species_accepted")
-            if isinstance(identification, dict)
-            else None
-        )
 
         expected = {
             "detection": o.bbox_xyxy is not None,
@@ -1101,18 +1130,16 @@ def make_app() -> Any:
         expected_detection = expected["detection"]
 
         sensitivity_params: dict[str, Any] = {}
-        if isinstance(sensitivity, dict):
-            for key in (
-                "detect_conf",
-                "detect_iou",
-                "min_box_area",
-                "bg_motion_threshold",
-                "bg_motion_blur",
-                "bg_min_overlap",
-                "bg_subtraction_enabled",
-            ):
-                if key in sensitivity:
-                    sensitivity_params[key] = sensitivity[key]
+        for key in (
+            "detect_conf",
+            "detect_iou",
+            "min_box_area",
+            "bg_motion_threshold",
+            "bg_motion_blur",
+            "bg_min_overlap",
+            "bg_subtraction_enabled",
+        ):
+            sensitivity_params[key] = sensitivity.get(key)
 
         metadata = {
             "description": description or f"Observation {o.id} integration test",

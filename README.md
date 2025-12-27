@@ -37,11 +37,13 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Exports**
   - CSV: observations and individuals
   - `tar.gz` bundle: snapshots + clips (generated under `/data/exports/`)
-  - Per-observation integration test bundle (downloadable from the observation detail page), containing:
+  - Per-observation integration test bundle (downloadable from the observation detail page after completing
+    the metadata form, including a human-verified true/false selection), containing:
     - `metadata.json` with `expected`, `source`, `sensitivity_tests`, and `original_observation`
     - `snapshot.jpg` (raw snapshot)
     - `clip.mp4` (video clip)
     - Optional `snapshot_annotated.jpg` and `snapshot_clip.jpg` when available
+  - Missing sensitivity/identification fields are backfilled with current defaults when exporting older observations.
 
 ### Web UI pages
 - **Dashboard**: recent observations + top individuals
