@@ -12,8 +12,6 @@ updates:
       python-dependencies:
         patterns:
           - "*"
-    labels:
-      - "dependencies"
 
   - package-ecosystem: "docker"
     directory: "/"
@@ -23,8 +21,10 @@ updates:
       time: "03:30"
       timezone: "UTC"
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
+    ignore:
+      - dependency-name: "python"
+        versions:
+          - ">= 3.13"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -34,5 +34,3 @@ updates:
       time: "03:30"
       timezone: "UTC"
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
