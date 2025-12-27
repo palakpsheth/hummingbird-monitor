@@ -47,3 +47,17 @@ def safe_dirs(tmp_path, monkeypatch):
     monkeypatch.setenv("HBMON_MEDIA_DIR", str(media_dir))
 
     return {"data_dir": data_dir, "media_dir": media_dir}
+
+
+@pytest.fixture(autouse=True)
+def isolate_test_dirs(tmp_path, monkeypatch):
+    """
+    Ensure tests do not create data/media directories in the repository root.
+    """
+    data_dir = tmp_path / "data"
+    media_dir = tmp_path / "media"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    media_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("HBMON_MEDIA_DIR", str(media_dir))
