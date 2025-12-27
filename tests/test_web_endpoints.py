@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 import io
+import json
+import re
 import sys
+import tarfile
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -1122,6 +1124,82 @@ def test_export_media_bundle(tmp_path, monkeypatch):
     r = client.get("/export/media_bundle.tar.gz")
     assert r.status_code == 200
     assert "application/gzip" in r.headers.get("content-type", "")
+
+
+def test_export_integration_test_bundle(tmp_path, monkeypatch):
+    """Test exporting a single observation integration test bundle."""
+    client = _setup_app(tmp_path, monkeypatch)
+
+    mdir = media_dir()
+    snap_dir = mdir / "snapshots"
+    clips_dir = mdir / "clips"
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    clips_dir.mkdir(parents=True, exist_ok=True)
+
+    snap_path = snap_dir / "obs-test.jpg"
+    clip_path = clips_dir / "obs-test.mp4"
+    snap_path.write_text("fake image")
+    clip_path.write_text("fake video")
+
+    extra = {
+        "sensitivity": {
+            "detect_conf": 0.35,
+            "detect_iou": 0.45,
+            "min_box_area": 600,
+        },
+        "identification": {
+            "species_label_final": "Anna's Hummingbird",
+            "species_accepted": True,
+        },
+    }
+
+    with session_scope() as db:
+        obs = Observation(
+            species_label="Anna's Hummingbird",
+            species_prob=0.93,
+            bbox_x1=10,
+            bbox_y1=20,
+            bbox_x2=110,
+            bbox_y2=220,
+            snapshot_path=str(snap_path.relative_to(mdir)),
+            video_path=str(clip_path.relative_to(mdir)),
+            extra_json=json.dumps(extra),
+        )
+        db.add(obs)
+        db.commit()
+        obs_id = obs.id
+
+    r = client.post(
+        f"/observations/{obs_id}/export_integration_test",
+        data={
+            "case_name": "flying_99",
+            "description": "Test export",
+            "behavior": "flying",
+            "location": "Testville",
+            "human_verified": "true",
+        },
+    )
+    assert r.status_code == 200
+    assert "application/gzip" in r.headers.get("content-type", "")
+
+    bundle = tarfile.open(fileobj=io.BytesIO(r.content), mode="r:gz")
+    names = set(bundle.getnames())
+    assert "flying_99/metadata.json" in names
+    assert "flying_99/snapshot.jpg" in names
+    assert "flying_99/clip.mp4" in names
+
+    metadata_member = bundle.extractfile("flying_99/metadata.json")
+    assert metadata_member is not None
+    metadata = json.loads(metadata_member.read().decode("utf-8"))
+    assert metadata["expected"]["detection"] is True
+    assert metadata["expected"]["species_label_final"] == "Anna's Hummingbird"
+    assert metadata["expected"]["species_accepted"] is True
+    assert metadata["expected"]["behavior"] == "flying"
+    assert metadata["expected"]["human_verified"] is True
+    sensitivity_tests = metadata["sensitivity_tests"]
+    assert len(sensitivity_tests) == 1
+    assert sensitivity_tests[0]["params"]["detect_conf"] == 0.35
+    assert sensitivity_tests[0]["expected_detection"] == metadata["expected"]["detection"]
 
 
 def test_dashboard_contains_live_camera_feed_section(tmp_path, monkeypatch):

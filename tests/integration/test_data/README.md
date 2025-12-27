@@ -153,6 +153,18 @@ The raw observation data as captured by the worker, including:
 4. Create `metadata.json` following the schema above
 5. Ensure `human_verified` is set to `true` if you've manually confirmed the labels
 
+### Using the export bundle
+
+The observation detail page can export a tar.gz bundle that already contains the
+expected test layout:
+
+- `metadata.json` with `expected`, `source`, `sensitivity_tests`, and `original_observation`
+- `snapshot.jpg` (raw snapshot)
+- `clip.mp4` (video clip)
+- Optional `snapshot_annotated.jpg` and `snapshot_clip.jpg` when available
+
+Extract the bundle under `tests/integration/test_data/` to add a new case.
+
 ## Running Integration Tests
 
 Integration tests are marked with `@pytest.mark.integration` and are skipped by default.
