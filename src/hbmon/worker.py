@@ -607,8 +607,8 @@ def _bbox_with_padding(det: Det, frame_shape: tuple[int, int], pad_frac: float =
     h, w = frame_shape
     bw = det.x2 - det.x1
     bh = det.y2 - det.y1
-    pad_x = int(bw * pad_frac)
-    pad_y = int(bh * pad_frac)
+    pad_x = int(np.ceil(bw * pad_frac))
+    pad_y = int(np.ceil(bh * pad_frac))
 
     x1 = max(0, det.x1 - pad_x)
     y1 = max(0, det.y1 - pad_y)
