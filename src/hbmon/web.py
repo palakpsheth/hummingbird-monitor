@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import weakref
 import csv
 from contextlib import asynccontextmanager
 import json
@@ -240,19 +241,21 @@ class _AsyncSessionAdapter:
         self._session_factory = session_factory
         self._session: Session | None = None
         self._executor = ThreadPoolExecutor(max_workers=1)
-
-    def __del__(self) -> None:
-        self._shutdown_executor(wait=False)
+        self._closed = False
+        self._finalizer = weakref.finalize(self, self._shutdown_executor, wait=False)
 
     async def _run(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, partial(func, *args, **kwargs))
 
     def _shutdown_executor(self, wait: bool) -> None:
+        if self._closed:
+            return
         try:
             self._executor.shutdown(wait=wait, cancel_futures=True)
         except TypeError:
             self._executor.shutdown(wait=wait)
+        self._closed = True
 
     async def _ensure_session(self) -> Session:
         if self._session is None:
@@ -283,6 +286,7 @@ class _AsyncSessionAdapter:
         if self._session is not None:
             await self._run(self._session.close)
         self._shutdown_executor(wait=True)
+        self._finalizer.detach()
 
     def __getattr__(self, name: str) -> Any:
         if self._session is None:
