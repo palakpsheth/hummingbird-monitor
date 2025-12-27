@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 
 UV ?= uv
-PYTEST ?= $(UV) run pytest
+PYTEST ?= $(UV) run pytest -n auto
 RUFF ?= $(UV) run ruff
 
 DATA_DIR ?= data

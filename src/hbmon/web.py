@@ -37,7 +37,12 @@ Notes:
 
 from __future__ import annotations
 
+import asyncio
+import atexit
+from concurrent.futures import ThreadPoolExecutor
+import weakref
 import csv
+from contextlib import asynccontextmanager
 import json
 from json import JSONDecodeError
 import importlib.util
@@ -50,10 +55,12 @@ import shutil
 import tarfile
 import time
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, AsyncIterator, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import anyio
 import numpy as np
 
 """
@@ -88,10 +95,12 @@ try:
     from sqlalchemy import delete, desc, func, select  # type: ignore
     from sqlalchemy.exc import OperationalError  # type: ignore
     from sqlalchemy.orm import Session  # type: ignore
+    from sqlalchemy.ext.asyncio import AsyncSession  # type: ignore
     _SQLA_AVAILABLE = True
 except Exception:  # pragma: no cover
     delete = desc = func = select = None  # type: ignore
     Session = object  # type: ignore
+    AsyncSession = object  # type: ignore
     OperationalError = Exception  # type: ignore
     _SQLA_AVAILABLE = False
 
@@ -110,7 +119,14 @@ from hbmon.config import (
     roi_to_str,
     save_settings,
 )
-from hbmon.db import get_db, init_db
+from hbmon.cache import cache_get_json, cache_set_json
+from hbmon.db import (
+    get_async_db,
+    get_session_factory,
+    init_async_db,
+    init_db,
+    is_async_db_available,
+)
 from hbmon.models import Embedding, Individual, Observation, _to_utc
 from hbmon.schema import HealthOut, RoiOut
 from hbmon.clustering import l2_normalize, suggest_split_two_groups
@@ -217,6 +233,135 @@ _GIT_COMMIT = _get_git_commit()
 # Presentation helpers
 # ----------------------------
 
+async def _run_blocking(func: Any, *args: Any, **kwargs: Any) -> Any:
+    return await anyio.to_thread.run_sync(partial(func, *args, **kwargs))
+
+
+def _shutdown_async_session_executors() -> None:
+    for executor in list(_AsyncSessionAdapter._executors):
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            executor.shutdown(wait=False)
+
+
+class _AsyncSessionAdapter:
+    _executors: "weakref.WeakSet[ThreadPoolExecutor]" = weakref.WeakSet()
+
+    def __init__(self, session_factory: Callable[..., Session]):
+        self._session_factory = session_factory
+        self._session: Session | None = None
+        self._executor = ThreadPoolExecutor(max_workers=1)
+        self._executors.add(self._executor)
+        self._closed = False
+        self._finalizer = weakref.finalize(
+            self,
+            self._finalize_executor,
+            weakref.ref(self),
+            wait=False,
+        )
+
+    async def _run(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, partial(func, *args, **kwargs))
+
+    def _shutdown_executor(self, wait: bool) -> None:
+        if self._closed:
+            return
+        try:
+            self._executor.shutdown(wait=wait, cancel_futures=True)
+        except TypeError:
+            self._executor.shutdown(wait=wait)
+        self._executors.discard(self._executor)
+        self._closed = True
+
+    @staticmethod
+    def _finalize_executor(
+        self_ref: weakref.ReferenceType["_AsyncSessionAdapter"],
+        wait: bool,
+    ) -> None:
+        self = self_ref()
+        if self is None:
+            return
+        self._shutdown_executor(wait=wait)
+    async def _ensure_session(self) -> Session:
+        if self._session is None:
+            self._session = await self._run(self._session_factory)
+        return self._session
+
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        session = await self._ensure_session()
+        return await self._run(session.execute, *args, **kwargs)
+
+    async def get(self, *args: Any, **kwargs: Any) -> Any:
+        session = await self._ensure_session()
+        return await self._run(session.get, *args, **kwargs)
+
+    async def commit(self) -> None:
+        session = await self._ensure_session()
+        await self._run(session.commit)
+
+    async def rollback(self) -> None:
+        session = await self._ensure_session()
+        await self._run(session.rollback)
+
+    async def flush(self) -> None:
+        session = await self._ensure_session()
+        await self._run(session.flush)
+
+    async def close(self) -> None:
+        if self._session is not None:
+            await self._run(self._session.close)
+        self._shutdown_executor(wait=True)
+        self._finalizer.detach()
+
+    def __getattr__(self, name: str) -> Any:
+        if self._session is None:
+            self._session = self._executor.submit(self._session_factory).result()
+        return getattr(self._session, name)
+
+
+atexit.register(_shutdown_async_session_executors)
+
+
+async def get_db_dep() -> AsyncIterator[AsyncSession | _AsyncSessionAdapter]:
+    if is_async_db_available():
+        async for session in get_async_db():
+            yield session
+    else:
+        adapter = _AsyncSessionAdapter(get_session_factory())
+        try:
+            yield adapter
+        finally:
+            await adapter.close()
+
+
+async def _get_latest_observation_data(
+    db: AsyncSession | _AsyncSessionAdapter,
+) -> dict[str, Any] | None:
+    cache_key = "hbmon:latest_observation"
+    cached = await cache_get_json(cache_key)
+    if isinstance(cached, dict):
+        required_keys = {"id", "ts_utc", "snapshot_path", "video_path"}
+        if required_keys.issubset(cached.keys()):
+            return cached
+
+    latest = (
+        await db.execute(select(Observation).order_by(desc(Observation.ts)).limit(1))
+    ).scalars().first()
+    if latest is None:
+        return None
+
+    payload = {
+        "id": int(latest.id),
+        "ts_utc": latest.ts_utc,
+        "snapshot_path": latest.snapshot_path,
+        "video_path": latest.video_path,
+    }
+    await cache_set_json(cache_key, payload)
+    return payload
+
+
 def species_to_css(label: str) -> str:
     s = (label or "").strip().lower().replace("’", "'")
     if "anna" in s:
@@ -251,8 +396,8 @@ def get_annotated_snapshot_path(obs: Observation) -> str | None:
     return snapshots_data.get("annotated_path")
 
 
-def select_prototype_observations(
-    db: Session,
+async def select_prototype_observations(
+    db: AsyncSession | _AsyncSessionAdapter,
     individual_ids: list[int],
 ) -> dict[int, Observation]:
     """
@@ -267,8 +412,10 @@ def select_prototype_observations(
 
     selected: dict[int, Observation] = {}
 
-    proto_rows = db.execute(
-        select(Individual).where(Individual.id.in_(individual_ids), Individual.prototype_blob.isnot(None))
+    proto_rows = (
+        await db.execute(
+            select(Individual).where(Individual.id.in_(individual_ids), Individual.prototype_blob.isnot(None))
+        )
     ).scalars().all()
     proto_map: dict[int, np.ndarray] = {}
     for ind in proto_rows:
@@ -278,8 +425,10 @@ def select_prototype_observations(
         proto_map[int(ind.id)] = l2_normalize(vec)
 
     if proto_map:
-        emb_rows = db.execute(
-            select(Embedding).where(Embedding.individual_id.in_(list(proto_map.keys())))
+        emb_rows = (
+            await db.execute(
+                select(Embedding).where(Embedding.individual_id.in_(list(proto_map.keys())))
+            )
         ).scalars().all()
         best_obs_id: dict[int, int] = {}
         best_score: dict[int, float] = {}
@@ -295,8 +444,10 @@ def select_prototype_observations(
                 best_score[int(emb.individual_id)] = similarity
                 best_obs_id[int(emb.individual_id)] = int(emb.observation_id)
         if best_obs_id:
-            obs_rows = db.execute(
-                select(Observation).where(Observation.id.in_(list(best_obs_id.values())))
+            obs_rows = (
+                await db.execute(
+                    select(Observation).where(Observation.id.in_(list(best_obs_id.values())))
+                )
             ).scalars().all()
             obs_by_id = {int(o.id): o for o in obs_rows}
             for ind_id, obs_id in best_obs_id.items():
@@ -326,10 +477,12 @@ def select_prototype_observations(
         .subquery()
     )
 
-    rows = db.execute(
-        select(Observation)
-        .join(ranked, Observation.id == ranked.c.obs_id)
-        .where(ranked.c.rn == 1)
+    rows = (
+        await db.execute(
+            select(Observation)
+            .join(ranked, Observation.id == ranked.c.obs_id)
+            .where(ranked.c.rn == 1)
+        )
     ).scalars().all()
 
     for obs in rows:
@@ -691,7 +844,14 @@ def make_app() -> Any:
         )
 
     ensure_dirs()
-    init_db()
+
+    @asynccontextmanager
+    async def _lifespan(_: FastAPI):
+        try:
+            await init_async_db()
+        except RuntimeError:
+            init_db()
+        yield
 
     app = FastAPI(
         title="hbmon",
@@ -703,6 +863,7 @@ def make_app() -> Any:
         version=__version__,
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=_lifespan,
     )
 
     here = Path(__file__).resolve().parent
@@ -726,29 +887,38 @@ def make_app() -> Any:
             # Best-effort cleanup; log for visibility but do not block user action.
             print(f"[web] failed to remove media file {p}")
 
-    def _recompute_individual_stats(db: Session, individual_id: int) -> None:
+    async def _recompute_individual_stats(
+        db: AsyncSession | _AsyncSessionAdapter,
+        individual_id: int,
+    ) -> None:
         """Update visit_count/last_seen_at for an individual. Caller must commit."""
-        ind = db.get(Individual, individual_id)
+        ind = await db.get(Individual, individual_id)
         if ind is None:
             print(f"[web] individual {individual_id} not found while recomputing stats")
             return
-        rows = db.execute(
-            select(func.count(Observation.id), func.max(Observation.ts))
-            .where(Observation.individual_id == individual_id)
+        rows = (
+            await db.execute(
+                select(func.count(Observation.id), func.max(Observation.ts))
+                .where(Observation.individual_id == individual_id)
+            )
         ).one()
         ind.visit_count = int(rows[0] or 0)
         ind.last_seen_at = rows[1]
 
-    def _commit_with_retry(db: Session, retries: int = 3, delay: float = 0.5) -> None:
+    async def _commit_with_retry(
+        db: AsyncSession | _AsyncSessionAdapter,
+        retries: int = 3,
+        delay: float = 0.5,
+    ) -> None:
         for i in range(max(1, retries)):
             try:
-                db.commit()
+                await db.commit()
                 return
             except OperationalError as e:  # pragma: no cover
                 msg = str(e).lower()
                 if "database is locked" in msg and i < retries - 1:
                     print(f"[web] commit retry due to lock (attempt {i + 1}/{retries})")
-                    time.sleep(delay)
+                    await anyio.sleep(delay)
                     continue
                 raise
 
@@ -792,58 +962,95 @@ def make_app() -> Any:
         return base
 
     @app.get("/", response_class=HTMLResponse)
-    def index(
+    async def index(
         request: Request,
         page: int = 1,
         page_size: int = 10,
-        db: Session = Depends(get_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
         title = "Hummingbird Monitor"
 
-        top_inds = db.execute(
-            select(Individual.id, Individual.name, Individual.visit_count, Individual.last_seen_at)
-            .order_by(desc(Individual.visit_count))
-            .limit(20)
-        ).all()
+        cache_key = f"hbmon:index:{page}:{page_size}"
+        cached = await cache_get_json(cache_key)
+        if cached:
+            top_inds_out = cached["top_inds_out"]
+            recent = cached["recent"]
+            current_page = cached["current_page"]
+            clamped_page_size = cached["clamped_page_size"]
+            total_pages = cached["total_pages"]
+            total_recent = cached["total_recent"]
+            last_capture_utc = cached["last_capture_utc"]
+        else:
+            top_inds = (
+                await db.execute(
+                    select(Individual.id, Individual.name, Individual.visit_count, Individual.last_seen_at)
+                    .order_by(desc(Individual.visit_count))
+                    .limit(20)
+                )
+            ).all()
 
-        # Convert last_seen to ISO for template
-        top_inds_out: list[tuple[int, str, int, str | None]] = []
-        for iid, name, visits, last_seen in top_inds:
-            top_inds_out.append((int(iid), str(name), int(visits), _as_utc_str(last_seen)))
+            # Convert last_seen to ISO for template
+            top_inds_out: list[tuple[int, str, int, str | None]] = []
+            for iid, name, visits, last_seen in top_inds:
+                top_inds_out.append((int(iid), str(name), int(visits), _as_utc_str(last_seen)))
 
-        total_recent = db.execute(select(func.count(Observation.id))).scalar_one()
-        current_page, clamped_page_size, total_pages, offset = paginate(
-            total_recent, page=page, page_size=page_size, max_page_size=200
-        )
-
-        recent = (
-            db.execute(
-                select(Observation)
-                .order_by(desc(Observation.ts))
-                .offset(offset)
-                .limit(clamped_page_size)
+            total_recent = (await db.execute(select(func.count(Observation.id)))).scalar_one()
+            current_page, clamped_page_size, total_pages, offset = paginate(
+                total_recent, page=page, page_size=page_size, max_page_size=200
             )
-            .scalars()
-            .all()
-        )
 
-        for o in recent:
-            # attach computed presentation attrs (not in DB)
-            o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
-            # Use annotated snapshot if available, otherwise fall back to raw
-            annotated = get_annotated_snapshot_path(o)
-            o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
+            recent_rows = (
+                await db.execute(
+                    select(Observation)
+                    .order_by(desc(Observation.ts))
+                    .offset(offset)
+                    .limit(clamped_page_size)
+                )
+            ).scalars().all()
 
-        latest_ts = db.execute(
-            select(Observation.ts).order_by(desc(Observation.ts)).limit(1)
-        ).scalar_one_or_none()
-        last_capture_utc = _as_utc_str(latest_ts) if latest_ts else None
+            recent = []
+            for o in recent_rows:
+                # attach computed presentation attrs (not in DB)
+                o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
+                # Use annotated snapshot if available, otherwise fall back to raw
+                annotated = get_annotated_snapshot_path(o)
+                o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
+                recent.append(
+                    {
+                        "id": int(o.id),
+                        "species_label": o.species_label,
+                        "species_prob": float(o.species_prob),
+                        "individual_id": o.individual_id,
+                        "match_score": float(o.match_score or 0.0),
+                        "ts_utc": _as_utc_str(o.ts),
+                        "display_snapshot_path": o.display_snapshot_path,  # type: ignore[attr-defined]
+                        "video_path": o.video_path,
+                        "species_css": o.species_css,  # type: ignore[attr-defined]
+                    }
+                )
+
+            latest_data = await _get_latest_observation_data(db)
+            last_capture_utc = latest_data["ts_utc"] if latest_data else None
+
+            await cache_set_json(
+                cache_key,
+                {
+                    "top_inds_out": top_inds_out,
+                    "recent": recent,
+                    "current_page": current_page,
+                    "clamped_page_size": clamped_page_size,
+                    "total_pages": total_pages,
+                    "total_recent": int(total_recent),
+                    "last_capture_utc": last_capture_utc,
+                },
+            )
 
         roi_str = roi_to_str(s.roi) if s.roi else ""
         rtsp = s.rtsp_url or ""
 
         return templates.TemplateResponse(
+            request,
             "index.html",
             _context(
                 request,
@@ -864,11 +1071,11 @@ def make_app() -> Any:
         )
 
     @app.get("/observations", response_class=HTMLResponse)
-    def observations(
+    async def observations(
         request: Request,
         individual_id: int | None = None,
         limit: int = 200,
-        db: Session = Depends(get_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
 
@@ -878,7 +1085,7 @@ def make_app() -> Any:
         if individual_id is not None:
             q = q.where(Observation.individual_id == individual_id)
 
-        obs = db.execute(q).scalars().all()
+        obs = (await db.execute(q)).scalars().all()
         for o in obs:
             o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
             # Use annotated snapshot if available, otherwise fall back to raw
@@ -890,13 +1097,16 @@ def make_app() -> Any:
         extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
         extra_column_defaults = _default_extra_column_visibility(extra_columns)
 
-        inds = db.execute(
-            select(Individual).order_by(desc(Individual.visit_count)).limit(2000)
+        inds = (
+            await db.execute(
+                select(Individual).order_by(desc(Individual.visit_count)).limit(2000)
+            )
         ).scalars().all()
 
-        total = db.execute(select(func.count(Observation.id))).scalar_one()
+        total = (await db.execute(select(func.count(Observation.id)))).scalar_one()
 
         return templates.TemplateResponse(
+            request,
             "observations.html",
             _context(
                 request,
@@ -917,8 +1127,12 @@ def make_app() -> Any:
         )
 
     @app.get("/observations/{obs_id}", response_class=HTMLResponse)
-    def observation_detail(obs_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-        o = db.get(Observation, obs_id)
+    async def observation_detail(
+        obs_id: int,
+        request: Request,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> HTMLResponse:
+        o = await db.get(Observation, obs_id)
         if o is None:
             raise HTTPException(status_code=404, detail="Observation not found")
 
@@ -942,18 +1156,19 @@ def make_app() -> Any:
         video_info: dict[str, Any] | None = None
         if o.video_path:
             video_file = media_dir() / o.video_path
-            exists = video_file.exists()
+            exists = await _run_blocking(video_file.exists)
             size_kb = 0.0
             suffix = ""
             if exists:
                 try:
-                    size_kb = round(video_file.stat().st_size / 1024, 2)
+                    size_kb = round((await _run_blocking(video_file.stat)).st_size / 1024, 2)
                 except OSError:
                     pass
                 suffix = video_file.suffix.lower()
             video_info = {"exists": exists, "size_kb": size_kb, "suffix": suffix}
 
         return templates.TemplateResponse(
+            request,
             "observation_detail.html",
             _context(
                 request,
@@ -968,10 +1183,10 @@ def make_app() -> Any:
         )
 
     @app.post("/observations/{obs_id}/label")
-    def label_observation(
+    async def label_observation(
         obs_id: int,
         label: str = Form(...),
-        db: Session = Depends(get_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> RedirectResponse:
         """Update the review label for a single observation and redirect to its detail page.
 
@@ -989,7 +1204,7 @@ def make_app() -> Any:
         On success, the change is committed and the client is redirected (HTTP 303) back
         to ``/observations/{obs_id}``.
         """
-        o = db.get(Observation, obs_id)
+        o = await db.get(Observation, obs_id)
         if o is None:
             raise HTTPException(status_code=404, detail="Observation not found")
 
@@ -1024,13 +1239,16 @@ def make_app() -> Any:
                     # Drop the review section entirely if it's now empty.
                     extra_copy.pop("review", None)
                 o.set_extra(extra_copy)
-        _commit_with_retry(db)
+        await _commit_with_retry(db)
 
         return RedirectResponse(url=f"/observations/{obs_id}", status_code=303)
 
     @app.post("/observations/{obs_id}/delete")
-    def delete_observation(obs_id: int, db: Session = Depends(get_db)) -> RedirectResponse:
-        o = db.get(Observation, obs_id)
+    async def delete_observation(
+        obs_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> RedirectResponse:
+        o = await db.get(Observation, obs_id)
         if o is None:
             raise HTTPException(status_code=404, detail="Observation not found")
 
@@ -1042,27 +1260,27 @@ def make_app() -> Any:
         _safe_unlink_media(get_annotated_snapshot_path(o))
         _safe_unlink_media(get_clip_snapshot_path(o))
 
-        db.execute(delete(Embedding).where(Embedding.observation_id == obs_id))
-        db.delete(o)
-        _commit_with_retry(db)
+        await db.execute(delete(Embedding).where(Embedding.observation_id == obs_id))
+        await db.delete(o)
+        await _commit_with_retry(db)
 
         if ind_id is not None:
-            _recompute_individual_stats(db, int(ind_id))
-        _commit_with_retry(db)
+            await _recompute_individual_stats(db, int(ind_id))
+        await _commit_with_retry(db)
 
         return RedirectResponse(url="/observations", status_code=303)
 
     @app.post("/observations/{obs_id}/export_integration_test")
-    def export_observation_integration_test(
+    async def export_observation_integration_test(
         obs_id: int,
         case_name: str = Form(""),
         description: str = Form(""),
         behavior: str = Form(""),
         location: str = Form(""),
         human_verified: str = Form("false"),
-        db: Session = Depends(get_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> FileResponse:
-        o = db.get(Observation, obs_id)
+        o = await db.get(Observation, obs_id)
         if o is None:
             raise HTTPException(status_code=404, detail="Observation not found")
 
@@ -1179,33 +1397,36 @@ def make_app() -> Any:
         clip_path = (media_dir() / clip_rel) if clip_rel else None
         background_path = background_image_path()
 
-        with tarfile.open(out_path, "w:gz") as tf:
-            tf.addfile(metadata_info, io.BytesIO(metadata_bytes))
-            if snapshot_path.exists():
-                tf.add(snapshot_path, arcname=f"{safe_case}/snapshot.jpg")
-            if video_path.exists():
-                tf.add(video_path, arcname=f"{safe_case}/clip.mp4")
-            if annotated_path and annotated_path.exists():
-                tf.add(annotated_path, arcname=f"{safe_case}/snapshot_annotated.jpg")
-            if clip_path and clip_path.exists():
-                tf.add(clip_path, arcname=f"{safe_case}/snapshot_clip.jpg")
-            if background_path.exists():
-                tf.add(background_path, arcname=f"{safe_case}/background.jpg")
+        def _build_bundle() -> None:
+            with tarfile.open(out_path, "w:gz") as tf:
+                tf.addfile(metadata_info, io.BytesIO(metadata_bytes))
+                if snapshot_path.exists():
+                    tf.add(snapshot_path, arcname=f"{safe_case}/snapshot.jpg")
+                if video_path.exists():
+                    tf.add(video_path, arcname=f"{safe_case}/clip.mp4")
+                if annotated_path and annotated_path.exists():
+                    tf.add(annotated_path, arcname=f"{safe_case}/snapshot_annotated.jpg")
+                if clip_path and clip_path.exists():
+                    tf.add(clip_path, arcname=f"{safe_case}/snapshot_clip.jpg")
+                if background_path.exists():
+                    tf.add(background_path, arcname=f"{safe_case}/background.jpg")
+
+        await _run_blocking(_build_bundle)
 
         return FileResponse(str(out_path), filename=out_path.name, media_type="application/gzip")
 
     @app.post("/observations/bulk_delete")
-    def bulk_delete_observations(
+    async def bulk_delete_observations(
         obs_ids: list[int] = Form([]),
         redirect_to: str | None = Form(None),
-        db: Session = Depends(get_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> RedirectResponse:
         redirect_path = _sanitize_redirect_path(redirect_to)
         ids = sorted({int(obs_id) for obs_id in obs_ids if int(obs_id) > 0})
         if not ids:
             return RedirectResponse(url=redirect_path, status_code=303)
 
-        obs_rows = db.execute(select(Observation).where(Observation.id.in_(ids))).scalars().all()
+        obs_rows = (await db.execute(select(Observation).where(Observation.id.in_(ids)))).scalars().all()
         if not obs_rows:
             return RedirectResponse(url=redirect_path, status_code=303)
 
@@ -1215,22 +1436,22 @@ def make_app() -> Any:
             _safe_unlink_media(o.snapshot_path)
             _safe_unlink_media(o.video_path)
 
-        db.execute(delete(Embedding).where(Embedding.observation_id.in_(ids)))
-        db.execute(delete(Observation).where(Observation.id.in_(ids)))
-        _commit_with_retry(db)
+        await db.execute(delete(Embedding).where(Embedding.observation_id.in_(ids)))
+        await db.execute(delete(Observation).where(Observation.id.in_(ids)))
+        await _commit_with_retry(db)
 
         for ind_id in individual_ids:
-            _recompute_individual_stats(db, int(ind_id))
-        _commit_with_retry(db)
+            await _recompute_individual_stats(db, int(ind_id))
+        await _commit_with_retry(db)
 
         return RedirectResponse(url=redirect_path, status_code=303)
 
     @app.get("/individuals", response_class=HTMLResponse)
-    def individuals(
+    async def individuals(
         request: Request,
         sort: str = "visits",
         limit: int = 200,
-        db: Session = Depends(get_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         limit = max(10, min(int(limit), 5000))
         sort = (sort or "visits").lower()
@@ -1243,9 +1464,9 @@ def make_app() -> Any:
         else:
             q = q.order_by(desc(Individual.visit_count))
 
-        inds = db.execute(q.limit(limit)).scalars().all()
-        total = db.execute(select(func.count(Individual.id))).scalar_one()
-        prototype_map = select_prototype_observations(db, [int(ind.id) for ind in inds])
+        inds = (await db.execute(q.limit(limit))).scalars().all()
+        total = (await db.execute(select(func.count(Individual.id)))).scalar_one()
+        prototype_map = await select_prototype_observations(db, [int(ind.id) for ind in inds])
         for ind in inds:
             proto_obs = prototype_map.get(int(ind.id))
             if proto_obs is None:
@@ -1255,6 +1476,7 @@ def make_app() -> Any:
             ind.prototype_observation = proto_obs  # type: ignore[attr-defined]
 
         return templates.TemplateResponse(
+            request,
             "individuals.html",
             _context(
                 request,
@@ -1268,20 +1490,22 @@ def make_app() -> Any:
         )
 
     @app.get("/individuals/{individual_id}", response_class=HTMLResponse)
-    def individual_detail(
+    async def individual_detail(
         individual_id: int,
         request: Request,
-        db: Session = Depends(get_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
-        ind = db.get(Individual, individual_id)
+        ind = await db.get(Individual, individual_id)
         if ind is None:
             raise HTTPException(status_code=404, detail="Individual not found")
 
-        obs = db.execute(
-            select(Observation)
-            .where(Observation.individual_id == individual_id)
-            .order_by(desc(Observation.ts))
-            .limit(500)
+        obs = (
+            await db.execute(
+                select(Observation)
+                .where(Observation.individual_id == individual_id)
+                .order_by(desc(Observation.ts))
+                .limit(500)
+            )
         ).scalars().all()
 
         for o in obs:
@@ -1302,22 +1526,25 @@ def make_app() -> Any:
         # SQLite hour-of-day counts in UTC:
         # Observation.ts stored as timezone-aware; SQLite stores as text.
         # Use strftime('%H', ts) which yields 00..23.
-        rows = db.execute(
-            select(func.strftime("%H", Observation.ts).label("hh"), func.count(Observation.id))
-            .where(Observation.individual_id == individual_id)
-            .group_by("hh")
-            .order_by("hh")
+        rows = (
+            await db.execute(
+                select(func.strftime("%H", Observation.ts).label("hh"), func.count(Observation.id))
+                .where(Observation.individual_id == individual_id)
+                .group_by("hh")
+                .order_by("hh")
+            )
         ).all()
 
         hours_rows: list[tuple[int, int]] = [(int(hh), int(cnt)) for (hh, cnt) in rows if hh is not None]
         heatmap = build_hour_heatmap(hours_rows)
-        prototype_map = select_prototype_observations(db, [individual_id])
+        prototype_map = await select_prototype_observations(db, [individual_id])
         proto_obs = prototype_map.get(individual_id)
         if proto_obs is not None:
             annotated = get_annotated_snapshot_path(proto_obs)
             proto_obs.display_snapshot_path = annotated if annotated else proto_obs.snapshot_path  # type: ignore[attr-defined]
 
         return templates.TemplateResponse(
+            request,
             "individual_detail.html",
             _context(
                 request,
@@ -1336,12 +1563,12 @@ def make_app() -> Any:
         )
 
     @app.post("/individuals/{individual_id}/rename")
-    def rename_individual(
+    async def rename_individual(
         individual_id: int,
         name: str = Form(...),
-        db: Session = Depends(get_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> RedirectResponse:
-        ind = db.get(Individual, individual_id)
+        ind = await db.get(Individual, individual_id)
         if ind is None:
             raise HTTPException(status_code=404, detail="Individual not found")
 
@@ -1349,19 +1576,24 @@ def make_app() -> Any:
         if not new_name:
             new_name = "(unnamed)"
         ind.name = new_name[:128]
-        db.commit()
+        await db.commit()
 
         return RedirectResponse(url=f"/individuals/{individual_id}", status_code=303)
 
     @app.post("/individuals/{individual_id}/delete")
-    def delete_individual(individual_id: int, db: Session = Depends(get_db)) -> RedirectResponse:
-        ind = db.get(Individual, individual_id)
+    async def delete_individual(
+        individual_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> RedirectResponse:
+        ind = await db.get(Individual, individual_id)
         if ind is None:
             raise HTTPException(status_code=404, detail="Individual not found")
 
-        obs_rows = db.execute(
-            select(Observation.id, Observation.snapshot_path, Observation.video_path)
-            .where(Observation.individual_id == individual_id)
+        obs_rows = (
+            await db.execute(
+                select(Observation.id, Observation.snapshot_path, Observation.video_path)
+                .where(Observation.individual_id == individual_id)
+            )
         ).all()
         obs_ids = [int(r[0]) for r in obs_rows]
         for _, snap, vid in obs_rows:
@@ -1369,24 +1601,32 @@ def make_app() -> Any:
             _safe_unlink_media(vid)
 
         if obs_ids:
-            db.execute(
+            await db.execute(
                 delete(Embedding).where(Embedding.observation_id.in_(obs_ids))
             )
-            db.execute(delete(Observation).where(Observation.id.in_(obs_ids)))
+            await db.execute(delete(Observation).where(Observation.id.in_(obs_ids)))
 
-        db.delete(ind)
-        _commit_with_retry(db, retries=5, delay=0.6)
+        await db.delete(ind)
+        await _commit_with_retry(db, retries=5, delay=0.6)
 
         return RedirectResponse(url="/individuals", status_code=303)
 
     @app.post("/individuals/{individual_id}/refresh_embedding")
-    def refresh_embedding(individual_id: int, db: Session = Depends(get_db)) -> RedirectResponse:
-        ind = db.get(Individual, individual_id)
+    async def refresh_embedding(
+        individual_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> RedirectResponse:
+        ind = await db.get(Individual, individual_id)
         if ind is None:
             raise HTTPException(status_code=404, detail="Individual not found")
 
-        embs = db.execute(
-            select(Embedding).where(Embedding.individual_id == individual_id).order_by(desc(Embedding.created_at)).limit(500)
+        embs = (
+            await db.execute(
+                select(Embedding)
+                .where(Embedding.individual_id == individual_id)
+                .order_by(desc(Embedding.created_at))
+                .limit(500)
+            )
         ).scalars().all()
 
         if not embs:
@@ -1395,21 +1635,27 @@ def make_app() -> Any:
         vecs = [e.get_vec() for e in embs]
         proto = l2_normalize(sum(vecs) / max(1, len(vecs)))
         ind.set_prototype(proto)
-        db.commit()
+        await db.commit()
 
         return RedirectResponse(url=f"/individuals/{individual_id}", status_code=303)
 
     @app.get("/individuals/{individual_id}/split_review", response_class=HTMLResponse)
-    def split_review(individual_id: int, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-        ind = db.get(Individual, individual_id)
+    async def split_review(
+        individual_id: int,
+        request: Request,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> HTMLResponse:
+        ind = await db.get(Individual, individual_id)
         if ind is None:
             raise HTTPException(status_code=404, detail="Individual not found")
 
-        obs = db.execute(
-            select(Observation)
-            .where(Observation.individual_id == individual_id)
-            .order_by(desc(Observation.ts))
-            .limit(120)
+        obs = (
+            await db.execute(
+                select(Observation)
+                .where(Observation.individual_id == individual_id)
+                .order_by(desc(Observation.ts))
+                .limit(120)
+            )
         ).scalars().all()
 
         for o in obs:
@@ -1419,11 +1665,13 @@ def make_app() -> Any:
             annotated = get_annotated_snapshot_path(o)
             o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
 
-        emb_rows = db.execute(
-            select(Embedding).join(Observation, Embedding.observation_id == Observation.id)
-            .where(Observation.individual_id == individual_id)
-            .order_by(desc(Observation.ts))
-            .limit(120)
+        emb_rows = (
+            await db.execute(
+                select(Embedding).join(Observation, Embedding.observation_id == Observation.id)
+                .where(Observation.individual_id == individual_id)
+                .order_by(desc(Observation.ts))
+                .limit(120)
+            )
         ).scalars().all()
 
         # Map obs_id -> embedding vec
@@ -1452,6 +1700,7 @@ def make_app() -> Any:
             pass
 
         return templates.TemplateResponse(
+            request,
             "split_review.html",
             _context(
                 request,
@@ -1463,8 +1712,12 @@ def make_app() -> Any:
         )
 
     @app.post("/individuals/{individual_id}/split_apply")
-    async def split_apply(individual_id: int, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
-        ind_a = db.get(Individual, individual_id)
+    async def split_apply(
+        individual_id: int,
+        request: Request,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> RedirectResponse:
+        ind_a = await db.get(Individual, individual_id)
         if ind_a is None:
             raise HTTPException(status_code=404, detail="Individual not found")
 
@@ -1490,53 +1743,64 @@ def make_app() -> Any:
         # Create individual B
         ind_b = Individual(name=f"(split from {ind_a.id})", visit_count=0, last_seen_at=None)
         db.add(ind_b)
-        db.flush()  # get ind_b.id
+        await db.flush()  # get ind_b.id
 
         # Reassign observations to B
-        moved_obs = db.execute(select(Observation).where(Observation.id.in_(obs_to_b))).scalars().all()
+        moved_obs = (
+            await db.execute(select(Observation).where(Observation.id.in_(obs_to_b)))
+        ).scalars().all()
         for o in moved_obs:
             o.individual_id = ind_b.id
 
         # Reassign embeddings rows to B too
-        moved_embs = db.execute(select(Embedding).where(Embedding.observation_id.in_(obs_to_b))).scalars().all()
+        moved_embs = (
+            await db.execute(select(Embedding).where(Embedding.observation_id.in_(obs_to_b)))
+        ).scalars().all()
         for e in moved_embs:
             e.individual_id = ind_b.id
 
-        db.commit()
+        await db.commit()
 
         # Recompute visit counts + last seen
-        def recompute_stats(ind: Individual) -> None:
-            rows = db.execute(
-                select(func.count(Observation.id), func.max(Observation.ts))
-                .where(Observation.individual_id == ind.id)
+        async def recompute_stats(ind: Individual) -> None:
+            rows = (
+                await db.execute(
+                    select(func.count(Observation.id), func.max(Observation.ts))
+                    .where(Observation.individual_id == ind.id)
+                )
             ).one()
             ind.visit_count = int(rows[0] or 0)
             ind.last_seen_at = rows[1]
 
-        recompute_stats(ind_a)
-        recompute_stats(ind_b)
+        await recompute_stats(ind_a)
+        await recompute_stats(ind_b)
 
         # Recompute prototypes from embeddings (if available)
-        def recompute_proto(ind: Individual) -> None:
-            embs = db.execute(select(Embedding).where(Embedding.individual_id == ind.id).limit(2000)).scalars().all()
+        async def recompute_proto(ind: Individual) -> None:
+            embs = (
+                await db.execute(
+                    select(Embedding).where(Embedding.individual_id == ind.id).limit(2000)
+                )
+            ).scalars().all()
             if not embs:
                 return
             vecs = [e.get_vec() for e in embs]
             proto = l2_normalize(sum(vecs) / max(1, len(vecs)))
             ind.set_prototype(proto)
 
-        recompute_proto(ind_a)
-        recompute_proto(ind_b)
+        await recompute_proto(ind_a)
+        await recompute_proto(ind_b)
 
-        db.commit()
+        await db.commit()
 
         return RedirectResponse(url=f"/individuals/{ind_b.id}", status_code=303)
 
     @app.get("/config", response_class=HTMLResponse)
-    def config_page(request: Request) -> HTMLResponse:
+    async def config_page(request: Request) -> HTMLResponse:
         s = load_settings()
         saved = request.query_params.get("saved") == "1"
         return templates.TemplateResponse(
+            request,
             "config.html",
             _context(
                 request,
@@ -1571,6 +1835,7 @@ def make_app() -> Any:
 
         if errors:
             return templates.TemplateResponse(
+                request,
                 "config.html",
                 _context(
                     request,
@@ -1600,10 +1865,11 @@ def make_app() -> Any:
         return RedirectResponse(url="/config?saved=1", status_code=303)
 
     @app.get("/calibrate", response_class=HTMLResponse)
-    def calibrate(request: Request) -> HTMLResponse:
+    async def calibrate(request: Request) -> HTMLResponse:
         s = load_settings()
         roi_str = roi_to_str(s.roi) if s.roi else ""
         return templates.TemplateResponse(
+            request,
             "calibrate.html",
             _context(
                 request,
@@ -1618,11 +1884,11 @@ def make_app() -> Any:
         )
 
     @app.get("/background", response_class=HTMLResponse)
-    def background_page(
+    async def background_page(
         request: Request,
         page: int = 1,
         page_size: int = 20,
-        db: Session = Depends(get_db),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         """
         Background image configuration page.
@@ -1635,29 +1901,28 @@ def make_app() -> Any:
         """
         s = load_settings()
         bg_path = background_image_path()
-        bg_exists = bg_path.exists()
+        bg_exists = await _run_blocking(bg_path.exists)
 
         # Get recent observations for selection
-        total_obs = db.execute(select(func.count(Observation.id))).scalar_one()
+        total_obs = (await db.execute(select(func.count(Observation.id)))).scalar_one()
         current_page, clamped_page_size, total_pages, offset = paginate(
             total_obs, page=page, page_size=page_size, max_page_size=100
         )
 
         recent_obs = (
-            db.execute(
+            await db.execute(
                 select(Observation)
                 .order_by(desc(Observation.ts))
                 .offset(offset)
                 .limit(clamped_page_size)
             )
-            .scalars()
-            .all()
-        )
+        ).scalars().all()
 
         for o in recent_obs:
             o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
 
         return templates.TemplateResponse(
+            request,
             "background.html",
             _context(
                 request,
@@ -1682,25 +1947,25 @@ def make_app() -> Any:
     # ----------------------------
 
     @app.get("/api/health", response_model=HealthOut)
-    def health(db: Session = Depends(get_db)) -> HealthOut:
+    async def health(db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep)) -> HealthOut:
         s = load_settings()
         db_ok = True
-        last_obs = None
         try:
-            last_obs = db.execute(select(Observation).order_by(desc(Observation.ts)).limit(1)).scalars().first()
+            latest_data = await _get_latest_observation_data(db)
         except Exception:
             db_ok = False
+            latest_data = None
 
         return HealthOut(
             ok=True,
             version="0.1.0",
             db_ok=db_ok,
-            last_observation_utc=(last_obs.ts_utc if last_obs else None),
+            last_observation_utc=(latest_data["ts_utc"] if latest_data else None),
             rtsp_url=(s.rtsp_url or None),
         )
 
     @app.get("/api/roi", response_model=RoiOut)
-    def get_roi() -> RoiOut:
+    async def get_roi() -> RoiOut:
         s = load_settings()
         if s.roi is None:
             return RoiOut(x1=0.0, y1=0.0, x2=1.0, y2=1.0)
@@ -1708,7 +1973,7 @@ def make_app() -> Any:
         return RoiOut(x1=r.x1, y1=r.y1, x2=r.x2, y2=r.y2)
 
     @app.post("/api/roi")
-    def set_roi(
+    async def set_roi(
         x1: float = Form(...),
         y1: float = Form(...),
         x2: float = Form(...),
@@ -1721,7 +1986,7 @@ def make_app() -> Any:
         return RedirectResponse(url="/calibrate", status_code=303)
 
     @app.get("/api/background")
-    def get_background() -> dict[str, Any]:
+    async def get_background() -> dict[str, Any]:
         """
         Return information about the current background image.
 
@@ -1732,7 +1997,7 @@ def make_app() -> Any:
         """
         s = load_settings()
         bg_path = background_image_path()
-        exists = bg_path.exists()
+        exists = await _run_blocking(bg_path.exists)
         return {
             "configured": bool(s.background_image),
             "path": s.background_image or None,
@@ -1773,12 +2038,12 @@ def make_app() -> Any:
         return jpeg.tobytes()
 
     @app.get("/api/background.jpg")
-    def get_background_jpg() -> Any:
+    async def get_background_jpg() -> Any:
         """
         Return the configured background image, or a placeholder if none set.
         """
         bg_path = background_image_path()
-        if bg_path.exists():
+        if await _run_blocking(bg_path.exists):
             return FileResponse(str(bg_path), media_type="image/jpeg")
 
         # Return placeholder
@@ -1787,27 +2052,34 @@ def make_app() -> Any:
         except ImportError:
             raise HTTPException(status_code=404, detail="PIL library not available for image generation")
 
-        img = Image.new("RGB", (960, 540), (28, 28, 38))
-        d = ImageDraw.Draw(img)
-        d.text(
-            (24, 24),
-            "No background image configured.\nSelect an observation snapshot or upload an image.",
-            fill=(180, 180, 200),
-        )
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
-        buf.seek(0)
+        def _build_placeholder() -> io.BytesIO:
+            img = Image.new("RGB", (960, 540), (28, 28, 38))
+            d = ImageDraw.Draw(img)
+            d.text(
+                (24, 24),
+                "No background image configured.\nSelect an observation snapshot or upload an image.",
+                fill=(180, 180, 200),
+            )
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85)
+            buf.seek(0)
+            return buf
+
+        buf = await _run_blocking(_build_placeholder)
         return StreamingResponse(buf, media_type="image/jpeg")
 
     @app.post("/api/background/from_observation/{obs_id}")
-    def set_background_from_observation(obs_id: int, db: Session = Depends(get_db)) -> RedirectResponse:
+    async def set_background_from_observation(
+        obs_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> RedirectResponse:
         """
         Set the background image by copying a snapshot from an existing observation.
 
         The snapshot is copied to a static location (/data/background/background.jpg)
         so that it persists even if the original observation is deleted.
         """
-        o = db.get(Observation, obs_id)
+        o = await db.get(Observation, obs_id)
         if o is None:
             raise HTTPException(status_code=404, detail="Observation not found")
 
@@ -1815,16 +2087,16 @@ def make_app() -> Any:
             raise HTTPException(status_code=400, detail="Observation has no snapshot")
 
         src_path = media_dir() / o.snapshot_path
-        if not src_path.exists():
+        if not await _run_blocking(src_path.exists):
             raise HTTPException(status_code=404, detail="Snapshot file not found")
 
         # Ensure background directory exists
         bg_dir = background_dir()
-        bg_dir.mkdir(parents=True, exist_ok=True)
+        await _run_blocking(bg_dir.mkdir, parents=True, exist_ok=True)
 
         # Copy to static location
         dst_path = background_image_path()
-        shutil.copy2(src_path, dst_path)
+        await _run_blocking(shutil.copy2, src_path, dst_path)
 
         # Update settings
         s = load_settings()
@@ -1834,7 +2106,7 @@ def make_app() -> Any:
         return RedirectResponse(url="/background", status_code=303)
 
     @app.post("/api/background/from_live")
-    def set_background_from_live() -> RedirectResponse:
+    async def set_background_from_live() -> RedirectResponse:
         """
         Capture a live RTSP frame and save it as the background image.
         """
@@ -1842,14 +2114,14 @@ def make_app() -> Any:
         if not s.rtsp_url:
             raise HTTPException(status_code=503, detail="RTSP URL not configured")
 
-        frame, cv2 = _capture_live_frame(s.rtsp_url)
-        jpeg_bytes = _encode_jpeg(frame, cv2, quality=85)
+        frame, cv2 = await _run_blocking(_capture_live_frame, s.rtsp_url)
+        jpeg_bytes = await _run_blocking(_encode_jpeg, frame, cv2, 85)
 
         # Ensure background directory exists
         bg_dir = background_dir()
-        bg_dir.mkdir(parents=True, exist_ok=True)
+        await _run_blocking(bg_dir.mkdir, parents=True, exist_ok=True)
         dst_path = background_image_path()
-        dst_path.write_bytes(jpeg_bytes)
+        await _run_blocking(dst_path.write_bytes, jpeg_bytes)
 
         s.background_image = "background/background.jpg"
         save_settings(s)
@@ -1902,11 +2174,11 @@ def make_app() -> Any:
 
         # Ensure background directory exists
         bg_dir = background_dir()
-        bg_dir.mkdir(parents=True, exist_ok=True)
+        await _run_blocking(bg_dir.mkdir, parents=True, exist_ok=True)
 
         # Save as JPEG
         dst_path = background_image_path()
-        img.save(dst_path, format="JPEG", quality=90)
+        await _run_blocking(img.save, dst_path, format="JPEG", quality=90)
 
         # Update settings
         s = load_settings()
@@ -1916,7 +2188,7 @@ def make_app() -> Any:
         return RedirectResponse(url="/background", status_code=303)
 
     @app.post("/api/background/clear")
-    def clear_background() -> RedirectResponse:
+    async def clear_background() -> RedirectResponse:
         """
         Clear the configured background image.
 
@@ -1925,7 +2197,7 @@ def make_app() -> Any:
         # Remove file if it exists
         bg_path = background_image_path()
         try:
-            bg_path.unlink(missing_ok=True)
+            await _run_blocking(bg_path.unlink, missing_ok=True)
         except Exception:
             # Ignore errors during file removal (e.g., permission issues, race conditions).
             # The setting will still be cleared below, and the file can be cleaned up later.
@@ -1939,14 +2211,16 @@ def make_app() -> Any:
         return RedirectResponse(url="/background", status_code=303)
 
     @app.get("/api/frame.jpg")
-    def frame_jpg(db: Session = Depends(get_db)) -> Any:
+    async def frame_jpg(
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Any:
         """
         Return latest snapshot image, or a placeholder if none exist yet.
         """
-        last = db.execute(select(Observation).order_by(desc(Observation.ts)).limit(1)).scalars().first()
-        if last is not None:
-            p = media_dir() / last.snapshot_path
-            if p.exists():
+        latest_data = await _get_latest_observation_data(db)
+        if latest_data is not None:
+            p = media_dir() / latest_data["snapshot_path"]
+            if await _run_blocking(p.exists):
                 return FileResponse(str(p), media_type="image/jpeg")
 
         # Placeholder
@@ -1955,16 +2229,20 @@ def make_app() -> Any:
         except Exception:
             raise HTTPException(status_code=404, detail="No frames yet")
 
-        img = Image.new("RGB", (960, 540), (18, 18, 28))
-        d = ImageDraw.Draw(img)
-        d.text((24, 24), "No snapshots yet.\nStart the worker and wait for a visit.", fill=(220, 220, 235))
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
-        buf.seek(0)
+        def _build_placeholder() -> io.BytesIO:
+            img = Image.new("RGB", (960, 540), (18, 18, 28))
+            d = ImageDraw.Draw(img)
+            d.text((24, 24), "No snapshots yet.\nStart the worker and wait for a visit.", fill=(220, 220, 235))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85)
+            buf.seek(0)
+            return buf
+
+        buf = await _run_blocking(_build_placeholder)
         return StreamingResponse(buf, media_type="image/jpeg")
 
     @app.get("/api/live_frame.jpg")
-    def live_frame_jpg() -> Any:
+    async def live_frame_jpg() -> Any:
         """
         Return a single snapshot from the live RTSP stream.
         """
@@ -1972,13 +2250,13 @@ def make_app() -> Any:
         if not s.rtsp_url:
             raise HTTPException(status_code=503, detail="RTSP URL not configured")
 
-        frame, cv2 = _capture_live_frame(s.rtsp_url)
-        jpeg_bytes = _encode_jpeg(frame, cv2, quality=80)
+        frame, cv2 = await _run_blocking(_capture_live_frame, s.rtsp_url)
+        jpeg_bytes = await _run_blocking(_encode_jpeg, frame, cv2, 80)
 
         return StreamingResponse(io.BytesIO(jpeg_bytes), media_type="image/jpeg")
 
     @app.get("/api/stream.mjpeg")
-    def stream_mjpeg() -> Any:
+    async def stream_mjpeg() -> Any:
         """
         Stream live MJPEG video from the RTSP camera.
 
@@ -2067,7 +2345,10 @@ def make_app() -> Any:
         )
 
     @app.get("/api/video_info/{obs_id}")
-    def video_info(obs_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    async def video_info(
+        obs_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> dict[str, Any]:
         """
         Return diagnostic information about a video file for troubleshooting.
 
@@ -2080,7 +2361,7 @@ def make_app() -> Any:
         - codec_hint: detected codec from file header (if available)
         - browser_compatible: whether the codec is likely supported by browsers
         """
-        o = db.get(Observation, obs_id)
+        o = await db.get(Observation, obs_id)
         if o is None:
             raise HTTPException(status_code=404, detail="Observation not found")
 
@@ -2094,7 +2375,7 @@ def make_app() -> Any:
             }
 
         full_path = media_dir() / video_path
-        exists = full_path.exists()
+        exists = await _run_blocking(full_path.exists)
 
         result: dict[str, Any] = {
             "observation_id": obs_id,
@@ -2105,7 +2386,7 @@ def make_app() -> Any:
 
         if exists:
             try:
-                stat = full_path.stat()
+                stat = await _run_blocking(full_path.stat)
                 result["file_size_bytes"] = stat.st_size
                 result["file_size_kb"] = round(stat.st_size / 1024, 2)
             except OSError as e:
@@ -2175,8 +2456,10 @@ def make_app() -> Any:
         return StreamingResponse(gen(), media_type="text/csv")
 
     @app.get("/export/observations.csv")
-    def export_observations_csv(db: Session = Depends(get_db)) -> StreamingResponse:
-        q = db.execute(select(Observation).order_by(desc(Observation.ts))).scalars()
+    async def export_observations_csv(
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> StreamingResponse:
+        q = (await db.execute(select(Observation).order_by(desc(Observation.ts)))).scalars().all()
 
         def rows() -> Iterator[list[Any]]:
             for o in q:
@@ -2210,8 +2493,10 @@ def make_app() -> Any:
         )
 
     @app.get("/export/individuals.csv")
-    def export_individuals_csv(db: Session = Depends(get_db)) -> StreamingResponse:
-        q = db.execute(select(Individual).order_by(desc(Individual.visit_count))).scalars()
+    async def export_individuals_csv(
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> StreamingResponse:
+        q = (await db.execute(select(Individual).order_by(desc(Individual.visit_count)))).scalars().all()
 
         def rows() -> Iterator[list[Any]]:
             for i in q:
@@ -2230,7 +2515,7 @@ def make_app() -> Any:
         )
 
     @app.get("/export/media_bundle.tar.gz")
-    def export_media_bundle() -> FileResponse:
+    async def export_media_bundle() -> FileResponse:
         """
         Create a tar.gz containing /media/snapshots and /media/clips.
         (Created on-demand under /data/exports.)
@@ -2239,7 +2524,7 @@ def make_app() -> Any:
 
         ensure_dirs()
         out_dir = data_dir() / "exports"
-        out_dir.mkdir(parents=True, exist_ok=True)
+        await _run_blocking(out_dir.mkdir, parents=True, exist_ok=True)
 
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
         out_path = out_dir / f"hbmon-media-{stamp}.tar.gz"
@@ -2247,11 +2532,14 @@ def make_app() -> Any:
         snap = snapshots_dir()
         clips = clips_dir()
 
-        with tarfile.open(out_path, "w:gz") as tf:
-            if snap.exists():
-                tf.add(snap, arcname="snapshots")
-            if clips.exists():
-                tf.add(clips, arcname="clips")
+        def _build_bundle() -> None:
+            with tarfile.open(out_path, "w:gz") as tf:
+                if snap.exists():
+                    tf.add(snap, arcname="snapshots")
+                if clips.exists():
+                    tf.add(clips, arcname="clips")
+
+        await _run_blocking(_build_bundle)
 
         return FileResponse(str(out_path), filename=out_path.name, media_type="application/gzip")
 
