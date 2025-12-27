@@ -181,6 +181,19 @@ class TestApplyRoi:
         assert result.shape[0] <= frame.shape[0]
         assert result.shape[1] <= frame.shape[1]
 
+    def test_apply_roi_rounding_returns_full_frame(self):
+        """Test that integer rounding can yield an invalid ROI and returns full frame."""
+        from hbmon.config import Settings, Roi
+
+        frame = np.zeros((10, 10, 3), dtype=np.uint8)
+        roi = Roi(x1=0.11, y1=0.21, x2=0.111, y2=0.211)
+        s = Settings(roi=roi)
+
+        result, offset = worker._apply_roi(frame, s)
+
+        assert result.shape == frame.shape
+        assert offset == (0, 0)
+
 
 class TestBboxWithPadding:
     """Tests for the _bbox_with_padding function."""
@@ -476,6 +489,153 @@ class TestRunWorkerDependencies:
 
         with pytest.raises(RuntimeError, match="OpenCV and ultralytics"):
             worker.run_worker()
+
+
+class _FakeQuery:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return list(self._rows)
+
+
+class _FakeSession:
+    def __init__(self, rows=None):
+        self._rows = list(rows or [])
+        self.added = []
+        self._next_id = 1
+
+    def query(self, model):
+        return _FakeQuery(self._rows)
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    def flush(self):
+        for obj in self.added:
+            if getattr(obj, "id", None) is None:
+                obj.id = self._next_id
+                self._next_id += 1
+            if obj not in self._rows:
+                self._rows.append(obj)
+
+    def get(self, model, ident):
+        for obj in self._rows:
+            if getattr(obj, "id", None) == ident:
+                return obj
+        return None
+
+
+class TestIndividualMatching:
+    """Tests for individual matching helpers."""
+
+    def test_load_individuals_for_matching_skips_missing_prototypes(self):
+        from hbmon.models import Individual
+
+        ind_with_proto = Individual(name="one", visit_count=2, last_seen_at=None, last_species_label=None)
+        ind_with_proto.id = 10
+        ind_with_proto.set_prototype(np.array([1.0, 0.0], dtype=np.float32))
+        ind_without_proto = Individual(name="two", visit_count=1, last_seen_at=None, last_species_label=None)
+        ind_without_proto.id = 20
+
+        db = _FakeSession(rows=[ind_with_proto, ind_without_proto])
+        matches = worker._load_individuals_for_matching(db)
+
+        assert len(matches) == 1
+        match_id, match_proto, match_visits = matches[0]
+        assert match_id == 10
+        assert match_visits == 2
+        assert np.allclose(match_proto, np.array([1.0, 0.0], dtype=np.float32))
+
+    def test_match_or_create_creates_new_when_no_candidates(self):
+        db = _FakeSession()
+        emb = np.array([0.5, 0.5], dtype=np.float32)
+
+        individual_id, similarity = worker._match_or_create_individual(
+            db,
+            emb,
+            species_label="Anna's",
+            match_threshold=0.2,
+            ema_alpha=0.2,
+        )
+
+        assert individual_id == 1
+        assert similarity == 0.0
+        assert len(db.added) == 1
+        assert db.added[0].visit_count == 1
+        assert db.added[0].last_species_label == "Anna's"
+        assert db.added[0].get_prototype() is not None
+
+    def test_match_or_create_updates_existing_on_match(self):
+        from hbmon.models import Individual
+
+        ind = Individual(name="match", visit_count=2, last_seen_at=None, last_species_label=None)
+        ind.id = 7
+        ind.set_prototype(np.array([1.0, 0.0], dtype=np.float32))
+
+        db = _FakeSession(rows=[ind])
+        emb = np.array([1.0, 0.0], dtype=np.float32)
+
+        individual_id, similarity = worker._match_or_create_individual(
+            db,
+            emb,
+            species_label="Rufous",
+            match_threshold=0.3,
+            ema_alpha=0.2,
+        )
+
+        assert individual_id == 7
+        assert similarity == 1.0
+        assert ind.visit_count == 3
+        assert ind.last_species_label == "Rufous"
+        assert ind.last_seen_at is not None
+
+    def test_match_or_create_respects_high_visit_alpha(self):
+        from hbmon.models import Individual
+
+        ind = Individual(name="steady", visit_count=10, last_seen_at=None, last_species_label=None)
+        ind.id = 5
+        ind.set_prototype(np.array([1.0, 0.0], dtype=np.float32))
+        old_proto = ind.get_prototype().copy()
+
+        db = _FakeSession(rows=[ind])
+        emb = np.array([0.0, 1.0], dtype=np.float32)
+
+        individual_id, similarity = worker._match_or_create_individual(
+            db,
+            emb,
+            species_label=None,
+            match_threshold=2.0,
+            ema_alpha=0.4,
+        )
+
+        assert individual_id == 5
+        assert similarity < 1.0
+        assert ind.visit_count == 11
+        assert not np.allclose(ind.get_prototype(), old_proto)
+
+    def test_match_or_create_creates_new_on_low_similarity(self):
+        from hbmon.models import Individual
+
+        ind = Individual(name="mismatch", visit_count=1, last_seen_at=None, last_species_label=None)
+        ind.id = 3
+        ind.set_prototype(np.array([1.0, 0.0], dtype=np.float32))
+
+        db = _FakeSession(rows=[ind])
+        emb = np.array([0.0, 1.0], dtype=np.float32)
+
+        individual_id, similarity = worker._match_or_create_individual(
+            db,
+            emb,
+            species_label="Calliope",
+            match_threshold=0.1,
+            ema_alpha=0.2,
+        )
+
+        assert individual_id != ind.id
+        assert similarity == 0.0
+        assert len(db.added) == 1
+        assert db.added[0].last_species_label == "Calliope"
 
     def test_run_worker_requires_cv2(self, monkeypatch):
         """Test that run_worker raises if only cv2 is missing."""
