@@ -161,7 +161,8 @@ expected test layout:
 - `metadata.json` with `expected`, `source`, `sensitivity_tests`, and `original_observation`
 - `snapshot.jpg` (raw snapshot)
 - `clip.mp4` (video clip)
-- Optional `background.jpg` (reference background frame for motion filtering)
+- Optional `background.jpg` (reference background frame for motion filtering; included when
+  a background image is configured on the server)
 - Optional `snapshot_annotated.jpg` and `snapshot_clip.jpg` when available
 
 Extract the bundle under `tests/integration/test_data/` to add a new case.
