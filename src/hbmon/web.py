@@ -284,7 +284,6 @@ class _AsyncSessionAdapter:
         if self is None:
             return
         self._shutdown_executor(wait=wait)
-
     async def _ensure_session(self) -> Session:
         if self._session is None:
             self._session = await self._run(self._session_factory)
