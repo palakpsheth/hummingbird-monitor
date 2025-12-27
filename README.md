@@ -18,6 +18,30 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 
 ---
 
+## Table of contents
+- [What you get](#what-you-get)
+- [Architecture](#architecture)
+- [Quick start (Docker Compose)](#quick-start-docker-compose)
+- [Database & cache configuration](#database--cache-configuration)
+- [Developer shortcuts (Makefile)](#developer-shortcuts-makefile)
+- [Recommended setup steps](#recommended-setup-steps)
+- [Wyze Bridge configuration](#wyze-bridge-configuration)
+- [Tuning guide (practical)](#tuning-guide-practical)
+- [GPU acceleration (if available)](#gpu-acceleration-if-available)
+- [Exports & backups](#exports--backups)
+- [Local development (uv)](#local-development-uv)
+- [GitHub Actions CI](#github-actions-ci)
+- [License](#license)
+- [Troubleshooting](#troubleshooting)
+- [Current limitations (by design or early version)](#current-limitations-by-design-or-early-version)
+- [Where this can be improved next (ideas)](#where-this-can-be-improved-next-ideas)
+- [Testing & Coverage](#testing--coverage)
+- [Pre‑commit hooks](#pre-commit-hooks)
+- [Coverage badge (Shields.io)](#coverage-badge-shieldsio)
+- [Directory layout](#directory-layout)
+
+---
+
 ## What you get
 
 ### Core features
