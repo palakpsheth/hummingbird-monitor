@@ -27,7 +27,7 @@ jobs:
           extra_args: autoupdate --config .pre-commit-config.yaml
 
       - name: Create pull request
-        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c
+        uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
         with:
           branch: chore/pre-commit-autoupdate
           delete-branch: true
