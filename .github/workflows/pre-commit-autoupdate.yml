@@ -1,0 +1,41 @@
+name: Pre-commit Autoupdate
+
+on:
+  schedule:
+    - cron: "30 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  autoupdate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+
+      - name: Set up Python
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        with:
+          python-version: "3.11"
+
+      - name: Run pre-commit autoupdate
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd
+        with:
+          extra_args: autoupdate --config .pre-commit-config.yaml
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
+        with:
+          branch: chore/pre-commit-autoupdate
+          delete-branch: true
+          title: "chore: autoupdate pre-commit hooks"
+          commit-message: "chore: autoupdate pre-commit hooks"
+          body: |
+            ## Summary
+            - update pre-commit hook versions
+
+            ## Testing
+            - not run (automation-only change)
