@@ -73,7 +73,6 @@ services:
       - HBMON_MEDIA_DIR=${HBMON_MEDIA_DIR}
       - HBMON_DB_PATH=${HBMON_DB_PATH}
       - HBMON_CONFIG_PATH=${HBMON_CONFIG_PATH}
-      - HBMON_DB_URL=${HBMON_DB_URL:-postgresql+psycopg://hbmon:hbmon@hbmon-db:5432/hbmon}
       - HBMON_DB_ASYNC_URL=${HBMON_DB_ASYNC_URL:-postgresql+asyncpg://hbmon:hbmon@hbmon-db:5432/hbmon}
       - HBMON_DB_POOL_SIZE=${HBMON_DB_POOL_SIZE:-5}
       - HBMON_DB_MAX_OVERFLOW=${HBMON_DB_MAX_OVERFLOW:-10}
@@ -114,7 +113,7 @@ services:
       - HBMON_MEDIA_DIR=${HBMON_MEDIA_DIR}
       - HBMON_DB_PATH=${HBMON_DB_PATH}
       - HBMON_CONFIG_PATH=${HBMON_CONFIG_PATH}
-      - HBMON_DB_URL=${HBMON_DB_URL:-postgresql+psycopg://hbmon:hbmon@hbmon-db:5432/hbmon}
+      - HBMON_DB_ASYNC_URL=${HBMON_DB_ASYNC_URL:-postgresql+asyncpg://hbmon:hbmon@hbmon-db:5432/hbmon}
       - HBMON_DB_POOL_SIZE=${HBMON_DB_POOL_SIZE:-5}
       - HBMON_DB_MAX_OVERFLOW=${HBMON_DB_MAX_OVERFLOW:-10}
       - HBMON_DB_POOL_TIMEOUT=${HBMON_DB_POOL_TIMEOUT:-30}
@@ -152,6 +151,8 @@ services:
       wyze-bridge:
         condition: service_healthy
       hbmon-db:
+        condition: service_healthy
+      hbmon-redis:
         condition: service_healthy
       hbmon-web:
         condition: service_healthy
@@ -193,6 +194,7 @@ services:
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
+      # pg_isready is the standard healthcheck for the official Postgres image.
       test: ["CMD-SHELL", "pg_isready -U hbmon -d hbmon"]
       interval: 10s
       timeout: 5s
@@ -206,6 +208,7 @@ services:
     volumes:
       - ./data/redis:/data
     healthcheck:
+      # redis-cli ping is the standard healthcheck for the official Redis image.
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s

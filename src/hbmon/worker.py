@@ -25,6 +25,7 @@ Expected env vars (common):
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import subprocess
@@ -36,11 +37,12 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from sqlalchemy import select  # type: ignore
 
 from hbmon.clip_model import ClipModel
 from hbmon.clustering import l2_normalize, update_prototype_ema, cosine_distance
 from hbmon.config import Settings, background_image_path, ensure_dirs, load_settings, snapshots_dir
-from hbmon.db import init_db, session_scope
+from hbmon.db import async_session_scope, init_async_db
 from hbmon.models import Embedding, Individual, Observation
 
 # ---------------------------------------------------------------------------
@@ -616,11 +618,11 @@ def _bbox_with_padding(det: Det, frame_shape: tuple[int, int], pad_frac: float =
     return x1, y1, x2, y2
 
 
-def _load_individuals_for_matching(db: Any) -> list[tuple[int, np.ndarray, int]]:
+async def _load_individuals_for_matching(db: Any) -> list[tuple[int, np.ndarray, int]]:
     """
     Returns [(id, prototype_vec, visit_count), ...] for individuals that have prototypes.
     """
-    rows = db.query(Individual).all()
+    rows = (await db.execute(select(Individual))).scalars().all()
     out: list[tuple[int, np.ndarray, int]] = []
     for ind in rows:
         proto = ind.get_prototype()
@@ -630,7 +632,7 @@ def _load_individuals_for_matching(db: Any) -> list[tuple[int, np.ndarray, int]]
     return out
 
 
-def _match_or_create_individual(
+async def _match_or_create_individual(
     db: Any,
     emb: np.ndarray,
     *,
@@ -645,14 +647,14 @@ def _match_or_create_individual(
     """
     emb = l2_normalize(emb)
 
-    candidates = _load_individuals_for_matching(db)
+    candidates = await _load_individuals_for_matching(db)
     if not candidates:
         ind = Individual(name="(unnamed)", visit_count=0, last_seen_at=None, last_species_label=species_label)
         ind.set_prototype(emb)
         ind.visit_count = 1
         ind.last_seen_at = utcnow()
         db.add(ind)
-        db.flush()
+        await db.flush()
         return int(ind.id), 0.0
 
     best_id = None
@@ -671,7 +673,7 @@ def _match_or_create_individual(
     sim = float(1.0 - best_dist)
 
     if best_dist <= match_threshold:
-        ind = db.get(Individual, best_id)
+        ind = await db.get(Individual, best_id)
         assert ind is not None
         proto = ind.get_prototype()
         if proto is None:
@@ -695,11 +697,11 @@ def _match_or_create_individual(
     ind.visit_count = 1
     ind.last_seen_at = utcnow()
     db.add(ind)
-    db.flush()
+    await db.flush()
     return int(ind.id), 0.0
 
 
-def run_worker() -> None:
+async def run_worker() -> None:
     """
     Main loop for the hummingbird monitoring worker.  Requires OpenCV,
     ultralytics and the ClipModel dependencies.  If any of these are not
@@ -718,7 +720,7 @@ def run_worker() -> None:
         )
 
     ensure_dirs()
-    init_db()
+    await init_async_db()
 
     # Load models once
     yolo_model_name = os.getenv("HBMON_YOLO_MODEL", "yolo11n.pt")
@@ -1044,12 +1046,12 @@ def run_worker() -> None:
             species_label = "Hummingbird (unknown species)"
 
         # Write DB
-        with session_scope() as db:
+        async with async_session_scope() as db:
             individual_id = None
             match_score = 0.0
 
             if emb is not None:
-                individual_id, match_score = _match_or_create_individual(
+                individual_id, match_score = await _match_or_create_individual(
                     db,
                     emb,
                     species_label=species_label,
@@ -1122,7 +1124,7 @@ def run_worker() -> None:
             )
             obs.set_extra(extra_data)
             db.add(obs)
-            db.flush()  # get obs.id
+            await db.flush()  # get obs.id
 
             if emb is not None:
                 e = Embedding(observation_id=int(obs.id), individual_id=individual_id)
@@ -1140,7 +1142,7 @@ def run_worker() -> None:
 
 
 def main() -> None:
-    run_worker()
+    asyncio.run(run_worker())
 
 
 if __name__ == "__main__":

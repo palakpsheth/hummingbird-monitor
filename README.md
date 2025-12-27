@@ -125,9 +125,11 @@ rtsp://wyze-bridge:8554/<YOUR_CAMERA_NAME>
 Optional:
 - `GIT_COMMIT`: footer label shown in the UI; usually injected by CI/build. Defaults to `unknown`.
 - `HBMON_WEB_WORKERS`: number of Gunicorn workers for the web app (default: 4)
-- `HBMON_DB_URL`: PostgreSQL connection string for the worker (sync driver)
-- `HBMON_DB_ASYNC_URL`: PostgreSQL connection string for the web app (async driver)
+- `HBMON_DB_ASYNC_URL`: PostgreSQL connection string for the web app + worker (async driver)
+- `HBMON_DB_URL`: sync connection string for optional tooling/tests (unused in Docker)
 - `HBMON_REDIS_URL`: Redis cache connection string (optional but recommended)
+- `HBMON_REDIS_TTL_SECONDS`: Redis cache TTL in seconds (default: 5)
+- `HBMON_SQLITE_BUSY_TIMEOUT_MS`: SQLite busy timeout for fallback/testing (default: 5000)
 
 ### 2) Run
 ```bash
@@ -153,9 +155,8 @@ ip a
 
 ## Database & cache configuration
 
-The Docker setup runs PostgreSQL for the database and Redis for short-lived cache entries. The web
-service uses the async driver (`HBMON_DB_ASYNC_URL`) while the worker uses the sync driver
-(`HBMON_DB_URL`) against the same database.
+The Docker setup runs PostgreSQL for the database and Redis for short-lived cache entries. Both the
+web service and worker use the async driver (`HBMON_DB_ASYNC_URL`).
 
 Pool tuning (optional):
 - `HBMON_DB_POOL_SIZE`: base pool size (default: 5)
@@ -166,6 +167,10 @@ Pool tuning (optional):
 Cache tuning (optional):
 - `HBMON_REDIS_URL`: Redis connection string
 - `HBMON_REDIS_TTL_SECONDS`: cache TTL in seconds (default: 5)
+
+SQLite fallback/testing:
+- `HBMON_DB_URL`: sync SQLite/Postgres URL for local tooling/tests (default: SQLite path)
+- `HBMON_SQLITE_BUSY_TIMEOUT_MS`: SQLite busy timeout in milliseconds (default: 5000)
 
 ---
 
