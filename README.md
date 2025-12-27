@@ -1,11 +1,10 @@
 # Hummingbird Monitor (`hbmon`)
 
-<!-- The coverage badge is generated automatically by the GitHub Actions workflow.
-     The `coverage.svg` file at the repository root is updated after every run of
-     the CI pipeline via the `tj-actions/coverage-badge-py` action.  Referencing
-     the SVG file directly ensures the badge always reflects the latest test
-     coverage without relying on an external badge service. -->
-![Coverage](coverage.svg)
+<!-- The coverage badge uses shields.io with a JSON endpoint generated in CI.
+     The GitHub Actions workflow writes `coverage-badge.json` at the repository
+     root after tests run, and the badge URL points at that file. This keeps the
+     badge up-to-date without relying on GitHub's cached image URLs. -->
+![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/palakpsheth/hummingbird-monitor/main/coverage-badge.json&cacheSeconds=300)
 [![CI](https://github.com/palakpsheth/hummingbird-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/palakpsheth/hummingbird-monitor/actions/workflows/ci.yml)
 ![Python 3.11 | 3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -613,6 +612,19 @@ The hooks will run automatically before each commit.  They execute
 `ruff` against the changed files and run `pytest --cov=hbmon --cov-report=term` (with
 `PYTHONPATH=src` set in the hook configuration) to ensure the tests still pass.
 Running the hooks locally helps catch issues early and keeps the CI pipeline green.
+
+## Coverage badge (Shields.io)
+
+The coverage badge uses a shields.io JSON endpoint so the image stays fresh without manual README
+edits. To configure this in another repo:
+
+1. Ensure your CI produces a `coverage.xml` (or similar) report.
+2. Add a CI step to write a `coverage-badge.json` file at the repository root with the shields.io
+   schema (see `.github/workflows/ci.yml` in this repo).
+3. Commit the generated `coverage-badge.json` so it is available at
+   `https://raw.githubusercontent.com/<owner>/<repo>/<default-branch>/coverage-badge.json`.
+4. Reference the badge in your README using:
+   `https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/<owner>/<repo>/<default-branch>/coverage-badge.json&cacheSeconds=300`.
 
 ## Directory layout
 
