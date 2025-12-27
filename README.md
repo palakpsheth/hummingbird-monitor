@@ -33,10 +33,15 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Cross-linked** navigation:
   - Individuals list → individual page → all observations
   - Observation detail → linked individual
-- **Observation detail metadata**: detector confidence, bbox area (frame/ROI ratios), IoU thresholds, sensitivity settings, identification match details (species + individual), and the observation UUID shared across media files
+- **Observation detail metadata**: detector confidence, bbox area (frame/ROI ratios), IoU thresholds, sensitivity settings, identification match details (species + individual), plus a copy-ready `original_observation` JSON panel
 - **Exports**
   - CSV: observations and individuals
   - `tar.gz` bundle: snapshots + clips (generated under `/data/exports/`)
+  - Per-observation integration test bundle (downloadable from the observation detail page), containing:
+    - `metadata.json` with `expected`, `source`, `sensitivity_tests`, and `original_observation`
+    - `snapshot.jpg` (raw snapshot)
+    - `clip.mp4` (video clip)
+    - Optional `snapshot_annotated.jpg` and `snapshot_clip.jpg` when available
 
 ### Web UI pages
 - **Dashboard**: recent observations + top individuals

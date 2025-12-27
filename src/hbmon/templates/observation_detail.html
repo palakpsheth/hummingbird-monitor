@@ -147,6 +147,22 @@
           <span class="muted">·</span>
           <a href="/observations">Back to observations</a>
         </div>
+        <form
+          id="export-integration-test-form"
+          method="post"
+          action="/observations/{{ o.id }}/export_integration_test"
+          style="margin-top:12px;"
+        >
+          {% if csrf_token %}
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          {% endif %}
+          <input type="hidden" name="case_name" value="" />
+          <input type="hidden" name="description" value="" />
+          <input type="hidden" name="behavior" value="" />
+          <input type="hidden" name="location" value="" />
+          <input type="hidden" name="human_verified" value="false" />
+          <button type="button" id="export-integration-test-button">Export as Integration Test</button>
+        </form>
       </div>
 
       {% if video_info and video_info.exists %}
@@ -207,6 +223,68 @@
         </div>
       {% endif %}
     </div>
+
+    <script>
+      (function() {
+        var form = document.getElementById('export-integration-test-form');
+        var button = document.getElementById('export-integration-test-button');
+        if (!form || !button) {
+          return;
+        }
+        var submitForm = function(defaultLocation) {
+          var caseName = window.prompt('Test case folder name:', 'observation_{{ o.id }}');
+          if (caseName === null) {
+            return;
+          }
+          var description = window.prompt(
+            'Short description for metadata:',
+            'Observation {{ o.id }} integration test'
+          );
+          if (description === null) {
+            return;
+          }
+          var behavior = window.prompt('Behavior label (e.g., flying, perched):', 'unknown');
+          if (behavior === null) {
+            return;
+          }
+          var location = window.prompt('Location (optional):', defaultLocation || '');
+          if (location === null) {
+            return;
+          }
+          var humanVerified = window.confirm('Mark this test case as human-verified?');
+          form.querySelector('input[name=\"case_name\"]').value = caseName;
+          form.querySelector('input[name=\"description\"]').value = description;
+          form.querySelector('input[name=\"behavior\"]').value = behavior;
+          form.querySelector('input[name=\"location\"]').value = location;
+          form.querySelector('input[name=\"human_verified\"]').value = humanVerified ? 'true' : 'false';
+          form.submit();
+        };
+
+        button.addEventListener('click', function() {
+          var timezone = '';
+          try {
+            timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+          } catch (err) {
+            timezone = '';
+          }
+          if (navigator.geolocation && navigator.geolocation.getCurrentPosition) {
+            navigator.geolocation.getCurrentPosition(
+              function(pos) {
+                var coords = pos.coords;
+                var loc = coords ? coords.latitude.toFixed(4) + ', ' + coords.longitude.toFixed(4) : timezone;
+                submitForm(loc || timezone);
+              },
+              function() {
+                submitForm(timezone);
+              },
+              { timeout: 3000 }
+            );
+          } else {
+            submitForm(timezone);
+          }
+        });
+      })();
+    </script>
 
     <div class="card">
       <h2 style="margin-top:0;">Details</h2>
@@ -298,9 +376,70 @@
           </div>
         {% endif %}
 
-        {% if o.extra_json_pretty %}
-          <h3>Raw metadata</h3>
-          <pre class="pre">{{ o.extra_json_pretty }}</pre>
+        {% if o.original_observation_pretty %}
+          <div class="inline" style="gap:6px; align-items:center;">
+            <h3 style="margin:0;">Raw metadata (original_observation)</h3>
+            <button
+              type="button"
+              class="icon-button"
+              data-copy-target="raw-metadata"
+              data-copy-label="Copy"
+              data-copied-label="Copied"
+              aria-label="Copy original_observation JSON to clipboard"
+              title="Copy original_observation JSON to clipboard"
+            >📋</button>
+          </div>
+          <pre class="pre" id="raw-metadata">{{ o.original_observation_pretty }}</pre>
+          <script>
+            (function() {
+              var copyButton = document.querySelector('[data-copy-target="raw-metadata"]');
+              if (!copyButton) {
+                return;
+              }
+              var target = document.getElementById(copyButton.dataset.copyTarget);
+              if (!target) {
+                return;
+              }
+              var copyText = function(text) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                  return navigator.clipboard.writeText(text);
+                }
+                return new Promise(function(resolve, reject) {
+                  try {
+                    var textarea = document.createElement('textarea');
+                    textarea.value = text;
+                    textarea.style.position = 'fixed';
+                    textarea.style.opacity = '0';
+                    document.body.appendChild(textarea);
+                    textarea.focus();
+                    textarea.select();
+                    var success = document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    if (success) {
+                      resolve();
+                    } else {
+                      reject(new Error('Copy failed'));
+                    }
+                  } catch (err) {
+                    reject(err);
+                  }
+                });
+              };
+              var resetLabel = null;
+              copyButton.addEventListener('click', function() {
+                var text = target.textContent || '';
+                copyText(text).then(function() {
+                  if (resetLabel) {
+                    clearTimeout(resetLabel);
+                  }
+                  copyButton.textContent = copyButton.dataset.copiedLabel || 'Copied';
+                  resetLabel = setTimeout(function() {
+                    copyButton.textContent = '📋';
+                  }, 1500);
+                });
+              });
+            })();
+          </script>
         {% endif %}
       {% else %}
         <p class="muted">No extra metadata captured for this observation.</p>

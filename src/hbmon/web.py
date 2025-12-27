@@ -44,6 +44,7 @@ import importlib.util
 import io
 import math
 import os
+import re
 import subprocess
 import shutil
 import tarfile
@@ -102,6 +103,7 @@ from hbmon.config import (
     Roi,
     background_dir,
     background_image_path,
+    data_dir,
     ensure_dirs,
     load_settings,
     media_dir,
@@ -394,6 +396,28 @@ def pretty_json(text: str | None) -> str | None:
         return json.dumps(obj, indent=4, sort_keys=True)
     except (TypeError, ValueError):
         return text
+
+
+def pretty_json_obj(obj: Any | None) -> str | None:
+    """
+    Best-effort pretty formatting of a JSON-serializable object.
+
+    Returns ``None`` if formatting fails.
+    """
+    if obj is None:
+        return None
+    try:
+        return json.dumps(obj, indent=4, sort_keys=True)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sanitize_case_name(raw: str | None, fallback: str) -> str:
+    if not raw:
+        return fallback
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", raw.strip())
+    cleaned = cleaned.strip("-_")
+    return cleaned or fallback
 
 
 def _as_utc_str(dt: datetime | None) -> str | None:
@@ -900,7 +924,15 @@ def make_app() -> Any:
 
         o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
         extra = o.get_extra() or {}
-        o.extra_json_pretty = pretty_json(o.extra_json)  # type: ignore[attr-defined]
+        bbox_xyxy = list(o.bbox_xyxy) if o.bbox_xyxy else None
+        original_observation = {
+            "species_label": o.species_label,
+            "species_prob": o.species_prob,
+            "bbox_xyxy": bbox_xyxy,
+            "match_score": o.match_score,
+            "extra": extra,
+        }
+        o.original_observation_pretty = pretty_json_obj(original_observation)  # type: ignore[attr-defined]
 
         # Get annotated snapshot path from extra data (if available)
         annotated_snapshot_path = get_annotated_snapshot_path(o)
@@ -1016,9 +1048,121 @@ def make_app() -> Any:
 
         if ind_id is not None:
             _recompute_individual_stats(db, int(ind_id))
-            _commit_with_retry(db)
+        _commit_with_retry(db)
 
         return RedirectResponse(url="/observations", status_code=303)
+
+    @app.post("/observations/{obs_id}/export_integration_test")
+    def export_observation_integration_test(
+        obs_id: int,
+        case_name: str = Form(""),
+        description: str = Form(""),
+        behavior: str = Form(""),
+        location: str = Form(""),
+        human_verified: str = Form("false"),
+        db: Session = Depends(get_db),
+    ) -> FileResponse:
+        o = db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        extra = o.get_extra() or {}
+        bbox_xyxy = list(o.bbox_xyxy) if o.bbox_xyxy else None
+        original_observation = {
+            "species_label": o.species_label,
+            "species_prob": o.species_prob,
+            "bbox_xyxy": bbox_xyxy,
+            "match_score": o.match_score,
+            "extra": extra,
+        }
+
+        identification = extra.get("identification") if isinstance(extra, dict) else {}
+        sensitivity = extra.get("sensitivity") if isinstance(extra, dict) else {}
+
+        species_label_final = (
+            identification.get("species_label_final")
+            if isinstance(identification, dict)
+            else None
+        )
+        species_accepted = (
+            identification.get("species_accepted")
+            if isinstance(identification, dict)
+            else None
+        )
+
+        expected = {
+            "detection": o.bbox_xyxy is not None,
+            "species_label": o.species_label,
+            "species_label_final": species_label_final or o.species_label,
+            "species_accepted": bool(species_accepted) if species_accepted is not None else False,
+            "behavior": behavior or "unknown",
+            "human_verified": human_verified.strip().lower() in {"1", "true", "yes", "y", "on"},
+        }
+        expected_detection = expected["detection"]
+
+        sensitivity_params: dict[str, Any] = {}
+        if isinstance(sensitivity, dict):
+            for key in (
+                "detect_conf",
+                "detect_iou",
+                "min_box_area",
+                "bg_motion_threshold",
+                "bg_motion_blur",
+                "bg_min_overlap",
+                "bg_subtraction_enabled",
+            ):
+                if key in sensitivity:
+                    sensitivity_params[key] = sensitivity[key]
+
+        metadata = {
+            "description": description or f"Observation {o.id} integration test",
+            "expected": expected,
+            "source": {
+                "camera": o.camera_name or "",
+                "timestamp_utc": o.ts_utc,
+                "location": location or "",
+            },
+            "sensitivity_tests": [
+                {
+                    "name": "default",
+                    "params": sensitivity_params,
+                    "expected_detection": expected_detection,
+                }
+            ],
+            "original_observation": original_observation,
+        }
+
+        ensure_dirs()
+        out_dir = data_dir() / "exports"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        safe_case = _sanitize_case_name(case_name, f"observation_{o.id}")
+        out_path = out_dir / f"hbmon-integration-{safe_case}-{stamp}.tar.gz"
+
+        metadata_bytes = json.dumps(metadata, indent=4, sort_keys=True).encode("utf-8")
+        metadata_info = tarfile.TarInfo(name=f"{safe_case}/metadata.json")
+        metadata_info.size = len(metadata_bytes)
+
+        snapshot_path = media_dir() / o.snapshot_path
+        video_path = media_dir() / o.video_path
+        annotated_rel = get_annotated_snapshot_path(o)
+        clip_rel = get_clip_snapshot_path(o)
+        annotated_path = (media_dir() / annotated_rel) if annotated_rel else None
+        clip_path = (media_dir() / clip_rel) if clip_rel else None
+
+        with tarfile.open(out_path, "w:gz") as tf:
+            tf.addfile(metadata_info, io.BytesIO(metadata_bytes))
+            if snapshot_path.exists():
+                tf.add(snapshot_path, arcname=f"{safe_case}/snapshot.jpg")
+            if video_path.exists():
+                tf.add(video_path, arcname=f"{safe_case}/clip.mp4")
+            if annotated_path and annotated_path.exists():
+                tf.add(annotated_path, arcname=f"{safe_case}/snapshot_annotated.jpg")
+            if clip_path and clip_path.exists():
+                tf.add(clip_path, arcname=f"{safe_case}/snapshot_clip.jpg")
+
+        return FileResponse(str(out_path), filename=out_path.name, media_type="application/gzip")
 
     @app.post("/observations/bulk_delete")
     def bulk_delete_observations(
