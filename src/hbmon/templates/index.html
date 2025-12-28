@@ -34,17 +34,19 @@
           {% endif %}
         </div>
       </div>
+      <div class="live-feed-controls" role="group" aria-label="Live stream controls">
+        <div class="live-feed-actions">
+          <button type="button" id="live-feed-play" class="icon-button" aria-label="Play live stream">
+            <span aria-hidden="true">▶</span>
+          </button>
+          <button type="button" id="live-feed-pause" class="icon-button" aria-label="Pause live stream">
+            <span aria-hidden="true">⏸</span>
+          </button>
+        </div>
+      </div>
       <div class="live-feed-hint">Click image to view full size video</div>
     </div>
-    <div class="live-feed-controls">
-      <div class="live-feed-actions" role="group" aria-label="Live stream controls">
-        <button type="button" id="live-feed-play" class="icon-button" aria-label="Play live stream">
-          <span aria-hidden="true">▶</span>
-        </button>
-        <button type="button" id="live-feed-pause" class="icon-button" aria-label="Pause live stream">
-          <span aria-hidden="true">⏸</span>
-        </button>
-      </div>
+    <div class="live-feed-footer">
       <a class="muted" href="/calibrate">Calibrate ROI</a>
     </div>
   </div>
@@ -218,8 +220,14 @@
   }
 
   function updateButtons() {
-    if (playBtn) playBtn.disabled = isStreaming;
-    if (pauseBtn) pauseBtn.disabled = !isStreaming;
+    if (playBtn) {
+      playBtn.disabled = isStreaming;
+      playBtn.classList.toggle('is-active', isStreaming);
+    }
+    if (pauseBtn) {
+      pauseBtn.disabled = !isStreaming;
+      pauseBtn.classList.toggle('is-active', !isStreaming);
+    }
   }
 
   function showSnapshot() {
