@@ -269,6 +269,27 @@ def reset_db_state() -> None:
     _AsyncSessionLocal = None
 
 
+async def dispose_async_engine() -> None:
+    """
+    Dispose the async engine if it is initialized.
+
+    This is primarily used by the web app lifespan to ensure aiosqlite
+    background threads are stopped before the event loop is closed.
+    """
+    global _ASYNC_ENGINE, _AsyncSessionLocal
+    if _ASYNC_ENGINE is None:
+        return
+    try:
+        await _ASYNC_ENGINE.dispose()
+    except Exception:
+        try:
+            _ASYNC_ENGINE.sync_engine.dispose()
+        except Exception:
+            pass
+    _ASYNC_ENGINE = None
+    _AsyncSessionLocal = None
+
+
 @contextmanager
 def session_scope() -> Iterator[Session]:
     """

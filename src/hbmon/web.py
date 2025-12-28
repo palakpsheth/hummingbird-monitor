@@ -139,6 +139,7 @@ from hbmon.config import (
 )
 from hbmon.cache import cache_get_json, cache_set_json
 from hbmon.db import (
+    dispose_async_engine,
     get_async_db,
     get_session_factory,
     init_async_db,
@@ -680,6 +681,10 @@ class _AsyncSessionAdapter:
     async def flush(self) -> None:
         session = await self._ensure_session()
         await self._run(session.flush)
+
+    async def delete(self, *args: Any, **kwargs: Any) -> Any:
+        session = await self._ensure_session()
+        return await self._run(session.delete, *args, **kwargs)
 
     async def close(self) -> None:
         if self._session is not None:
@@ -1238,7 +1243,10 @@ def make_app() -> Any:
             await init_async_db()
         except RuntimeError:
             init_db()
-        yield
+        try:
+            yield
+        finally:
+            await dispose_async_engine()
 
     app = FastAPI(
         title="hbmon",
