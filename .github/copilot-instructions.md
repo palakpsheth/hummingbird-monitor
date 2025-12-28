@@ -84,8 +84,8 @@ When adding code that uses optional dependencies:
 
 - **pytest** with **pytest-cov** for coverage
 - Tests are in `tests/` directory
-- Run tests: `uv run pytest` or `pytest`
-- Run with coverage: `uv run pytest --cov=hbmon --cov-report=term --cov-report=html`
+- Run tests: `uv run pytest -n auto` or `pytest -n auto`
+- Run with coverage: `uv run pytest -n auto --cov=hbmon --cov-report=term --cov-report=html`
 
 ### Test Principles
 
@@ -139,7 +139,7 @@ uv venv
 uv pip install -e ".[dev]"
 
 # Run tests
-uv run pytest -q
+uv run pytest -n auto -q
 
 # Run web server (development mode)
 uv run uvicorn hbmon.web:app --reload --host 0.0.0.0 --port 8000
@@ -320,7 +320,7 @@ User settings are stored in `/data/config.json` and include:
 
 2. **Run Full Test Suite:**
    ```bash
-   uv run pytest --cov=hbmon --cov-report=term
+   uv run pytest -n auto --cov=hbmon --cov-report=term
    ```
 
 3. **Verify:**
@@ -453,5 +453,5 @@ When in doubt:
 - Review test files for examples
 - **If you modify user-facing functionality, configuration, or setup: UPDATE THE README**
 - **ALWAYS run `uv run ruff check .` before committing**
-- **ALWAYS run `uv run pytest --cov=hbmon` before committing**
+- **ALWAYS run `uv run pytest -n auto --cov=hbmon` before committing**
 - Use these commands to ensure changes don't break tests or violate code style
