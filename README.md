@@ -90,6 +90,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **hbmon-redis**: Redis cache for hot query results (latest observations, health checks)
 - **hbmon-worker**: reads RTSP, runs detection + CLIP + re-ID, writes to PostgreSQL
 - **hbmon-web**: FastAPI + Jinja UI served by Gunicorn + Uvicorn workers, serves `/media` and exports
+- **hbmon-stream**: dedicated FastAPI worker for `/api/stream.mjpeg` MJPEG streaming
 - **nginx** (optional): reverse proxy on port 80 (nice “just open IP” UX)
 
 ### Container Startup Order & Healthchecks
@@ -98,7 +99,7 @@ The `docker-compose.yml` uses healthchecks to ensure containers start in the cor
 
 ```
 wyze-bridge (healthy) → hbmon-db (healthy) → hbmon-web (healthy) → hbmon-worker
-                       → hbmon-redis (healthy)                  → hbmon-proxy
+                       → hbmon-redis (healthy) → hbmon-stream (healthy) → hbmon-proxy
 ```
 
 | Container     | Healthcheck                           | Wait for                       |
@@ -107,8 +108,9 @@ wyze-bridge (healthy) → hbmon-db (healthy) → hbmon-web (healthy) → hbmon-w
 | hbmon-db      | `pg_isready`                          | -                              |
 | hbmon-redis   | `redis-cli ping`                      | -                              |
 | hbmon-web     | HTTP check on `/health` endpoint      | wyze-bridge + db + redis       |
+| hbmon-stream  | HTTP check on `/health` endpoint      | wyze-bridge + db + redis       |
 | hbmon-worker  | Process check for `hbmon.worker`      | wyze-bridge + hbmon-web + db   |
-| hbmon-proxy   | HTTP check on port 80                 | hbmon-web healthy              |
+| hbmon-proxy   | HTTP check on port 80                 | hbmon-web + hbmon-stream       |
 
 This ensures the database is initialized by hbmon-web before the worker starts.
 
@@ -337,6 +339,30 @@ continue to override them when set.
 2. The worker computes a motion mask by comparing each frame to the background
 3. YOLO detections are filtered: only those overlapping significantly with motion areas are kept
 4. This reduces false positives from static objects or lighting changes
+
+### MJPEG live stream tuning
+The MJPEG endpoint (`/api/stream.mjpeg`) supports bandwidth/CPU tuning via environment variables:
+
+- `HBMON_MJPEG_FPS` (default 10)
+  - Target MJPEG frame rate for the live stream
+- `HBMON_MJPEG_MAX_WIDTH` (default 1280)
+  - Maximum output width; frames are downscaled if larger
+  - Set to 0 to disable width limiting
+- `HBMON_MJPEG_MAX_HEIGHT` (default 720)
+  - Maximum output height; frames are downscaled if larger
+  - Set to 0 to disable height limiting
+- `HBMON_MJPEG_JPEG_QUALITY` (default 70)
+  - JPEG quality for the MJPEG stream (10–100)
+- `HBMON_MJPEG_ADAPTIVE` (default 0)
+  - Set to 1 to enable adaptive degradation when encoding is slow
+- `HBMON_MJPEG_MIN_FPS` (default 4)
+  - Lowest FPS when adaptive degradation is active
+- `HBMON_MJPEG_MIN_QUALITY` (default 40)
+  - Lowest JPEG quality when adaptive degradation is active
+- `HBMON_MJPEG_FPS_STEP` (default 1)
+  - Step size for adaptive FPS adjustments
+- `HBMON_MJPEG_QUALITY_STEP` (default 5)
+  - Step size for adaptive quality adjustments
 
 ---
 
