@@ -53,6 +53,7 @@ import re
 import subprocess
 import shutil
 import tarfile
+from urllib.parse import urlsplit
 import time
 from datetime import datetime, timezone
 from functools import partial
@@ -197,7 +198,12 @@ def _sanitize_redirect_path(raw: str | None, default: str = "/observations") -> 
     if not raw:
         return default
     text = str(raw)
-    return text if text.startswith("/") else default
+    parsed = urlsplit(text)
+    if parsed.scheme or parsed.netloc:
+        return default
+    if not parsed.path.startswith("/") or parsed.path.startswith("//"):
+        return default
+    return text
 
 
 def _get_git_commit() -> str:
