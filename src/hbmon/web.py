@@ -373,6 +373,7 @@ class FrameBroadcaster:
             },
             "frame": {
                 "last_frame_age_s": age_s,
+                "last_frame_timestamp": latest_timestamp if latest_timestamp > 0 else None,
                 "last_frame_size_bytes": last_frame_size if last_frame_size > 0 else None,
                 "encode_ms": round(last_encode_duration * 1000.0, 2) if last_encode_duration > 0 else None,
                 "output_resolution": output_resolution,

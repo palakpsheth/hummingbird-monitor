@@ -490,6 +490,12 @@ a:hover { text-decoration: underline; }
   color: var(--muted);
 }
 
+.live-feed-diagnostics-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .live-feed-diagnostics dt {
   font-weight: 600;
   color: var(--text);
@@ -497,7 +503,7 @@ a:hover { text-decoration: underline; }
 }
 
 .live-feed-diagnostics dd {
-  margin: 2px 0 0 0;
+  margin: 0;
 }
 
 .live-feed-hint {

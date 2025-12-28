@@ -188,11 +188,15 @@
   var wasStreamingBeforeModal = false;
   var wasStreamingBeforeHidden = false;
   var diagnosticsTimer = null;
+  var diagnosticsTickTimer = null;
   var healthTimer = null;
   var lastStreamRestart = 0;
   var staleFrameThresholdSeconds = 3.5;
   var restartCooldownMs = 5000;
   var latestDiagnostics = null;
+  var lastDiagnosticsFetchedAt = null;
+  var lastFrameAgeSeconds = null;
+  var lastFrameTimestamp = null;
   var latestHealth = null;
   var detectionWarnSeconds = 120;
   var detectionCriticalSeconds = 300;
@@ -305,9 +309,7 @@
     }
 
     if (isStreaming) {
-      var frameAge = latestDiagnostics && latestDiagnostics.frame
-        ? latestDiagnostics.frame.last_frame_age_s
-        : null;
+      var frameAge = getFrameAgeSeconds();
       parts.push('Stream age: ' + formatAge(frameAge));
       if (frameAge !== null && frameAge !== undefined) {
         if (frameAge >= streamCriticalSeconds) {
@@ -368,20 +370,96 @@
     rows.push({ label: 'Encode Time', value: frame.encode_ms ? formatNumber(frame.encode_ms, 1) + ' ms' : '—' });
     rows.push({
       label: 'Last Frame Age',
-      value: frame.last_frame_age_s ? formatNumber(frame.last_frame_age_s * 1000.0, 0) + ' ms' : '—',
+      value: frame.last_frame_age_s !== null && frame.last_frame_age_s !== undefined
+        ? formatNumber(frame.last_frame_age_s * 1000.0, 0) + ' ms'
+        : '—',
     });
     rows.push({ label: 'Streaming Clients', value: data.clients !== undefined ? String(data.clients) : '—' });
 
     diagnosticsEl.replaceChildren();
     rows.forEach(function(row) {
+      var item = document.createElement('div');
+      item.className = 'live-feed-diagnostics-item';
       var dt = document.createElement('dt');
       dt.textContent = row.label;
       var dd = document.createElement('dd');
       dd.textContent = row.value;
-      diagnosticsEl.appendChild(dt);
-      diagnosticsEl.appendChild(dd);
+      item.appendChild(dt);
+      item.appendChild(dd);
+      diagnosticsEl.appendChild(item);
     });
     diagnosticsEl.hidden = false;
+  }
+
+  function coalesceValue(previousValue, nextValue) {
+    return nextValue === null || nextValue === undefined ? previousValue : nextValue;
+  }
+
+  function mergeDiagnostics(previousData, nextData) {
+    if (!previousData) return nextData || null;
+    if (!nextData) return previousData;
+    var merged = {
+      clients: coalesceValue(previousData.clients, nextData.clients),
+      source: {},
+      frame: {},
+      mjpeg: {},
+    };
+    var previousSource = previousData.source || {};
+    var nextSource = nextData.source || {};
+    merged.source.codec = coalesceValue(previousSource.codec, nextSource.codec);
+    merged.source.fps = coalesceValue(previousSource.fps, nextSource.fps);
+    merged.source.resolution = coalesceValue(previousSource.resolution, nextSource.resolution);
+
+    var previousFrame = previousData.frame || {};
+    var nextFrame = nextData.frame || {};
+    merged.frame.output_resolution = coalesceValue(previousFrame.output_resolution, nextFrame.output_resolution);
+    merged.frame.last_frame_timestamp = coalesceValue(
+      previousFrame.last_frame_timestamp,
+      nextFrame.last_frame_timestamp,
+    );
+    merged.frame.last_frame_size_bytes = coalesceValue(previousFrame.last_frame_size_bytes, nextFrame.last_frame_size_bytes);
+    merged.frame.encode_ms = coalesceValue(previousFrame.encode_ms, nextFrame.encode_ms);
+    merged.frame.estimated_bitrate_kbps = coalesceValue(
+      previousFrame.estimated_bitrate_kbps,
+      nextFrame.estimated_bitrate_kbps,
+    );
+    merged.frame.last_frame_age_s = coalesceValue(previousFrame.last_frame_age_s, nextFrame.last_frame_age_s);
+
+    var previousMjpeg = previousData.mjpeg || {};
+    var nextMjpeg = nextData.mjpeg || {};
+    merged.mjpeg.adaptive_enabled = coalesceValue(previousMjpeg.adaptive_enabled, nextMjpeg.adaptive_enabled);
+    merged.mjpeg.target_fps = coalesceValue(previousMjpeg.target_fps, nextMjpeg.target_fps);
+    merged.mjpeg.current_fps = coalesceValue(previousMjpeg.current_fps, nextMjpeg.current_fps);
+    merged.mjpeg.min_fps = coalesceValue(previousMjpeg.min_fps, nextMjpeg.min_fps);
+    merged.mjpeg.base_quality = coalesceValue(previousMjpeg.base_quality, nextMjpeg.base_quality);
+    merged.mjpeg.current_quality = coalesceValue(previousMjpeg.current_quality, nextMjpeg.current_quality);
+    merged.mjpeg.min_quality = coalesceValue(previousMjpeg.min_quality, nextMjpeg.min_quality);
+    merged.mjpeg.max_width = coalesceValue(previousMjpeg.max_width, nextMjpeg.max_width);
+    merged.mjpeg.max_height = coalesceValue(previousMjpeg.max_height, nextMjpeg.max_height);
+    return merged;
+  }
+
+  function getFrameAgeSeconds() {
+    if (lastFrameAgeSeconds === null || lastFrameAgeSeconds === undefined || !lastDiagnosticsFetchedAt) {
+      return null;
+    }
+    var elapsed = (Date.now() - lastDiagnosticsFetchedAt) / 1000.0;
+    return Math.max(0, lastFrameAgeSeconds + elapsed);
+  }
+
+  function getDiagnosticsSnapshot() {
+    if (!latestDiagnostics) return null;
+    var snapshot = JSON.parse(JSON.stringify(latestDiagnostics));
+    var frameAge = getFrameAgeSeconds();
+    if (snapshot.frame) {
+      snapshot.frame.last_frame_age_s = frameAge;
+    }
+    return snapshot;
+  }
+
+  function refreshDiagnosticsDisplay() {
+    if (!latestDiagnostics) return;
+    renderDiagnostics(getDiagnosticsSnapshot());
   }
 
   function fetchDiagnostics() {
@@ -392,17 +470,31 @@
         return res.json();
       })
       .then(function(data) {
-        renderDiagnostics(data);
-        latestDiagnostics = data;
+        var predictedAge = getFrameAgeSeconds();
+        var incomingFrameTimestamp = data && data.frame ? data.frame.last_frame_timestamp : null;
+        latestDiagnostics = mergeDiagnostics(latestDiagnostics, data);
+        if (incomingFrameTimestamp !== null && incomingFrameTimestamp !== undefined) {
+          if (lastFrameTimestamp === null || lastFrameTimestamp === undefined || incomingFrameTimestamp > lastFrameTimestamp) {
+            lastFrameTimestamp = incomingFrameTimestamp;
+            if (data && data.frame && data.frame.last_frame_age_s !== null && data.frame.last_frame_age_s !== undefined) {
+              lastFrameAgeSeconds = data.frame.last_frame_age_s;
+            }
+          } else if (predictedAge !== null && predictedAge !== undefined) {
+            lastFrameAgeSeconds = predictedAge;
+          }
+        } else if (predictedAge !== null && predictedAge !== undefined) {
+          lastFrameAgeSeconds = predictedAge;
+        }
+        lastDiagnosticsFetchedAt = Date.now();
+        refreshDiagnosticsDisplay();
         updateHealthIndicator();
-        var frameAge = data && data.frame ? data.frame.last_frame_age_s : null;
+        var frameAge = getFrameAgeSeconds();
         if (frameAge !== null && frameAge !== undefined && frameAge > staleFrameThresholdSeconds) {
           restartStream('Stale diagnostics data');
         }
       })
       .catch(function() {
-        clearDiagnostics();
-        latestDiagnostics = null;
+        refreshDiagnosticsDisplay();
         updateHealthIndicator();
         restartStream('Diagnostics unavailable');
       });
@@ -412,6 +504,9 @@
     if (!diagnosticsEl || diagnosticsTimer) return;
     fetchDiagnostics();
     diagnosticsTimer = window.setInterval(fetchDiagnostics, 2500);
+    if (!diagnosticsTickTimer) {
+      diagnosticsTickTimer = window.setInterval(refreshDiagnosticsDisplay, 1000);
+    }
   }
 
   function stopDiagnosticsPolling() {
@@ -419,8 +514,15 @@
       window.clearInterval(diagnosticsTimer);
       diagnosticsTimer = null;
     }
+    if (diagnosticsTickTimer) {
+      window.clearInterval(diagnosticsTickTimer);
+      diagnosticsTickTimer = null;
+    }
     clearDiagnostics();
     latestDiagnostics = null;
+    lastDiagnosticsFetchedAt = null;
+    lastFrameAgeSeconds = null;
+    lastFrameTimestamp = null;
     updateHealthIndicator();
   }
 
