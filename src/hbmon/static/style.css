@@ -469,14 +469,65 @@ a:hover { text-decoration: underline; }
   gap: 10px;
 }
 
+.live-feed-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.live-feed-frame {
+  position: relative;
+  display: inline-block;
+}
+
+.live-feed-frame-modal {
+  max-width: 95vw;
+  max-height: 90vh;
+}
+
+.live-feed-roi {
+  position: absolute;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+  pointer-events: none;
+}
+
+.icon-button {
+  background: var(--btn-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.icon-button:hover,
+.icon-button:focus {
+  background: var(--btn-bg-hover);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.icon-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .live-feed-thumb {
+  width: 100%;
+  height: auto;
   max-width: 320px;
   max-height: 180px;
   border-radius: 14px;
   border: 1px solid var(--border);
   display: block;
   margin: 0 auto;
-  object-fit: contain;
   cursor: pointer;
   transition: transform 150ms ease, box-shadow 150ms ease;
 }
