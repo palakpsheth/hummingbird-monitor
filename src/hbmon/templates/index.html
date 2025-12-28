@@ -5,14 +5,16 @@
   <div class="card">
     <div class="live-feed-header">
       <h2 class="live-feed-title">Live Camera Feed</h2>
-      <div class="muted" id="live-feed-status">Loading stream...</div>
+      <div class="muted" id="live-feed-status">Stream paused (click to start)</div>
     </div>
     <div class="live-feed-container">
-      <img id="live-feed-img" src="/api/stream.mjpeg" alt="Live camera stream from hummingbird feeder - click to enlarge" class="live-feed-thumb" title="Click to view full size" />
+      <div id="live-feed-thumb-container">
+        <img id="live-feed-img" src="" data-stream-src="/api/stream.mjpeg" alt="Live camera stream from hummingbird feeder - click to enlarge" class="live-feed-thumb" title="Click to view full size" />
+      </div>
       <div class="live-feed-hint">Click image to view full size</div>
     </div>
     <div class="live-feed-controls">
-      <button type="button" id="live-feed-toggle">Stop Stream</button>
+      <button type="button" id="live-feed-toggle">Start Stream</button>
       <a class="muted" href="/calibrate">Calibrate ROI</a>
     </div>
   </div>
@@ -22,7 +24,7 @@
     <div class="live-feed-modal-content">
       <h2 id="live-feed-modal-title" class="visually-hidden">Full size camera view</h2>
       <button type="button" id="live-feed-modal-close" class="live-feed-modal-close" aria-label="Close full size view">&times;</button>
-      <img id="live-feed-modal-img" src="" alt="Full size camera view" class="live-feed-modal-img" />
+      <div id="live-feed-modal-body"></div>
     </div>
   </div>
 
@@ -128,10 +130,44 @@
   var statusEl = document.getElementById('live-feed-status');
   var toggleBtn = document.getElementById('live-feed-toggle');
   var modal = document.getElementById('live-feed-modal');
-  var modalImg = document.getElementById('live-feed-modal-img');
+  var modalBody = document.getElementById('live-feed-modal-body');
   var modalClose = document.getElementById('live-feed-modal-close');
-  var isStreaming = true;
-  var streamSrc = '/api/stream.mjpeg';
+  var thumbContainer = document.getElementById('live-feed-thumb-container');
+
+  var isStreaming = false;
+  var hasInteracted = false;
+  var wasStreamingBeforeModal = false;
+
+  var defaultStreamSrc = '/api/stream.mjpeg';
+
+  function sanitizeStreamSrc(value) {
+    if (!value) return defaultStreamSrc;
+
+    var rawValue = String(value).trim();
+    if (!rawValue) return defaultStreamSrc;
+
+    try {
+      var parsedUrl = new URL(rawValue, window.location.origin);
+
+      // Same-origin only
+      if (parsedUrl.origin !== window.location.origin) {
+        return defaultStreamSrc;
+      }
+
+      // Restrict to API endpoints only
+      if (!parsedUrl.pathname.startsWith('/api/')) {
+        return defaultStreamSrc;
+      }
+
+      // Return a safe relative URL
+      return encodeURI(parsedUrl.pathname + parsedUrl.search);
+    } catch (e) {
+      return defaultStreamSrc;
+    }
+  }
+
+  var rawStreamSrc = img ? (img.getAttribute('data-stream-src') || defaultStreamSrc) : defaultStreamSrc;
+  var streamSrc = sanitizeStreamSrc(rawStreamSrc);
 
   function updateStatus(text) {
     if (statusEl) statusEl.textContent = text;
@@ -151,15 +187,28 @@
     img.src = '';
     isStreaming = false;
     if (toggleBtn) toggleBtn.textContent = 'Start Stream';
-    updateStatus('Stream stopped');
+    updateStatus('Stream paused');
   }
 
   function openModal() {
-    if (modal && modalImg && img) {
-      // For MJPEG stream, open the stream in modal too
-      modalImg.src = streamSrc;
+    if (modal && modalBody && img) {
+      if (!hasInteracted) {
+        hasInteracted = true;
+      }
+
+      wasStreamingBeforeModal = isStreaming;
+      if (!isStreaming) {
+        startStream();
+      }
+
+      // Move the existing thumbnail <img> into the modal (no duplicate stream elements)
+      modalBody.appendChild(img);
+      img.classList.remove('live-feed-thumb');
+      img.classList.add('live-feed-modal-img');
+
       modal.classList.add('open');
       document.body.style.overflow = 'hidden';
+
       // Focus close button for keyboard accessibility
       if (modalClose) {
         modalClose.focus();
@@ -171,8 +220,17 @@
     if (modal) {
       modal.classList.remove('open');
       document.body.style.overflow = '';
-      // Stop modal stream when closing
-      if (modalImg) modalImg.src = '';
+
+      if (thumbContainer && img) {
+        thumbContainer.appendChild(img);
+        img.classList.remove('live-feed-modal-img');
+        img.classList.add('live-feed-thumb');
+      }
+
+      if (!wasStreamingBeforeModal) {
+        stopStream();
+      }
+
       // Return focus to thumbnail image
       if (img) {
         img.focus();
@@ -184,6 +242,7 @@
   if (img) {
     img.addEventListener('click', openModal);
     img.style.cursor = 'pointer';
+
     // Make thumbnail focusable for keyboard users
     img.setAttribute('tabindex', '0');
     img.addEventListener('keydown', function(e) {
@@ -215,6 +274,9 @@
 
   if (toggleBtn) {
     toggleBtn.addEventListener('click', function() {
+      if (!hasInteracted) {
+        hasInteracted = true;
+      }
       if (isStreaming) {
         stopStream();
       } else {
@@ -233,6 +295,15 @@
         updateStatus('Streaming live');
       }
     };
+  }
+
+  // Default state: paused until user interacts
+  if (!hasInteracted) {
+    stopStream();
+    updateStatus('Stream paused (click to start)');
+    if (toggleBtn) {
+      toggleBtn.textContent = 'Start Stream';
+    }
   }
 })();
 </script>
