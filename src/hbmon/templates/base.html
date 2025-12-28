@@ -4,7 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{ title }}</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <link rel="stylesheet" href="/static/style.css?v={{ app_version }}-{{ git_commit }}" />
 </head>
 {% set tz_value = timezone or "local" %}
 {% set tz_label = timezone_label or tz_value %}
@@ -45,9 +48,9 @@
     </div>
   </footer>
 
-  <script src="/static/theme.js"></script>
-  <script src="/static/timestamps.js"></script>
-  <script src="/static/zoom.js"></script>
+  <script src="/static/theme.js?v={{ app_version }}-{{ git_commit }}"></script>
+  <script src="/static/timestamps.js?v={{ app_version }}-{{ git_commit }}"></script>
+  <script src="/static/zoom.js?v={{ app_version }}-{{ git_commit }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>
