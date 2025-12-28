@@ -56,6 +56,28 @@ a:hover { text-decoration: underline; }
 .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
 .footer { border-top: 1px solid var(--border); padding: 12px 0 18px 0; margin-top: 12px; background: var(--bg); background: color-mix(in srgb, var(--bg) 90%, transparent); }
 
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.page-header .page-title {
+  margin: 6px 0 10px;
+}
+
+.page-meta {
+  font-size: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  text-align: right;
+}
+
 /* ───────────────────────── Top Bar ───────────────────────── */
 
 .topbar {
@@ -453,6 +475,29 @@ a:hover { text-decoration: underline; }
   margin-top: 12px;
   max-width: 100%;
   text-align: center;
+}
+
+.live-feed-diagnostics {
+  margin: 8px 0 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 6px 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.live-feed-diagnostics dt {
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.live-feed-diagnostics dd {
+  margin: 2px 0 0 0;
 }
 
 .live-feed-hint {

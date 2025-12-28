@@ -261,6 +261,17 @@ def _update_mjpeg_adaptive(
     return new_fps, new_quality
 
 
+def _decode_fourcc(raw_value: float | int) -> str:
+    if raw_value is None:
+        return ""
+    code = int(raw_value)
+    if code == 0:
+        return ""
+    chars = [chr((code >> (8 * i)) & 0xFF) for i in range(4)]
+    cleaned = "".join(chars).strip()
+    return cleaned if cleaned.isprintable() else ""
+
+
 class FrameBroadcaster:
     """Background video capture that keeps a cached JPEG for MJPEG streaming."""
 
@@ -276,6 +287,13 @@ class FrameBroadcaster:
         self._clients = 0
         self._latest_frame: bytes | None = None
         self._latest_timestamp = 0.0
+        self._last_frame_shape: tuple[int, int] | None = None
+        self._last_frame_size = 0
+        self._last_encode_duration = 0.0
+        self._source_width = 0
+        self._source_height = 0
+        self._source_fps = 0.0
+        self._source_codec = ""
 
     @property
     def rtsp_url(self) -> str:
@@ -321,12 +339,82 @@ class FrameBroadcaster:
         with self._lock:
             return self._latest_frame, self._latest_timestamp
 
+    def diagnostics(self) -> dict[str, Any]:
+        now = time.monotonic()
+        with self._lock:
+            latest_timestamp = self._latest_timestamp
+            last_frame_size = self._last_frame_size
+            last_frame_shape = self._last_frame_shape
+            current_fps = self._current_fps
+            current_quality = self._current_quality
+            settings = self._settings
+            clients = self._clients
+            source_width = self._source_width
+            source_height = self._source_height
+            source_fps = self._source_fps
+            source_codec = self._source_codec
+            last_encode_duration = self._last_encode_duration
+
+        age_s = None if latest_timestamp <= 0 else max(0.0, now - latest_timestamp)
+        output_resolution = None
+        if last_frame_shape is not None:
+            output_resolution = f"{last_frame_shape[1]}x{last_frame_shape[0]}"
+        source_resolution = None
+        if source_width > 0 and source_height > 0:
+            source_resolution = f"{source_width}x{source_height}"
+
+        return {
+            "clients": clients,
+            "source": {
+                "resolution": source_resolution,
+                "fps": source_fps if source_fps > 0 else None,
+                "codec": source_codec or None,
+            },
+            "frame": {
+                "last_frame_age_s": age_s,
+                "last_frame_size_bytes": last_frame_size if last_frame_size > 0 else None,
+                "encode_ms": round(last_encode_duration * 1000.0, 2) if last_encode_duration > 0 else None,
+                "output_resolution": output_resolution,
+            },
+            "mjpeg": {
+                "adaptive_enabled": settings.adaptive_enabled,
+                "target_fps": settings.target_fps,
+                "current_fps": current_fps,
+                "min_fps": settings.min_fps,
+                "base_quality": settings.base_quality,
+                "current_quality": current_quality,
+                "min_quality": settings.min_quality,
+                "max_width": settings.max_width,
+                "max_height": settings.max_height,
+            },
+        }
+
     def _open_capture(self, cv2: Any) -> Any | None:
         cap = cv2.VideoCapture(self._rtsp_url)
         if not cap.isOpened():
             cap.release()
             return None
         _configure_mjpeg_capture(cap, cv2)
+        source_width = 0
+        source_height = 0
+        source_fps = 0.0
+        source_codec = ""
+        if hasattr(cap, "get"):
+            try:
+                source_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+                source_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+                source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+                source_codec = _decode_fourcc(cap.get(cv2.CAP_PROP_FOURCC) or 0)
+            except Exception:
+                source_width = 0
+                source_height = 0
+                source_fps = 0.0
+                source_codec = ""
+        with self._lock:
+            self._source_width = source_width
+            self._source_height = source_height
+            self._source_fps = source_fps
+            self._source_codec = source_codec
         return cap
 
     def _run(self) -> None:
@@ -375,6 +463,9 @@ class FrameBroadcaster:
                 with self._lock:
                     self._latest_frame = frame_bytes
                     self._latest_timestamp = current_time
+                    self._last_frame_shape = frame.shape[:2]
+                    self._last_frame_size = len(frame_bytes)
+                    self._last_encode_duration = encode_duration
         finally:
             if cap is not None:
                 cap.release()
@@ -2637,6 +2728,32 @@ def make_app() -> Any:
             generate_frames(),
             media_type="multipart/x-mixed-replace; boundary=frame",
         )
+
+    @app.get("/api/stream_diagnostics")
+    async def stream_diagnostics() -> dict[str, Any]:
+        """
+        Return diagnostic information about the live MJPEG stream.
+
+        Includes source stream properties, MJPEG encoding settings, and recent frame stats.
+        """
+        s = load_settings()
+        if not s.rtsp_url:
+            raise HTTPException(status_code=503, detail="RTSP URL not configured")
+
+        mjpeg_settings = _load_mjpeg_settings()
+        broadcaster = _get_frame_broadcaster(s.rtsp_url, mjpeg_settings)
+        data = broadcaster.diagnostics()
+
+        frame_data = data.get("frame", {})
+        mjpeg_data = data.get("mjpeg", {})
+        last_frame_size = frame_data.get("last_frame_size_bytes")
+        current_fps = mjpeg_data.get("current_fps")
+        if last_frame_size and current_fps and current_fps > 0:
+            frame_data["estimated_bitrate_kbps"] = round((last_frame_size * 8 * current_fps) / 1000.0, 2)
+        else:
+            frame_data["estimated_bitrate_kbps"] = None
+        data["frame"] = frame_data
+        return data
 
     @app.get("/api/video_info/{obs_id}")
     async def video_info(

@@ -75,11 +75,11 @@
   }
 
   function updateCurrentTime() {
-    const node = document.getElementById("footer-current-time");
-    if (!node) return;
+    const nodes = document.querySelectorAll("[data-current-time]");
+    if (!nodes.length) return;
     const tz = getConfiguredTimezone();
     const now = new Date();
-    node.textContent = formatWithOptions(now, {
+    const value = formatWithOptions(now, {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -88,6 +88,9 @@
       second: "2-digit",
       timeZoneName: "short",
       timeZone: tz || undefined,
+    });
+    nodes.forEach((node) => {
+      node.textContent = value;
     });
   }
 

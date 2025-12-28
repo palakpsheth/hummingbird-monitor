@@ -1,12 +1,22 @@
 {% extends "base.html" %}
 {% block content %}
-  <h1>Dashboard</h1>
+  <div class="page-header">
+    <h1 class="page-title">Dashboard</h1>
+    <div class="muted page-meta">
+      Current time:
+      <span data-current-time="true" data-timezone="{{ tz_value }}">--</span>
+      · TZ: <span>{{ tz_label }}</span>
+      · Version: <span>{{ app_version }}</span>
+      · Commit: <span>{{ git_commit }}</span>
+    </div>
+  </div>
 
   <div class="card">
     <div class="live-feed-header">
       <h2 class="live-feed-title">Live Camera Feed</h2>
       <div class="muted" id="live-feed-status">Stream paused (click to start)</div>
     </div>
+    <dl class="live-feed-diagnostics" id="live-feed-diagnostics" hidden></dl>
     <div class="live-feed-container">
       <div id="live-feed-thumb-container">
         <div id="live-feed-frame" class="live-feed-frame">
@@ -160,6 +170,7 @@
 (function() {
   var img = document.getElementById('live-feed-img');
   var statusEl = document.getElementById('live-feed-status');
+  var diagnosticsEl = document.getElementById('live-feed-diagnostics');
   var modal = document.getElementById('live-feed-modal');
   var modalBody = document.getElementById('live-feed-modal-body');
   var modalClose = document.getElementById('live-feed-modal-close');
@@ -172,8 +183,10 @@
   var hasInteracted = false;
   var wasStreamingBeforeModal = false;
   var wasStreamingBeforeHidden = false;
+  var diagnosticsTimer = null;
 
   var defaultStreamSrc = '/api/stream.mjpeg';
+  var diagnosticsSrc = '/api/stream_diagnostics';
 
   function sanitizeApiSrc(value, fallback) {
     if (!value) return fallback;
@@ -219,6 +232,104 @@
     if (statusEl) statusEl.textContent = text;
   }
 
+  function clearDiagnostics() {
+    if (!diagnosticsEl) return;
+    diagnosticsEl.replaceChildren();
+    diagnosticsEl.hidden = true;
+  }
+
+  function formatNumber(value, digits) {
+    if (value === null || value === undefined) return '—';
+    if (typeof value !== 'number') return String(value);
+    return value.toFixed(digits);
+  }
+
+  function formatBitrate(kbps) {
+    if (kbps === null || kbps === undefined) return '—';
+    if (kbps >= 1000) return (kbps / 1000).toFixed(2) + ' Mbps';
+    return formatNumber(kbps, 1) + ' Kbps';
+  }
+
+  function renderDiagnostics(data) {
+    if (!diagnosticsEl || !data) return;
+    var rows = [];
+    var source = data.source || {};
+    var frame = data.frame || {};
+    var mjpeg = data.mjpeg || {};
+
+    rows.push({ label: 'Codec', value: source.codec || '—' });
+    rows.push({ label: 'Source FPS', value: formatNumber(source.fps, 2) });
+    rows.push({ label: 'Source Resolution', value: source.resolution || '—' });
+    rows.push({ label: 'Output Resolution', value: frame.output_resolution || '—' });
+    rows.push({
+      label: 'MJPEG FPS',
+      value: formatNumber(mjpeg.current_fps, 2) + ' / ' + formatNumber(mjpeg.target_fps, 2) + ' target',
+    });
+    rows.push({
+      label: 'MJPEG Quality',
+      value: [
+        'cur ' + formatNumber(mjpeg.current_quality, 0),
+        'base ' + formatNumber(mjpeg.base_quality, 0),
+        'min ' + formatNumber(mjpeg.min_quality, 0),
+      ].join(' · '),
+    });
+    rows.push({ label: 'Adaptive MJPEG', value: mjpeg.adaptive_enabled ? 'Enabled' : 'Disabled' });
+    rows.push({
+      label: 'Max Output Size',
+      value: mjpeg.max_width && mjpeg.max_height ? mjpeg.max_width + '×' + mjpeg.max_height : '—',
+    });
+    rows.push({ label: 'Frame Size', value: frame.last_frame_size_bytes
+        ? formatNumber(frame.last_frame_size_bytes / 1024.0, 1) + ' KB'
+        : '—' });
+    rows.push({ label: 'Estimated Bitrate', value: formatBitrate(frame.estimated_bitrate_kbps) });
+    rows.push({ label: 'Encode Time', value: frame.encode_ms ? formatNumber(frame.encode_ms, 1) + ' ms' : '—' });
+    rows.push({
+      label: 'Last Frame Age',
+      value: frame.last_frame_age_s ? formatNumber(frame.last_frame_age_s * 1000.0, 0) + ' ms' : '—',
+    });
+    rows.push({ label: 'Streaming Clients', value: data.clients !== undefined ? String(data.clients) : '—' });
+
+    diagnosticsEl.replaceChildren();
+    rows.forEach(function(row) {
+      var dt = document.createElement('dt');
+      dt.textContent = row.label;
+      var dd = document.createElement('dd');
+      dd.textContent = row.value;
+      diagnosticsEl.appendChild(dt);
+      diagnosticsEl.appendChild(dd);
+    });
+    diagnosticsEl.hidden = false;
+  }
+
+  function fetchDiagnostics() {
+    if (!diagnosticsEl || !isStreaming) return;
+    fetch(diagnosticsSrc, { cache: 'no-store' })
+      .then(function(res) {
+        if (!res.ok) throw new Error('bad response');
+        return res.json();
+      })
+      .then(function(data) {
+        renderDiagnostics(data);
+      })
+      .catch(function() {
+        clearDiagnostics();
+      });
+  }
+
+  function startDiagnosticsPolling() {
+    if (!diagnosticsEl || diagnosticsTimer) return;
+    fetchDiagnostics();
+    diagnosticsTimer = window.setInterval(fetchDiagnostics, 2500);
+  }
+
+  function stopDiagnosticsPolling() {
+    if (diagnosticsTimer) {
+      window.clearInterval(diagnosticsTimer);
+      diagnosticsTimer = null;
+    }
+    clearDiagnostics();
+  }
+
   function updateButtons() {
     if (playBtn) {
       playBtn.disabled = isStreaming;
@@ -245,6 +356,7 @@
     img.src = streamSrc;
     isStreaming = true;
     updateStatus('Streaming live');
+    startDiagnosticsPolling();
     updateButtons();
   }
 
@@ -257,6 +369,7 @@
     }
     isStreaming = false;
     updateStatus('Stream paused');
+    stopDiagnosticsPolling();
     updateButtons();
   }
 
@@ -373,6 +486,7 @@
         return;
       }
       updateStatus('Stream unavailable');
+      stopDiagnosticsPolling();
     };
     img.onload = function() {
       if (isStreaming) {
