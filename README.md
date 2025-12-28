@@ -163,6 +163,9 @@ Optional:
 docker compose up -d --build
 ```
 
+By default, Docker builds use the **CPU-only** PyTorch wheels to keep image sizes smaller. See
+[GPU acceleration](#gpu-acceleration-if-available) for CUDA-enabled builds.
+
 ### 3) Open the UI on your phone
 - Main UI (nginx on port 80): `http://<mini-pc-ip>/`
 - Direct to app (port 8000): `http://<mini-pc-ip>:8000`
@@ -209,12 +212,15 @@ For local development, the repo includes a `Makefile` with common tasks. The tar
 ```bash
 make venv            # create .venv via uv
 make sync            # install dev dependencies from pyproject.toml
+make sync-gpu        # install dev dependencies with CUDA-enabled PyTorch wheels
 make lint            # ruff check
 make test            # full pytest + coverage
 make test-unit       # unit tests + coverage (marker: not integration)
 make test-integration # integration/UI tests + coverage (marker: integration)
 make docker-build    # docker compose build
 make docker-up       # docker compose up -d --build
+make docker-build-gpu # docker compose build (CUDA-enabled PyTorch)
+make docker-up-gpu   # docker compose up -d --build (CUDA-enabled PyTorch)
 make docker-down     # docker compose down
 make clean-db        # remove local database file only (defaults to ./data)
 make clean-media     # remove local media files (defaults to ./data/media)
@@ -421,6 +427,20 @@ Then inside the worker container:
 - set `HBMON_DEVICE=cuda`
 - ensure you’re using a CUDA-enabled PyTorch build
 
+To build CUDA-enabled images, use the Makefile targets (or pass the build arg yourself):
+
+```bash
+make docker-build-gpu
+make docker-up-gpu
+```
+
+These targets set `PYTORCH_INDEX_URL` to the CUDA wheel index (default: `cu121`). You can override
+the index for a different CUDA version if needed:
+
+```bash
+PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu118 docker compose build
+```
+
 ### 4) Verify inside the container
 ```bash
 python - <<'PY'
@@ -460,9 +480,15 @@ From repo root:
 
 ```bash
 uv venv
-uv pip install -e ".[dev]"
+uv pip install -e ".[dev]" --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
 uv run pytest -q
 uv run uvicorn hbmon.web:app --reload --host 0.0.0.0 --port 8000
+```
+
+To use CUDA-enabled PyTorch wheels locally, swap the index URL (or run `make sync-gpu`):
+
+```bash
+uv pip install -e ".[dev]" --index-url https://download.pytorch.org/whl/cu121 --extra-index-url https://pypi.org/simple
 ```
 
 Run the worker locally (requires RTSP access from your host):

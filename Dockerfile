@@ -19,6 +19,7 @@ COPY src /app/src
 
 ARG GIT_COMMIT=unknown
 ENV HBMON_GIT_COMMIT=${GIT_COMMIT}
+ARG PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 # Optionally copy lightweight git metadata when available (no-op outside git repos)
 RUN --mount=type=bind,source=.,target=/tmp/src,ro \
@@ -38,6 +39,6 @@ RUN --mount=type=bind,source=.,target=/tmp/src,ro \
         fi; \
     fi
 
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir --index-url ${PYTORCH_INDEX_URL} --extra-index-url https://pypi.org/simple -e .
 
 EXPOSE 8000

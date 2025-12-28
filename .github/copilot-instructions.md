@@ -136,7 +136,7 @@ Why `uv`?
 uv venv
 
 # Install dependencies (editable mode with dev dependencies)
-uv pip install -e ".[dev]"
+uv pip install -e ".[dev]" --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
 
 # Run tests
 uv run pytest -n auto -q
@@ -315,12 +315,12 @@ User settings are stored in `/data/config.json` and include:
 
 1. **Run Ruff:**
    ```bash
-   uv run ruff check .
+   UV_INDEX_URL=https://download.pytorch.org/whl/cpu UV_EXTRA_INDEX_URL=https://pypi.org/simple uv run ruff check .
    ```
 
 2. **Run Full Test Suite:**
    ```bash
-   uv run pytest -n auto --cov=hbmon --cov-report=term
+   UV_INDEX_URL=https://download.pytorch.org/whl/cpu UV_EXTRA_INDEX_URL=https://pypi.org/simple uv run pytest -n auto --cov=hbmon --cov-report=term
    ```
 
 3. **Verify:**
@@ -452,6 +452,6 @@ When in doubt:
 - Check the README for setup and usage guidance
 - Review test files for examples
 - **If you modify user-facing functionality, configuration, or setup: UPDATE THE README**
-- **ALWAYS run `uv run ruff check .` before committing**
-- **ALWAYS run `uv run pytest -n auto --cov=hbmon` before committing**
+- **ALWAYS run `UV_INDEX_URL=https://download.pytorch.org/whl/cpu UV_EXTRA_INDEX_URL=https://pypi.org/simple uv run ruff check .` before committing**
+- **ALWAYS run `UV_INDEX_URL=https://download.pytorch.org/whl/cpu UV_EXTRA_INDEX_URL=https://pypi.org/simple uv run pytest -n auto --cov=hbmon` before committing**
 - Use these commands to ensure changes don't break tests or violate code style
