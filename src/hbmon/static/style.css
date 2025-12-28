@@ -465,6 +465,7 @@ a:hover { text-decoration: underline; }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   margin-top: 10px;
   gap: 10px;
 }
@@ -475,9 +476,20 @@ a:hover { text-decoration: underline; }
   gap: 6px;
 }
 
+.live-feed-footer {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
 .live-feed-frame {
   position: relative;
   display: inline-block;
+}
+
+.live-feed-frame img {
+  position: relative;
+  z-index: 1;
 }
 
 .live-feed-frame-modal {
@@ -487,6 +499,7 @@ a:hover { text-decoration: underline; }
 
 .live-feed-roi {
   position: absolute;
+  z-index: 2;
   border: 2px dashed var(--accent);
   border-radius: 8px;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
@@ -517,6 +530,12 @@ a:hover { text-decoration: underline; }
 .icon-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.icon-button.is-active {
+  background: color-mix(in srgb, var(--accent) 30%, var(--btn-bg));
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .live-feed-thumb {
