@@ -45,6 +45,7 @@ services:
         # Git commit hash/label shown in the hbmon-web footer; usually set by CI or build scripts.
         # If not provided via the GIT_COMMIT environment variable (e.g. in .env), defaults to "unknown".
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     container_name: hbmon-web
     command:
       [
@@ -106,6 +107,7 @@ services:
         # Git commit hash/label shown in the hbmon-web footer; usually set by CI or build scripts.
         # If not provided via the GIT_COMMIT environment variable (e.g. in .env), defaults to "unknown".
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     container_name: hbmon-stream
     command:
       [
@@ -159,7 +161,11 @@ services:
       start_period: 30s
 
   hbmon-worker:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     container_name: hbmon-worker
     command: ["python", "-m", "hbmon.worker"]
     environment:

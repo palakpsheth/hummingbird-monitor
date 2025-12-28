@@ -1,8 +1,9 @@
 .DEFAULT_GOAL := help
 
 UV ?= uv
-PYTEST ?= $(UV) run pytest -n auto
-RUFF ?= $(UV) run ruff
+UV_RUN ?= UV_INDEX_URL=$(PYTORCH_INDEX_URL) UV_EXTRA_INDEX_URL=https://pypi.org/simple $(UV) run
+PYTEST ?= $(UV_RUN) pytest -n auto
+RUFF ?= $(UV_RUN) ruff
 
 DATA_DIR ?= data
 MEDIA_DIR ?= $(DATA_DIR)/media
@@ -11,8 +12,10 @@ CONFIG_PATH ?= $(DATA_DIR)/config.json
 
 PYTEST_UNIT_ARGS ?= -m "not integration"
 PYTEST_INTEGRATION_ARGS ?= -m "integration"
+PYTORCH_INDEX_URL ?= https://download.pytorch.org/whl/cpu
+PYTORCH_GPU_INDEX_URL ?= https://download.pytorch.org/whl/cu121
 
-.PHONY: help venv sync lint test test-unit test-integration pre-commit docker-build docker-up docker-down docker-ps clean-db clean-media clean-data
+.PHONY: help venv sync sync-gpu lint test test-unit test-integration pre-commit docker-build docker-up docker-build-gpu docker-up-gpu docker-down docker-ps clean-db clean-media clean-data
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -21,7 +24,10 @@ venv: ## Create a uv virtual environment (.venv)
 	$(UV) venv
 
 sync: ## Sync dev dependencies from pyproject.toml
-	$(UV) pip install -e ".[dev]"
+	$(UV) pip install -e ".[dev]" --index-url $(PYTORCH_INDEX_URL) --extra-index-url https://pypi.org/simple
+
+sync-gpu: ## Sync dev dependencies with CUDA-enabled PyTorch wheels
+	$(UV) pip install -e ".[dev]" --index-url $(PYTORCH_GPU_INDEX_URL) --extra-index-url https://pypi.org/simple
 
 lint: ## Run Ruff linting
 	$(RUFF) check .
@@ -36,13 +42,19 @@ test-integration: ## Run integration/UI tests with coverage (marker: integration
 	$(PYTEST) $(PYTEST_INTEGRATION_ARGS) --cov=hbmon --cov-report=term
 
 pre-commit: ## Run all pre-commit hooks
-	$(UV) run pre-commit run --all-files
+	$(UV_RUN) pre-commit run --all-files
 
 docker-build: ## Build docker images
-	docker compose build
+	docker compose build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_INDEX_URL)
 
 docker-up: ## Start docker compose (build if needed)
-	docker compose up -d --build
+	docker compose up -d --build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_INDEX_URL)
+
+docker-build-gpu: ## Build docker images with CUDA-enabled PyTorch
+	docker compose build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_GPU_INDEX_URL)
+
+docker-up-gpu: ## Start docker compose with CUDA-enabled PyTorch (build if needed)
+	docker compose up -d --build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_GPU_INDEX_URL)
 
 docker-ps: ## Get docker compose status
 	docker compose ps
