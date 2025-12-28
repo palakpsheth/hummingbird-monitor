@@ -133,27 +133,41 @@
   var modalBody = document.getElementById('live-feed-modal-body');
   var modalClose = document.getElementById('live-feed-modal-close');
   var thumbContainer = document.getElementById('live-feed-thumb-container');
+
   var isStreaming = false;
-  function resolveStreamSrc() {
-    if (!img) return '/api/stream.mjpeg';
-    var rawSrc = img.getAttribute('data-stream-src') || '/api/stream.mjpeg';
+  var hasInteracted = false;
+  var wasStreamingBeforeModal = false;
+
+  var defaultStreamSrc = '/api/stream.mjpeg';
+
+  function sanitizeStreamSrc(value) {
+    if (!value) return defaultStreamSrc;
+
+    var rawValue = String(value).trim();
+    if (!rawValue) return defaultStreamSrc;
+
     try {
-      var resolvedUrl = new URL(rawSrc, window.location.origin);
-      if (resolvedUrl.origin !== window.location.origin) {
-        return '/api/stream.mjpeg';
+      var parsedUrl = new URL(rawValue, window.location.origin);
+
+      // Same-origin only
+      if (parsedUrl.origin !== window.location.origin) {
+        return defaultStreamSrc;
       }
-      if (!resolvedUrl.pathname.startsWith('/')) {
-        return '/api/stream.mjpeg';
+
+      // Restrict to API endpoints only
+      if (!parsedUrl.pathname.startsWith('/api/')) {
+        return defaultStreamSrc;
       }
-      return resolvedUrl.pathname + resolvedUrl.search;
+
+      // Return a safe relative URL
+      return encodeURI(parsedUrl.pathname + parsedUrl.search);
     } catch (e) {
-      return '/api/stream.mjpeg';
+      return defaultStreamSrc;
     }
   }
 
-  var streamSrc = resolveStreamSrc();
-  var hasInteracted = false;
-  var wasStreamingBeforeModal = false;
+  var rawStreamSrc = img ? (img.getAttribute('data-stream-src') || defaultStreamSrc) : defaultStreamSrc;
+  var streamSrc = sanitizeStreamSrc(rawStreamSrc);
 
   function updateStatus(text) {
     if (statusEl) statusEl.textContent = text;
@@ -181,15 +195,20 @@
       if (!hasInteracted) {
         hasInteracted = true;
       }
+
       wasStreamingBeforeModal = isStreaming;
       if (!isStreaming) {
         startStream();
       }
+
+      // Move the existing thumbnail <img> into the modal (no duplicate stream elements)
       modalBody.appendChild(img);
       img.classList.remove('live-feed-thumb');
       img.classList.add('live-feed-modal-img');
+
       modal.classList.add('open');
       document.body.style.overflow = 'hidden';
+
       // Focus close button for keyboard accessibility
       if (modalClose) {
         modalClose.focus();
@@ -201,14 +220,17 @@
     if (modal) {
       modal.classList.remove('open');
       document.body.style.overflow = '';
+
       if (thumbContainer && img) {
         thumbContainer.appendChild(img);
         img.classList.remove('live-feed-modal-img');
         img.classList.add('live-feed-thumb');
       }
+
       if (!wasStreamingBeforeModal) {
         stopStream();
       }
+
       // Return focus to thumbnail image
       if (img) {
         img.focus();
@@ -220,6 +242,7 @@
   if (img) {
     img.addEventListener('click', openModal);
     img.style.cursor = 'pointer';
+
     // Make thumbnail focusable for keyboard users
     img.setAttribute('tabindex', '0');
     img.addEventListener('keydown', function(e) {
@@ -273,6 +296,8 @@
       }
     };
   }
+
+  // Default state: paused until user interacts
   if (!hasInteracted) {
     stopStream();
     updateStatus('Stream paused (click to start)');
