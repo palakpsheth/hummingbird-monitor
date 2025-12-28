@@ -40,25 +40,27 @@ from __future__ import annotations
 import asyncio
 import atexit
 from concurrent.futures import ThreadPoolExecutor
-import weakref
-import csv
 from contextlib import asynccontextmanager
-import json
-from json import JSONDecodeError
+import csv
+from datetime import datetime, timezone
+from functools import partial
 import importlib.util
 import io
+import json
+from json import JSONDecodeError
 import math
 import os
 import re
-import subprocess
 import shutil
+import subprocess
+import sys
 import tarfile
+import threading
 from urllib.parse import urlsplit
 import time
-from datetime import datetime, timezone
-from functools import partial
+import weakref
 from pathlib import Path
-from typing import Any, Iterable, Iterator, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, Iterable, Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import anyio
@@ -135,6 +137,155 @@ from hbmon.clustering import l2_normalize, suggest_split_two_groups
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Derived from this module path; not user-controlled, safe for git cwd.
 _GIT_PATH = shutil.which("git")
+
+
+def _load_cv2() -> Any:
+    existing = sys.modules.get("cv2")
+    if existing is not None:
+        return existing
+
+    if importlib.util.find_spec("cv2") is None:
+        raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
+
+    import cv2  # type: ignore
+
+    return cv2
+
+
+class FrameBroadcaster:
+    """Background video capture that keeps a cached JPEG for MJPEG streaming."""
+
+    def __init__(self, rtsp_url: str, fps: float = 10.0, jpeg_quality: int = 70) -> None:
+        self._rtsp_url = rtsp_url
+        self._frame_interval = 1.0 / fps
+        self._jpeg_quality = jpeg_quality
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._clients = 0
+        self._latest_frame: bytes | None = None
+        self._latest_timestamp = 0.0
+
+    @property
+    def rtsp_url(self) -> str:
+        return self._rtsp_url
+
+    def add_client(self) -> None:
+        thread = None
+        with self._lock:
+            self._clients += 1
+            thread = self._thread
+            if thread is not None and thread.is_alive() and not self._stop_event.is_set():
+                return
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._stop_event.clear()
+            self._thread = threading.Thread(target=self._run, name="hbmon-mjpeg", daemon=True)
+            self._thread.start()
+
+    def remove_client(self) -> None:
+        thread = None
+        with self._lock:
+            self._clients = max(0, self._clients - 1)
+            if self._clients == 0:
+                self._stop_event.set()
+                thread = self._thread
+        if thread is not None:
+            thread.join(timeout=2.0)
+
+    def shutdown(self) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=2.0)
+
+    def latest_frame(self) -> tuple[bytes | None, float]:
+        with self._lock:
+            return self._latest_frame, self._latest_timestamp
+
+    def _configure_capture(self, cv2: Any, cap: Any) -> None:
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
+
+    def _open_capture(self, cv2: Any) -> Any | None:
+        cap = cv2.VideoCapture(self._rtsp_url)
+        if not cap.isOpened():
+            cap.release()
+            return None
+        self._configure_capture(cv2, cap)
+        return cap
+
+    def _run(self) -> None:
+        cv2 = _load_cv2()
+        cap = None
+        last_frame_time = 0.0
+        try:
+            while not self._stop_event.is_set():
+                if cap is None:
+                    cap = self._open_capture(cv2)
+                    if cap is None:
+                        time.sleep(0.5)
+                        continue
+
+                current_time = time.time()
+                if current_time - last_frame_time < self._frame_interval:
+                    time.sleep(0.01)
+                    continue
+
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    cap.release()
+                    cap = None
+                    continue
+
+                last_frame_time = current_time
+                ok, jpeg = cv2.imencode(
+                    ".jpg",
+                    frame,
+                    [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
+                )
+                if not ok:
+                    continue
+
+                frame_bytes = jpeg.tobytes()
+                with self._lock:
+                    self._latest_frame = frame_bytes
+                    self._latest_timestamp = current_time
+        finally:
+            if cap is not None:
+                cap.release()
+            with self._lock:
+                self._thread = None
+
+
+_FRAME_BROADCASTER: FrameBroadcaster | None = None
+_FRAME_BROADCASTER_LOCK = threading.Lock()
+
+
+def _get_frame_broadcaster(rtsp_url: str) -> FrameBroadcaster:
+    global _FRAME_BROADCASTER
+    with _FRAME_BROADCASTER_LOCK:
+        if _FRAME_BROADCASTER is None or _FRAME_BROADCASTER.rtsp_url != rtsp_url:
+            if _FRAME_BROADCASTER is not None:
+                _FRAME_BROADCASTER.shutdown()
+            _FRAME_BROADCASTER = FrameBroadcaster(rtsp_url)
+    return _FRAME_BROADCASTER
+
+
+def _shutdown_frame_broadcaster() -> None:
+    global _FRAME_BROADCASTER
+    with _FRAME_BROADCASTER_LOCK:
+        if _FRAME_BROADCASTER is not None:
+            _FRAME_BROADCASTER.shutdown()
+            _FRAME_BROADCASTER = None
+
+
+atexit.register(_shutdown_frame_broadcaster)
 
 
 def _normalize_timezone(tz: str | None) -> str:
@@ -2010,16 +2161,6 @@ def make_app() -> Any:
             "exists": exists,
         }
 
-    def _load_cv2() -> Any:
-        if importlib.util.find_spec("cv2") is None:
-            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
-
-        try:
-            import cv2  # type: ignore
-        except Exception:
-            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
-        return cv2
-
     def _capture_live_frame(rtsp_url: str) -> tuple[Any, Any]:
         cv2 = _load_cv2()
 
@@ -2276,76 +2417,56 @@ def make_app() -> Any:
         if not s.rtsp_url:
             raise HTTPException(status_code=503, detail="RTSP URL not configured")
 
-        try:
-            import cv2
-        except ImportError:
-            raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
+        _load_cv2()
+        broadcaster = _get_frame_broadcaster(s.rtsp_url)
+        broadcaster.add_client()
+        frame_interval = 1.0 / 10.0
+
+        async def _wait_for_frame(timeout: float = 2.0) -> None:
+            start = time.monotonic()
+            while time.monotonic() - start < timeout:
+                frame_bytes, _ = broadcaster.latest_frame()
+                if frame_bytes:
+                    return
+                await anyio.sleep(0.01)
+
+        await _wait_for_frame()
+
         from starlette.concurrency import iterate_in_threadpool
 
-        def _configure_capture(cap: Any) -> None:
-            """Configure VideoCapture for low latency streaming."""
-            try:
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            except Exception:
-                # Buffer size may not be supported on all backends; ignore silently
-                pass
+        initial_frame, initial_timestamp = broadcaster.latest_frame()
+        initial_chunk = None
+        last_seen_timestamp = 0.0
+        last_update = time.monotonic()
+        if initial_frame:
+            initial_chunk = (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Content-Length: " + str(len(initial_frame)).encode() + b"\r\n"
+                b"\r\n" + initial_frame + b"\r\n"
+            )
+            last_seen_timestamp = initial_timestamp
+            last_update = time.monotonic()
 
         def _generate_frames() -> Iterator[bytes]:
-            """Generate MJPEG frames from RTSP stream."""
-            cap = None
-            try:
-                cap = cv2.VideoCapture(s.rtsp_url)
-                if not cap.isOpened():
-                    return
-
-                _configure_capture(cap)
-
-                # Limit frame rate to reduce bandwidth (target ~10 fps)
-                frame_interval = 1.0 / 10.0
-                last_frame_time = 0.0
-
-                while True:
-                    current_time = time.time()
-                    if current_time - last_frame_time < frame_interval:
-                        time.sleep(0.01)
-                        continue
-
-                    ok, frame = cap.read()
-                    if not ok or frame is None:
-                        # Try to reconnect once
-                        cap.release()
-                        time.sleep(0.5)
-                        cap = cv2.VideoCapture(s.rtsp_url)
-                        if not cap.isOpened():
-                            break
-                        _configure_capture(cap)
-                        continue
-
-                    last_frame_time = current_time
-
-                    # Encode frame as JPEG
-                    ok, jpeg = cv2.imencode(
-                        ".jpg",
-                        frame,
-                        [cv2.IMWRITE_JPEG_QUALITY, 70],
-                    )
-                    if not ok:
-                        continue
-
-                    # Yield multipart frame
-                    frame_bytes = jpeg.tobytes()
+            nonlocal last_seen_timestamp, last_update
+            if initial_chunk is not None:
+                yield initial_chunk
+            while True:
+                frame_bytes, frame_timestamp = broadcaster.latest_frame()
+                if frame_bytes:
+                    if frame_timestamp and frame_timestamp != last_seen_timestamp:
+                        last_seen_timestamp = frame_timestamp
+                        last_update = time.monotonic()
                     yield (
                         b"--frame\r\n"
                         b"Content-Type: image/jpeg\r\n"
                         b"Content-Length: " + str(len(frame_bytes)).encode() + b"\r\n"
                         b"\r\n" + frame_bytes + b"\r\n"
                     )
-            except GeneratorExit:
-                # Client disconnected
-                pass
-            finally:
-                if cap is not None:
-                    cap.release()
+                if time.monotonic() - last_update > 2.0:
+                    break
+                time.sleep(frame_interval)
 
         async def generate_frames() -> AsyncIterator[bytes]:
             iterator = _generate_frames()
@@ -2354,6 +2475,7 @@ def make_app() -> Any:
                     yield chunk
             finally:
                 await anyio.to_thread.run_sync(iterator.close)
+                broadcaster.remove_client()
 
         return StreamingResponse(
             generate_frames(),

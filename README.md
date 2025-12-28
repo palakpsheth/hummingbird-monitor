@@ -90,6 +90,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **hbmon-redis**: Redis cache for hot query results (latest observations, health checks)
 - **hbmon-worker**: reads RTSP, runs detection + CLIP + re-ID, writes to PostgreSQL
 - **hbmon-web**: FastAPI + Jinja UI served by Gunicorn + Uvicorn workers, serves `/media` and exports
+- **hbmon-stream**: dedicated FastAPI worker for `/api/stream.mjpeg` MJPEG streaming
 - **nginx** (optional): reverse proxy on port 80 (nice “just open IP” UX)
 
 ### Container Startup Order & Healthchecks
@@ -98,7 +99,7 @@ The `docker-compose.yml` uses healthchecks to ensure containers start in the cor
 
 ```
 wyze-bridge (healthy) → hbmon-db (healthy) → hbmon-web (healthy) → hbmon-worker
-                       → hbmon-redis (healthy)                  → hbmon-proxy
+                       → hbmon-redis (healthy) → hbmon-stream (healthy) → hbmon-proxy
 ```
 
 | Container     | Healthcheck                           | Wait for                       |
@@ -107,8 +108,9 @@ wyze-bridge (healthy) → hbmon-db (healthy) → hbmon-web (healthy) → hbmon-w
 | hbmon-db      | `pg_isready`                          | -                              |
 | hbmon-redis   | `redis-cli ping`                      | -                              |
 | hbmon-web     | HTTP check on `/health` endpoint      | wyze-bridge + db + redis       |
+| hbmon-stream  | HTTP check on `/health` endpoint      | wyze-bridge + db + redis       |
 | hbmon-worker  | Process check for `hbmon.worker`      | wyze-bridge + hbmon-web + db   |
-| hbmon-proxy   | HTTP check on port 80                 | hbmon-web healthy              |
+| hbmon-proxy   | HTTP check on port 80                 | hbmon-web + hbmon-stream       |
 
 This ensures the database is initialized by hbmon-web before the worker starts.
 
