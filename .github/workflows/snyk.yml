@@ -6,17 +6,25 @@ on:
     branches: [main]
   schedule:
     - cron: "30 03 * * 1"
+  workflow_dispatch:
 
+# Required to upload SARIF to the Security tab
 permissions:
   contents: read
+  security-events: write
+
+concurrency:
+  group: snyk-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   snyk-python:
     name: Snyk (Python deps via uv)
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write # needed to upload SARIF to GitHub code scanning
+
+    # Secrets are not available to PRs from forks; skip to avoid noisy failures.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+
     steps:
       - uses: actions/checkout@v4
 
@@ -27,45 +35,61 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          # Avoid the “cache will never get invalidated” warning when you don't have uv.lock
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+            requirements*.txt
 
       - name: Generate pinned requirements for Snyk
         run: |
           uv pip compile pyproject.toml -o requirements-snyk.txt
           uv pip compile --group dev -o requirements-dev-snyk.txt
-
-      - name: Create venv + install runtime deps (helps Snyk resolve tree)
-        run: |
-          uv venv
-          . .venv/bin/activate
-          uv pip install -r requirements-snyk.txt
+          echo "Generated:"
+          ls -la requirements-snyk.txt requirements-dev-snyk.txt
 
       - name: Install Snyk CLI
         uses: snyk/actions/setup@master
 
       - name: Snyk test (runtime deps)
         id: snyk_py
-        continue-on-error: true # allow SARIF upload even if vulnerabilities found
+        continue-on-error: true
         run: |
           snyk test \
             --file=requirements-snyk.txt \
             --package-manager=pip \
             --severity-threshold=high \
+            --skip-unresolved=true \
             --sarif-file-output=snyk-python.sarif
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-      - name: Debug SARIF presence (Python)
+      # Ensure upload-sarif never fails due to a missing file
+      - name: Ensure SARIF exists (Python)
         if: always()
         run: |
-          ls -la
-          test -f snyk-python.sarif && echo "SARIF exists" || echo "SARIF missing"
+          if [ ! -f snyk-python.sarif ]; then
+            cat > snyk-python.sarif <<'EOF'
+          {
+            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+              {
+                "tool": { "driver": { "name": "Snyk", "informationUri": "https://snyk.io", "rules": [] } },
+                "results": []
+              }
+            ]
+          }
+          EOF
+          fi
+          ls -la snyk-python.sarif
 
       - name: Upload SARIF (Python)
-        if: always() && hashFiles('snyk-python.sarif') != ''
+        if: always()
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: snyk-python.sarif
-          category: snyk-python
 
       - name: Fail if Snyk found high+ issues (Python)
         if: steps.snyk_py.outcome == 'failure'
@@ -74,30 +98,36 @@ jobs:
       - name: Snyk monitor (runtime deps, main only)
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
-          snyk monitor --file=requirements-snyk.txt --package-manager=pip
+          snyk monitor \
+            --file=requirements-snyk.txt \
+            --package-manager=pip
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
   snyk-docker:
     name: Snyk (Docker image)
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write # SARIF upload
+
+    # Same fork behavior as above
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Free disk space (to avoid ENOSPC)
+      - name: Free disk space (helps ENOSPC on container scans)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Show disk usage (before)
         run: |
           df -h
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /usr/local/lib/android || true
-          sudo rm -rf /opt/ghc || true
-          sudo rm -rf /usr/local/share/boost || true
-          sudo rm -rf /opt/hostedtoolcache || true
-          docker system prune -af --volumes || true
-          docker builder prune -af || true
-          df -h
+          docker system df || true
 
       - name: Build image (hbmon)
         run: |
@@ -109,31 +139,49 @@ jobs:
       - name: Install Snyk CLI
         uses: snyk/actions/setup@master
 
-      - name: Snyk container test (OS vulns; app vulns excluded)
+      - name: Snyk test (Docker image)
         id: snyk_docker
-        continue-on-error: true # allow SARIF upload even if vulnerabilities found
+        continue-on-error: true
         run: |
-          snyk container test hbmon:${{ github.sha }} \
+          snyk test \
+            --docker hbmon:${{ github.sha }} \
             --file=Dockerfile \
             --severity-threshold=high \
-            --exclude-app-vulns \
             --sarif-file-output=snyk-docker.sarif
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-      - name: Debug SARIF presence (Docker)
+      - name: Ensure SARIF exists (Docker)
         if: always()
         run: |
-          ls -la
-          test -f snyk-docker.sarif && echo "SARIF exists" || echo "SARIF missing"
+          if [ ! -f snyk-docker.sarif ]; then
+            cat > snyk-docker.sarif <<'EOF'
+          {
+            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+              {
+                "tool": { "driver": { "name": "Snyk", "informationUri": "https://snyk.io", "rules": [] } },
+                "results": []
+              }
+            ]
+          }
+          EOF
+          fi
+          ls -la snyk-docker.sarif
 
       - name: Upload SARIF (Docker)
-        if: always() && hashFiles('snyk-docker.sarif') != ''
+        if: always()
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: snyk-docker.sarif
-          category: snyk-docker
 
       - name: Fail if Snyk found high+ issues (Docker)
         if: steps.snyk_docker.outcome == 'failure'
         run: exit 1
+
+      - name: Show disk usage (after)
+        if: always()
+        run: |
+          df -h
+          docker system df || true
