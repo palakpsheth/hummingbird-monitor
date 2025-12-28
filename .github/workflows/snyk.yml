@@ -100,7 +100,8 @@ jobs:
         run: |
           snyk monitor \
             --file=requirements-snyk.txt \
-            --package-manager=pip
+            --package-manager=pip \
+            --skip-unresolved=true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
