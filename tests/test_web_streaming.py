@@ -65,7 +65,18 @@ def test_load_cv2_prefers_existing_module(monkeypatch) -> None:
 def test_frame_broadcaster_caches_frames_and_stops(monkeypatch) -> None:
     _DummyCV2._open_calls = 0
     monkeypatch.setitem(sys.modules, "cv2", _DummyCV2)
-    broadcaster = web.FrameBroadcaster("rtsp://example", fps=30.0, jpeg_quality=70)
+    settings = web.MJPEGSettings(
+        target_fps=30.0,
+        max_width=0,
+        max_height=0,
+        base_quality=70,
+        adaptive_enabled=False,
+        min_fps=4.0,
+        min_quality=40,
+        fps_step=1.0,
+        quality_step=5,
+    )
+    broadcaster = web.FrameBroadcaster("rtsp://example", settings=settings)
     broadcaster.add_client()
 
     assert _wait_for(lambda: broadcaster.latest_frame()[0] is not None)

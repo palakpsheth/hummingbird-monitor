@@ -340,6 +340,30 @@ continue to override them when set.
 3. YOLO detections are filtered: only those overlapping significantly with motion areas are kept
 4. This reduces false positives from static objects or lighting changes
 
+### MJPEG live stream tuning
+The MJPEG endpoint (`/api/stream.mjpeg`) supports bandwidth/CPU tuning via environment variables:
+
+- `HBMON_MJPEG_FPS` (default 10)
+  - Target MJPEG frame rate for the live stream
+- `HBMON_MJPEG_MAX_WIDTH` (default 1280)
+  - Maximum output width; frames are downscaled if larger
+  - Set to 0 to disable width limiting
+- `HBMON_MJPEG_MAX_HEIGHT` (default 720)
+  - Maximum output height; frames are downscaled if larger
+  - Set to 0 to disable height limiting
+- `HBMON_MJPEG_JPEG_QUALITY` (default 70)
+  - JPEG quality for the MJPEG stream (10–100)
+- `HBMON_MJPEG_ADAPTIVE` (default 0)
+  - Set to 1 to enable adaptive degradation when encoding is slow
+- `HBMON_MJPEG_MIN_FPS` (default 4)
+  - Lowest FPS when adaptive degradation is active
+- `HBMON_MJPEG_MIN_QUALITY` (default 40)
+  - Lowest JPEG quality when adaptive degradation is active
+- `HBMON_MJPEG_FPS_STEP` (default 1)
+  - Step size for adaptive FPS adjustments
+- `HBMON_MJPEG_QUALITY_STEP` (default 5)
+  - Step size for adaptive quality adjustments
+
 ---
 
 ## GPU acceleration (if available)
