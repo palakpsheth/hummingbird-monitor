@@ -199,6 +199,11 @@
                   <a href="/media/{{ o.clip_snapshot_path }}" target="_blank" rel="noopener noreferrer">Clip</a>
                   {% set link_state.has_link = true %}
                 {% endif %}
+                {% if o.background_snapshot_path %}
+                  {% if link_state.has_link %} · {% endif %}
+                  <a href="/media/{{ o.background_snapshot_path }}" target="_blank" rel="noopener noreferrer">Background</a>
+                  {% set link_state.has_link = true %}
+                {% endif %}
                 {% if o.video_path %}
                   {% if link_state.has_link %} · {% endif %}
                   <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a>

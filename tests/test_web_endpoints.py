@@ -1444,10 +1444,9 @@ def test_export_integration_test_bundle(tmp_path, monkeypatch):
 
     snap_path = snap_dir / "obs-test.jpg"
     clip_path = clips_dir / "obs-test.mp4"
+    background_path = snap_dir / "obs-test_background.jpg"
     snap_path.write_text("fake image")
     clip_path.write_text("fake video")
-    background_path = background_image_path()
-    background_path.parent.mkdir(parents=True, exist_ok=True)
     background_path.write_text("fake background")
 
     extra = {
@@ -1455,6 +1454,9 @@ def test_export_integration_test_bundle(tmp_path, monkeypatch):
             "detect_conf": 0.35,
             "detect_iou": 0.45,
             "min_box_area": 600,
+        },
+        "snapshots": {
+            "background_path": str(background_path.relative_to(mdir)),
         },
         "identification": {
             "species_label_final": "Anna's Hummingbird",
@@ -1519,6 +1521,7 @@ def test_export_integration_test_bundle(tmp_path, monkeypatch):
     extra = metadata["original_observation"]["extra"]
     sensitivity = extra["sensitivity"]
     identification = extra["identification"]
+    snapshots = extra["snapshots"]
     assert sensitivity["detect_conf"] == 0.35
     assert sensitivity["detect_iou"] == settings.detect_iou
     assert sensitivity["min_box_area"] == settings.min_box_area
@@ -1530,6 +1533,7 @@ def test_export_integration_test_bundle(tmp_path, monkeypatch):
     assert identification["species_prob"] == 0.93
     assert identification["match_score"] == 0.0
     assert identification["individual_id"] is None
+    assert snapshots["background_path"] == "background.jpg"
 
 
 def test_dashboard_contains_live_camera_feed_section(tmp_path, monkeypatch):

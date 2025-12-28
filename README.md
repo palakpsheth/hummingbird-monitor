@@ -51,7 +51,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Name individuals** in the UI
 - **Counts & last-seen** stats per individual
 - **Prototypical snapshots** shown per individual (list + detail, embedding-closest when available)
-- **Multiple snapshot views** per observation: raw, annotated, and CLIP crop
+- **Multiple snapshot views** per observation: raw, annotated, CLIP crop, plus background reference when enabled
 - **Background image configuration**: define a standard background picture without hummingbirds
 - **Cross-linked** navigation:
   - Individuals list → individual page → all observations
@@ -65,6 +65,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
     - `metadata.json` with `expected`, `source`, `sensitivity_tests`, and `original_observation`
     - `snapshot.jpg` (raw snapshot)
     - `clip.mp4` (video clip)
+    - Optional `background.jpg` (reference background frame used for background subtraction)
     - Optional `snapshot_annotated.jpg` and `snapshot_clip.jpg` when available
   - Missing sensitivity/identification fields are backfilled with current defaults when exporting older observations.
 
@@ -620,6 +621,7 @@ tests/integration/test_data/
 ├── flying_0/                    # Test case: flying hummingbird
 │   ├── snapshot.jpg             # Captured image
 │   ├── clip.mp4                 # Video clip
+│   ├── background.jpg           # Optional background reference frame
 │   └── metadata.json            # Expected labels & sensitivity tests
 ├── perched_0/                   # Test case: perched bird
 │   └── ...

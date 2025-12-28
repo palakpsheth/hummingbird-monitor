@@ -332,6 +332,9 @@
         {% if clip_snapshot_path %}
         <div class="muted">snapshot (clip): /media/{{ clip_snapshot_path }}</div>
         {% endif %}
+        {% if background_snapshot_path %}
+        <div class="muted">snapshot (background): /media/{{ background_snapshot_path }}</div>
+        {% endif %}
         <div class="muted">video: /media/{{ o.video_path }}{% if video_info %} ({{ "exists" if video_info.exists else "missing" }}){% endif %}</div>
         <div class="muted">bbox: {{ o.bbox_str or "(none)" }}</div>
         <div class="muted">camera: {{ o.camera_name or "(unknown)" }}</div>

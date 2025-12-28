@@ -788,6 +788,21 @@ def get_clip_snapshot_path(obs: Observation) -> str | None:
     return snapshots_data.get("clip_path")
 
 
+def get_background_snapshot_path(obs: Observation) -> str | None:
+    """
+    Get the background snapshot path for an observation from its extra_json.
+
+    Returns the background snapshot path if available, otherwise None.
+    """
+    extra = obs.get_extra()
+    if not extra or not isinstance(extra, dict):
+        return None
+    snapshots_data = extra.get("snapshots")
+    if not isinstance(snapshots_data, dict):
+        return None
+    return snapshots_data.get("background_path")
+
+
 def build_hour_heatmap(hours_rows: list[tuple[int, int]]) -> list[dict[str, int]]:
     """
     hours_rows: [(hour_int, count_int), ...]
@@ -1374,6 +1389,7 @@ def make_app() -> Any:
             o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
             o.annotated_snapshot_path = annotated  # type: ignore[attr-defined]
             o.clip_snapshot_path = get_clip_snapshot_path(o)  # type: ignore[attr-defined]
+            o.background_snapshot_path = get_background_snapshot_path(o)  # type: ignore[attr-defined]
 
         extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
         extra_column_defaults = _default_extra_column_visibility(extra_columns)
@@ -1432,6 +1448,7 @@ def make_app() -> Any:
         # Get annotated snapshot path from extra data (if available)
         annotated_snapshot_path = get_annotated_snapshot_path(o)
         clip_snapshot_path = get_clip_snapshot_path(o)
+        background_snapshot_path = get_background_snapshot_path(o)
 
         # Video file diagnostics
         video_info: dict[str, Any] | None = None
@@ -1460,6 +1477,7 @@ def make_app() -> Any:
                 video_info=video_info,
                 annotated_snapshot_path=annotated_snapshot_path,
                 clip_snapshot_path=clip_snapshot_path,
+                background_snapshot_path=background_snapshot_path,
             ),
         )
 
@@ -1540,6 +1558,7 @@ def make_app() -> Any:
         _safe_unlink_media(o.video_path)
         _safe_unlink_media(get_annotated_snapshot_path(o))
         _safe_unlink_media(get_clip_snapshot_path(o))
+        _safe_unlink_media(get_background_snapshot_path(o))
 
         await db.execute(delete(Embedding).where(Embedding.observation_id == obs_id))
         await db.delete(o)
@@ -1606,6 +1625,13 @@ def make_app() -> Any:
             if identification.get(key) is None:
                 identification[key] = default_value
         extra_copy["identification"] = identification
+
+        background_rel = get_background_snapshot_path(o)
+        if background_rel:
+            snapshots = extra_copy.get("snapshots")
+            snapshots_data = dict(snapshots) if isinstance(snapshots, dict) else {}
+            snapshots_data["background_path"] = "background.jpg"
+            extra_copy["snapshots"] = snapshots_data
 
         species_label_final = identification.get("species_label_final")
         species_accepted = identification.get("species_accepted")
@@ -1676,7 +1702,7 @@ def make_app() -> Any:
         clip_rel = get_clip_snapshot_path(o)
         annotated_path = (media_dir() / annotated_rel) if annotated_rel else None
         clip_path = (media_dir() / clip_rel) if clip_rel else None
-        background_path = background_image_path()
+        background_path = (media_dir() / background_rel) if background_rel else None
 
         def _build_bundle() -> None:
             with tarfile.open(out_path, "w:gz") as tf:
@@ -1689,7 +1715,7 @@ def make_app() -> Any:
                     tf.add(annotated_path, arcname=f"{safe_case}/snapshot_annotated.jpg")
                 if clip_path and clip_path.exists():
                     tf.add(clip_path, arcname=f"{safe_case}/snapshot_clip.jpg")
-                if background_path.exists():
+                if background_path and background_path.exists():
                     tf.add(background_path, arcname=f"{safe_case}/background.jpg")
 
         await _run_blocking(_build_bundle)
@@ -1716,6 +1742,7 @@ def make_app() -> Any:
         for o in obs_rows:
             _safe_unlink_media(o.snapshot_path)
             _safe_unlink_media(o.video_path)
+            _safe_unlink_media(get_background_snapshot_path(o))
 
         await db.execute(delete(Embedding).where(Embedding.observation_id.in_(ids)))
         await db.execute(delete(Observation).where(Observation.id.in_(ids)))
