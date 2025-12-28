@@ -92,6 +92,7 @@ class ObservationMediaPaths:
     snapshot_rel: str
     snapshot_annotated_rel: str
     snapshot_clip_rel: str
+    snapshot_background_rel: str
     clip_rel: str
 
 
@@ -104,6 +105,7 @@ def _build_observation_media_paths(stamp: str, observation_uuid: str | None = No
         snapshot_rel=f"snapshots/{stamp}/{obs_uuid}.jpg",
         snapshot_annotated_rel=f"snapshots/{stamp}/{obs_uuid}_annotated.jpg",
         snapshot_clip_rel=f"snapshots/{stamp}/{obs_uuid}_clip.jpg",
+        snapshot_background_rel=f"snapshots/{stamp}/{obs_uuid}_background.jpg",
         clip_rel=f"clips/{stamp}/{obs_uuid}.mp4",
     )
 
@@ -1016,12 +1018,14 @@ async def run_worker() -> None:
         snap_rel = media_paths.snapshot_rel
         snap_annotated_rel = media_paths.snapshot_annotated_rel
         snap_clip_rel = media_paths.snapshot_clip_rel
+        snap_background_rel = media_paths.snapshot_background_rel
         clip_rel = media_paths.clip_rel
 
         media_root = snapshots_dir().parent  # /media
         snap_path = media_root / snap_rel
         snap_annotated_path = media_root / snap_annotated_rel
         snap_clip_path = media_root / snap_clip_rel
+        snap_background_path = media_root / snap_background_rel
         clip_path = media_root / clip_rel
 
         # Save both raw and annotated snapshots
@@ -1069,6 +1073,14 @@ async def run_worker() -> None:
         except Exception as e:
             print(f"[worker] clip snapshot write failed: {e}")
 
+        background_snapshot_rel = ""
+        if bg_enabled and background_img is not None:
+            try:
+                _write_jpeg(snap_background_path, background_img)
+                background_snapshot_rel = snap_background_rel
+            except Exception as e:
+                print(f"[worker] background snapshot write failed: {e}")
+
         # Species + embedding
         try:
             raw_species_label, raw_species_prob = clip.predict_species_label_prob(crop)
@@ -1101,6 +1113,8 @@ async def run_worker() -> None:
             snapshots_data = {"annotated_path": snap_annotated_rel}
             if clip_snapshot_rel:
                 snapshots_data["clip_path"] = clip_snapshot_rel
+            if background_snapshot_rel:
+                snapshots_data["background_path"] = background_snapshot_rel
 
             sensitivity_data = {
                 "detect_conf": float(s.detect_conf),
