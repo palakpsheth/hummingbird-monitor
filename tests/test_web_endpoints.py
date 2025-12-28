@@ -1544,5 +1544,7 @@ def test_dashboard_contains_live_camera_feed_section(tmp_path, monkeypatch):
     # Check for live feed elements in the dashboard HTML
     assert "Live Camera Feed" in r.text
     assert "live-feed-img" in r.text
-    assert "live-feed-toggle" in r.text
+    assert "live-feed-play" in r.text
+    assert "live-feed-pause" in r.text
+    assert "data-snapshot-src" in r.text
     assert "/api/stream.mjpeg" in r.text

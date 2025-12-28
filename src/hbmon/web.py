@@ -1342,8 +1342,10 @@ def make_app() -> Any:
                 },
             )
 
-        roi_str = roi_to_str(s.roi) if s.roi else ""
+        roi = s.roi.clamp() if s.roi else None
+        roi_str = roi_to_str(roi) if roi else ""
         rtsp = s.rtsp_url or ""
+        snapshot_src = "/api/live_frame.jpg" if rtsp else "/api/frame.jpg"
 
         return templates.TemplateResponse(
             request,
@@ -1359,9 +1361,11 @@ def make_app() -> Any:
                 recent_total_pages=total_pages,
                 recent_total=int(total_recent),
                 recent_page_size_options=[10, 20, 50, 100],
+                roi=roi,
                 roi_str=roi_str,
                 rtsp_url=rtsp,
                 last_capture_utc=last_capture_utc,
+                snapshot_src=snapshot_src,
                 ts=int(time.time()),
             ),
         )

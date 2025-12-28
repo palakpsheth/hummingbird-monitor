@@ -9,12 +9,42 @@
     </div>
     <div class="live-feed-container">
       <div id="live-feed-thumb-container">
-        <img id="live-feed-img" src="data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A//www.w3.org/2000/svg'%20width%3D'640'%20height%3D'360'%20viewBox%3D'0%200%20640%20360'%3E%3Crect%20width%3D'640'%20height%3D'360'%20fill%3D'%231c1f24'/%3E%3Ctext%20x%3D'50%25'%20y%3D'50%25'%20fill%3D'%23cbd5e1'%20font-family%3D'system-ui%2C%20sans-serif'%20font-size%3D'20'%20dominant-baseline%3D'middle'%20text-anchor%3D'middle'%3EStream%20paused%3C/text%3E%3C/svg%3E" data-stream-src="/api/stream.mjpeg" alt="Live camera stream from hummingbird feeder - click to enlarge" class="live-feed-thumb" title="Click to view full size" />
+        <div id="live-feed-frame" class="live-feed-frame">
+          <img
+            id="live-feed-img"
+            src="{{ snapshot_src }}?ts={{ ts }}"
+            data-stream-src="/api/stream.mjpeg"
+            data-snapshot-src="{{ snapshot_src }}"
+            alt="Live camera stream from hummingbird feeder - click to enlarge"
+            class="live-feed-thumb"
+            title="Click to view full size"
+          />
+          {% if roi %}
+            <div
+              id="live-feed-roi"
+              class="live-feed-roi"
+              style="
+                left: {{ roi.x1 * 100 }}%;
+                top: {{ roi.y1 * 100 }}%;
+                width: {{ (roi.x2 - roi.x1) * 100 }}%;
+                height: {{ (roi.y2 - roi.y1) * 100 }}%;
+              "
+              aria-hidden="true"
+            ></div>
+          {% endif %}
+        </div>
       </div>
-      <div class="live-feed-hint">Click image to view full size</div>
+      <div class="live-feed-hint">Click image to view full size video</div>
     </div>
     <div class="live-feed-controls">
-      <button type="button" id="live-feed-toggle">Start Stream</button>
+      <div class="live-feed-actions" role="group" aria-label="Live stream controls">
+        <button type="button" id="live-feed-play" class="icon-button" aria-label="Play live stream">
+          <span aria-hidden="true">▶</span>
+        </button>
+        <button type="button" id="live-feed-pause" class="icon-button" aria-label="Pause live stream">
+          <span aria-hidden="true">⏸</span>
+        </button>
+      </div>
       <a class="muted" href="/calibrate">Calibrate ROI</a>
     </div>
   </div>
@@ -128,11 +158,13 @@
 (function() {
   var img = document.getElementById('live-feed-img');
   var statusEl = document.getElementById('live-feed-status');
-  var toggleBtn = document.getElementById('live-feed-toggle');
   var modal = document.getElementById('live-feed-modal');
   var modalBody = document.getElementById('live-feed-modal-body');
   var modalClose = document.getElementById('live-feed-modal-close');
   var thumbContainer = document.getElementById('live-feed-thumb-container');
+  var frame = document.getElementById('live-feed-frame');
+  var playBtn = document.getElementById('live-feed-play');
+  var pauseBtn = document.getElementById('live-feed-pause');
 
   var isStreaming = false;
   var hasInteracted = false;
@@ -141,38 +173,58 @@
 
   var defaultStreamSrc = '/api/stream.mjpeg';
 
-  function sanitizeStreamSrc(value) {
-    if (!value) return defaultStreamSrc;
+  function sanitizeApiSrc(value, fallback) {
+    if (!value) return fallback;
 
     var rawValue = String(value).trim();
-    if (!rawValue) return defaultStreamSrc;
+    if (!rawValue) return fallback;
 
     try {
       var parsedUrl = new URL(rawValue, window.location.origin);
 
       // Same-origin only
       if (parsedUrl.origin !== window.location.origin) {
-        return defaultStreamSrc;
+        return fallback;
       }
 
       // Restrict to API endpoints only
       if (!parsedUrl.pathname.startsWith('/api/')) {
-        return defaultStreamSrc;
+        return fallback;
       }
 
       // Return a safe relative URL
       return encodeURI(parsedUrl.pathname + parsedUrl.search);
     } catch (e) {
-      return defaultStreamSrc;
+      return fallback;
     }
   }
 
   var rawStreamSrc = img ? (img.getAttribute('data-stream-src') || defaultStreamSrc) : defaultStreamSrc;
-  var streamSrc = sanitizeStreamSrc(rawStreamSrc);
-  var placeholderSrc = img ? img.getAttribute('src') : '';
+  var rawSnapshotSrc = img ? img.getAttribute('data-snapshot-src') : '';
+  var streamSrc = sanitizeApiSrc(rawStreamSrc, defaultStreamSrc);
+  var snapshotSrc = sanitizeApiSrc(rawSnapshotSrc, '/api/live_frame.jpg');
+  var fallbackSnapshotSrc = '/api/frame.jpg';
+  var usedFallbackSnapshot = false;
+
+  function buildSnapshotSrc(base) {
+    if (!base) return base;
+    var url = new URL(base, window.location.origin);
+    url.searchParams.set('ts', Date.now().toString());
+    return url.pathname + url.search;
+  }
 
   function updateStatus(text) {
     if (statusEl) statusEl.textContent = text;
+  }
+
+  function updateButtons() {
+    if (playBtn) playBtn.disabled = isStreaming;
+    if (pauseBtn) pauseBtn.disabled = !isStreaming;
+  }
+
+  function showSnapshot() {
+    if (!img) return;
+    img.src = buildSnapshotSrc(snapshotSrc);
   }
 
   function startStream() {
@@ -184,25 +236,24 @@
     }
     img.src = streamSrc;
     isStreaming = true;
-    if (toggleBtn) toggleBtn.textContent = 'Stop Stream';
     updateStatus('Streaming live');
+    updateButtons();
   }
 
-  function stopStream() {
+  function stopStream(refreshSnapshot) {
     if (!img) return;
-    // Setting src to empty string stops the stream
-    if (placeholderSrc) {
-      img.src = placeholderSrc;
+    if (refreshSnapshot !== false) {
+      showSnapshot();
     } else {
       img.removeAttribute('src');
     }
     isStreaming = false;
-    if (toggleBtn) toggleBtn.textContent = 'Start Stream';
     updateStatus('Stream paused');
+    updateButtons();
   }
 
   function openModal() {
-    if (modal && modalBody && img) {
+    if (modal && modalBody && img && frame) {
       if (!hasInteracted) {
         hasInteracted = true;
       }
@@ -212,10 +263,11 @@
         startStream();
       }
 
-      // Move the existing thumbnail <img> into the modal (no duplicate stream elements)
-      modalBody.appendChild(img);
+      // Move the existing thumbnail frame into the modal (no duplicate stream elements)
+      modalBody.appendChild(frame);
       img.classList.remove('live-feed-thumb');
       img.classList.add('live-feed-modal-img');
+      frame.classList.add('live-feed-frame-modal');
 
       modal.classList.add('open');
       document.body.style.overflow = 'hidden';
@@ -232,10 +284,11 @@
       modal.classList.remove('open');
       document.body.style.overflow = '';
 
-      if (thumbContainer && img) {
-        thumbContainer.appendChild(img);
+      if (thumbContainer && frame) {
+        thumbContainer.appendChild(frame);
         img.classList.remove('live-feed-modal-img');
         img.classList.add('live-feed-thumb');
+        frame.classList.remove('live-feed-frame-modal');
       }
 
       if (!wasStreamingBeforeModal) {
@@ -283,22 +336,34 @@
     }
   });
 
-  if (toggleBtn) {
-    toggleBtn.addEventListener('click', function() {
+  if (playBtn) {
+    playBtn.addEventListener('click', function() {
       if (!hasInteracted) {
         hasInteracted = true;
       }
-      if (isStreaming) {
-        stopStream();
-      } else {
-        startStream();
+      startStream();
+    });
+  }
+
+  if (pauseBtn) {
+    pauseBtn.addEventListener('click', function() {
+      if (!hasInteracted) {
+        hasInteracted = true;
       }
+      stopStream();
     });
   }
 
   // Handle stream load events
   if (img) {
     img.onerror = function() {
+      if (!isStreaming && !usedFallbackSnapshot) {
+        usedFallbackSnapshot = true;
+        snapshotSrc = fallbackSnapshotSrc;
+        showSnapshot();
+        updateStatus('Showing latest snapshot');
+        return;
+      }
       updateStatus('Stream unavailable');
     };
     img.onload = function() {
@@ -312,7 +377,7 @@
     if (document.visibilityState === 'hidden') {
       wasStreamingBeforeHidden = isStreaming;
       if (isStreaming) {
-        stopStream();
+        stopStream(false);
         updateStatus('Stream paused (tab hidden)');
       }
       return;
@@ -327,10 +392,7 @@
   // Default state: paused until user interacts
   if (!hasInteracted) {
     stopStream();
-    updateStatus('Stream paused (click to start)');
-    if (toggleBtn) {
-      toggleBtn.textContent = 'Start Stream';
-    }
+    updateStatus('Stream paused (click play to start)');
   }
 })();
 </script>
