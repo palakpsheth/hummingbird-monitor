@@ -98,6 +98,7 @@ When adding code that uses optional dependencies:
 ### CRITICAL: Always Run Ruff and Full Pytest
 
 **Before committing ANY changes to this repository, you MUST run Ruff and the full pytest suite.**
+These checks can take several minutes; be patient and wait for them to complete.
 
 The exact commands and options you are required to run are documented once in the
 **“Before Every Commit”** section later in this file. Treat that checklist as the
