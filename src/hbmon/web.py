@@ -564,6 +564,7 @@ class _AsyncSessionAdapter:
         if self is None:
             return
         self._shutdown_executor(wait=wait)
+
     async def _ensure_session(self) -> Session:
         if self._session is None:
             self._session = await self._run(self._session_factory)
@@ -2591,6 +2592,7 @@ def make_app() -> Any:
                 if time.monotonic() - last_update > 2.0:
                     break
                 time.sleep(frame_interval)
+
         async def generate_frames() -> AsyncIterator[bytes]:
             iterator = _generate_frames()
             try:
