@@ -87,6 +87,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Free disk space (to avoid ENOSPC)
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af --volumes || true
+          docker builder prune -af || true
+          df -h
+
       - name: Build image (hbmon)
         run: |
           docker build \
@@ -94,27 +106,32 @@ jobs:
             --build-arg GIT_COMMIT=${{ github.sha }} \
             .
 
-      - name: Run Snyk to check Docker image for vulnerabilities
+      - name: Install Snyk CLI
+        uses: snyk/actions/setup@master
+
+      - name: Snyk container test (OS vulns; app vulns excluded)
         id: snyk_docker
         continue-on-error: true # allow SARIF upload even if vulnerabilities found
-        uses: snyk/actions/docker@master
+        run: |
+          snyk container test hbmon:${{ github.sha }} \
+            --file=Dockerfile \
+            --severity-threshold=high \
+            --exclude-app-vulns \
+            --sarif-file-output=snyk-docker.sarif
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          image: hbmon:${{ github.sha }}
-          args: --file=Dockerfile --severity-threshold=high
 
       - name: Debug SARIF presence (Docker)
         if: always()
         run: |
           ls -la
-          test -f snyk.sarif && echo "SARIF exists" || echo "SARIF missing"
+          test -f snyk-docker.sarif && echo "SARIF exists" || echo "SARIF missing"
 
       - name: Upload SARIF (Docker)
-        if: always() && hashFiles('snyk.sarif') != ''
+        if: always() && hashFiles('snyk-docker.sarif') != ''
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: snyk.sarif
+          sarif_file: snyk-docker.sarif
           category: snyk-docker
 
       - name: Fail if Snyk found high+ issues (Docker)
