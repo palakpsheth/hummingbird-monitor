@@ -134,7 +134,24 @@
   var modalClose = document.getElementById('live-feed-modal-close');
   var thumbContainer = document.getElementById('live-feed-thumb-container');
   var isStreaming = false;
-  var streamSrc = img ? img.getAttribute('data-stream-src') : '/api/stream.mjpeg';
+  function resolveStreamSrc() {
+    if (!img) return '/api/stream.mjpeg';
+    var rawSrc = img.getAttribute('data-stream-src') || '/api/stream.mjpeg';
+    try {
+      var resolvedUrl = new URL(rawSrc, window.location.origin);
+      if (resolvedUrl.origin !== window.location.origin) {
+        return '/api/stream.mjpeg';
+      }
+      if (!resolvedUrl.pathname.startsWith('/')) {
+        return '/api/stream.mjpeg';
+      }
+      return resolvedUrl.pathname + resolvedUrl.search;
+    } catch (e) {
+      return '/api/stream.mjpeg';
+    }
+  }
+
+  var streamSrc = resolveStreamSrc();
   var hasInteracted = false;
   var wasStreamingBeforeModal = false;
 
