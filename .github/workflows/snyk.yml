@@ -33,6 +33,12 @@ jobs:
           uv pip compile pyproject.toml -o requirements-snyk.txt
           uv pip compile --group dev -o requirements-dev-snyk.txt
 
+      - name: Create venv + install runtime deps (helps Snyk resolve tree)
+        run: |
+          uv venv
+          . .venv/bin/activate
+          uv pip install -r requirements-snyk.txt
+
       - name: Install Snyk CLI
         uses: snyk/actions/setup@master
 
@@ -42,16 +48,24 @@ jobs:
         run: |
           snyk test \
             --file=requirements-snyk.txt \
+            --package-manager=pip \
             --severity-threshold=high \
             --sarif-file-output=snyk-python.sarif
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-      - name: Upload SARIF (Python)
+      - name: Debug SARIF presence (Python)
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        run: |
+          ls -la
+          test -f snyk-python.sarif && echo "SARIF exists" || echo "SARIF missing"
+
+      - name: Upload SARIF (Python)
+        if: always() && hashFiles('snyk-python.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: snyk-python.sarif
+          category: snyk-python
 
       - name: Fail if Snyk found high+ issues (Python)
         if: steps.snyk_py.outcome == 'failure'
@@ -60,7 +74,7 @@ jobs:
       - name: Snyk monitor (runtime deps, main only)
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
-          snyk monitor --file=requirements-snyk.txt
+          snyk monitor --file=requirements-snyk.txt --package-manager=pip
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
@@ -90,11 +104,18 @@ jobs:
           image: hbmon:${{ github.sha }}
           args: --file=Dockerfile --severity-threshold=high
 
-      - name: Upload SARIF (Docker)
+      - name: Debug SARIF presence (Docker)
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        run: |
+          ls -la
+          test -f snyk.sarif && echo "SARIF exists" || echo "SARIF missing"
+
+      - name: Upload SARIF (Docker)
+        if: always() && hashFiles('snyk.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: snyk.sarif
+          category: snyk-docker
 
       - name: Fail if Snyk found high+ issues (Docker)
         if: steps.snyk_docker.outcome == 'failure'
