@@ -1253,6 +1253,14 @@ def make_app() -> Any:
         lifespan=_lifespan,
     )
 
+    @app.middleware("http")
+    async def _disable_cache_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
     here = Path(__file__).resolve().parent
     templates = Jinja2Templates(directory=str(here / "templates"))
 

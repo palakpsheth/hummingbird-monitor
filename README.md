@@ -580,6 +580,10 @@ If video clips don't stream properly in Chrome/Firefox:
    http://<your-server>:8000/media/clips/2025-12-23/xxxxx.mp4
    ```
 
+### UI looks stale after an update
+The web app now sends no-cache headers on every response to prevent stale browser assets. If you
+still see old content, clear the browser cache or do a hard reload.
+
 ---
 
 ## Current limitations (by design or early version)
