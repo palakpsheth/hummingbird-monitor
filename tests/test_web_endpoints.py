@@ -18,6 +18,16 @@ from hbmon.db import init_db, reset_db_state, session_scope
 from hbmon.models import Embedding, Individual, Observation, utcnow
 from hbmon.web import make_app
 
+_TEST_CLIENTS: list[TestClient] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_test_clients() -> None:
+    yield
+    while _TEST_CLIENTS:
+        client = _TEST_CLIENTS.pop()
+        client.close()
+
 
 def _has_hidden_column(text: str, tag: str, column_key: str) -> bool:
     pattern = (
@@ -42,7 +52,9 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     ensure_dirs()
     init_db()
     app = make_app()
-    return TestClient(app)
+    client = TestClient(app)
+    _TEST_CLIENTS.append(client)
+    return client
 
 
 def _setup_app_sync(tmp_path: Path, monkeypatch) -> TestClient:
@@ -57,7 +69,9 @@ def _setup_app_sync(tmp_path: Path, monkeypatch) -> TestClient:
     ensure_dirs()
     init_db()
     app = make_app()
-    return TestClient(app)
+    client = TestClient(app)
+    _TEST_CLIENTS.append(client)
+    return client
 
 
 def _install_live_cv2_stub(monkeypatch) -> None:
