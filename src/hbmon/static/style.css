@@ -523,8 +523,40 @@ a:hover { text-decoration: underline; }
 
 .live-feed-footer {
   display: flex;
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 8px;
+}
+
+.live-feed-health {
+  font-size: 12px;
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.live-feed-health--ok {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.live-feed-health--warn {
+  border-color: color-mix(in srgb, #f0b429 50%, var(--border));
+  color: color-mix(in srgb, #f0b429 70%, var(--text));
+}
+
+.live-feed-health--bad {
+  border-color: color-mix(in srgb, #e05d5d 60%, var(--border));
+  color: color-mix(in srgb, #e05d5d 70%, var(--text));
+}
+
+.live-feed-health--idle {
+  color: var(--muted);
 }
 
 .live-feed-frame {

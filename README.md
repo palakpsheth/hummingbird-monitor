@@ -70,7 +70,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
   - Missing sensitivity/identification fields are backfilled with current defaults when exporting older observations.
 
 ### Web UI pages
-- **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for the live feed, and live stream diagnostics when streaming; pauses when the tab is hidden)
+- **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for the live feed, a detection health indicator alongside stream diagnostics when streaming, and pauses when the tab is hidden)
 - **Observations**: filterable, sortable table (including dynamic extra metadata fields such as
   detector confidence) with compact thumbnails, column visibility checklist (sensitivity fields hidden
   by default), links to raw/annotated/clip snapshots + video, multi-select + bulk delete, and horizontal
