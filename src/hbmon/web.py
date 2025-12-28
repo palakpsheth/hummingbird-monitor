@@ -2274,6 +2274,7 @@ def make_app() -> Any:
             import cv2
         except ImportError:
             raise HTTPException(status_code=503, detail="OpenCV not available for streaming")
+        from starlette.concurrency import iterate_in_threadpool
 
         def _configure_capture(cap: Any) -> None:
             """Configure VideoCapture for low latency streaming."""
@@ -2283,7 +2284,7 @@ def make_app() -> Any:
                 # Buffer size may not be supported on all backends; ignore silently
                 pass
 
-        def generate_frames():
+        def _generate_frames() -> Iterator[bytes]:
             """Generate MJPEG frames from RTSP stream."""
             cap = None
             try:
@@ -2318,8 +2319,9 @@ def make_app() -> Any:
 
                     # Encode frame as JPEG
                     ok, jpeg = cv2.imencode(
-                        ".jpg", frame,
-                        [cv2.IMWRITE_JPEG_QUALITY, 70]
+                        ".jpg",
+                        frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, 70],
                     )
                     if not ok:
                         continue
@@ -2338,6 +2340,14 @@ def make_app() -> Any:
             finally:
                 if cap is not None:
                     cap.release()
+
+        async def generate_frames() -> AsyncIterator[bytes]:
+            iterator = _generate_frames()
+            try:
+                async for chunk in iterate_in_threadpool(iterator):
+                    yield chunk
+            finally:
+                await anyio.to_thread.run_sync(iterator.close)
 
         return StreamingResponse(
             generate_frames(),
