@@ -340,6 +340,16 @@ continue to override them when set.
 3. YOLO detections are filtered: only those overlapping significantly with motion areas are kept
 4. This reduces false positives from static objects or lighting changes
 
+### Debugging and diagnostics
+- `HBMON_DEBUG_YOLO` (default "0")
+  - Set to "1" to enable extra YOLO detection logging
+- `HBMON_DEBUG_SAVE_FRAMES` (default "0")
+  - Set to "1" to write periodic debug frames to disk
+- `HBMON_DEBUG_EVERY_SECONDS` (default 10)
+  - Interval (seconds) between debug snapshots when saving frames
+- `HBMON_YOLO_IMGSZ` (default 1280)
+  - Override the YOLO inference image size (larger values increase detail and CPU/GPU cost)
+
 ### MJPEG live stream tuning
 The MJPEG endpoint (`/api/stream.mjpeg`) supports bandwidth/CPU tuning via environment variables:
 
