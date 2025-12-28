@@ -403,3 +403,57 @@ def test_default_extra_column_visibility_hides_sensitivity(monkeypatch):
     assert defaults["detection.box_confidence"] is True
     assert defaults["sensitivity.bg_motion_threshold"] is False
     assert defaults["identification.match_score"] is True
+
+
+def test_sanitize_redirect_path(monkeypatch):
+    web = _import_web(monkeypatch)
+    assert web._sanitize_redirect_path(None) == "/observations"
+    assert web._sanitize_redirect_path("") == "/observations"
+    assert web._sanitize_redirect_path("nope") == "/observations"
+    assert web._sanitize_redirect_path("/ok") == "/ok"
+    assert web._sanitize_redirect_path("/ok", default="/default") == "/ok"
+
+
+def test_sanitize_case_name(monkeypatch):
+    web = _import_web(monkeypatch)
+    assert web._sanitize_case_name(None, "fallback") == "fallback"
+    assert web._sanitize_case_name("", "fallback") == "fallback"
+    assert web._sanitize_case_name("  My Case!  ", "fallback") == "My-Case"
+    assert web._sanitize_case_name("___", "fallback") == "fallback"
+
+
+def test_format_extra_label_and_value(monkeypatch):
+    web = _import_web(monkeypatch)
+    assert web._format_extra_label("sensitivity.detect_conf") == "Sensitivity · Detect Conf"
+    assert web._format_extra_value(None) == ""
+    assert web._format_extra_value(1.23456) == "1.235"
+    assert web._format_extra_value(True) == "true"
+    assert web._format_extra_value(False) == "false"
+    assert web._format_extra_value(12) == "12"
+    assert web._format_extra_value([1, "a"]) == "[1, \"a\"]"
+    assert web._format_extra_value({"a": 1}) == "{\"a\": 1}"
+    assert web._format_extra_value("ok") == "ok"
+
+
+def test_extra_sort_helpers(monkeypatch):
+    web = _import_web(monkeypatch)
+    assert web._extra_sort_type([]) == "text"
+    assert web._extra_sort_type([None, 1, 2.5]) == "number"
+    assert web._extra_sort_type([True, False]) == "text"
+    assert web._extra_sort_type([1, "a"]) == "text"
+
+    assert web._format_sort_value(None, "text") == ""
+    assert web._format_sort_value(True, "number") == "1"
+    assert web._format_sort_value(False, "number") == "0"
+    assert web._format_sort_value(1.25, "number") == "1.25"
+    assert web._format_sort_value("ABC", "text") == "abc"
+    assert web._format_sort_value([1, "A"], "text") == "[1, \"a\"]"
+
+
+def test_order_extra_columns(monkeypatch):
+    web = _import_web(monkeypatch)
+    ordered = web._order_extra_columns(
+        iter(["foo", "detection.box_confidence", "bar", "alpha"])
+    )
+    assert ordered[0] == "detection.box_confidence"
+    assert ordered[1:] == ["alpha", "bar", "foo"]

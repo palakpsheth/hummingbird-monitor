@@ -69,3 +69,6 @@ exports/
 
 # ---- docker overrides ----
 docker-compose.override.yml
+
+# models
+yolo*.pt

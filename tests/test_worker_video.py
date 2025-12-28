@@ -256,3 +256,60 @@ def test_draw_bbox_raises_when_cv2_unavailable(monkeypatch):
 
     with pytest.raises(RuntimeError, match="OpenCV"):
         worker._draw_bbox(frame, det)
+
+
+def test_record_clip_from_rtsp_invokes_capture(monkeypatch, tmp_path):
+    calls: dict[str, int] = {"set": 0, "release": 0}
+    out_path = tmp_path / "clip.mp4"
+
+    class DummyCap:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def isOpened(self) -> bool:  # noqa: N802 (OpenCV style)
+            return True
+
+        def set(self, *_args, **_kwargs) -> None:
+            calls["set"] += 1
+
+        def release(self) -> None:
+            calls["release"] += 1
+
+    fake_cv2 = types.SimpleNamespace(
+        VideoCapture=DummyCap,
+        CAP_PROP_BUFFERSIZE=2,
+    )
+
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+    monkeypatch.setattr(worker, "cv2", fake_cv2)
+    monkeypatch.setattr(worker, "_record_clip_opencv", lambda cap, out, seconds, max_fps=20.0: out)
+
+    result = worker._record_clip_from_rtsp("rtsp://example", out_path, seconds=1.0)
+    assert result == out_path
+    assert calls["set"] == 1
+    assert calls["release"] == 1
+
+
+def test_record_clip_from_rtsp_raises_when_capture_fails(monkeypatch, tmp_path):
+    out_path = tmp_path / "clip.mp4"
+
+    class DummyCap:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def isOpened(self) -> bool:  # noqa: N802 (OpenCV style)
+            return False
+
+        def release(self) -> None:
+            return None
+
+    fake_cv2 = types.SimpleNamespace(
+        VideoCapture=DummyCap,
+        CAP_PROP_BUFFERSIZE=2,
+    )
+
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+    monkeypatch.setattr(worker, "cv2", fake_cv2)
+
+    with pytest.raises(RuntimeError, match="RTSP stream"):
+        worker._record_clip_from_rtsp("rtsp://example", out_path, seconds=1.0)
