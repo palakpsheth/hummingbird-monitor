@@ -56,6 +56,28 @@ a:hover { text-decoration: underline; }
 .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
 .footer { border-top: 1px solid var(--border); padding: 12px 0 18px 0; margin-top: 12px; background: var(--bg); background: color-mix(in srgb, var(--bg) 90%, transparent); }
 
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.page-header .page-title {
+  margin: 6px 0 10px;
+}
+
+.page-meta {
+  font-size: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  text-align: right;
+}
+
 /* ───────────────────────── Top Bar ───────────────────────── */
 
 .topbar {
@@ -455,6 +477,29 @@ a:hover { text-decoration: underline; }
   text-align: center;
 }
 
+.live-feed-diagnostics {
+  margin: 8px 0 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 6px 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.live-feed-diagnostics dt {
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.live-feed-diagnostics dd {
+  margin: 2px 0 0 0;
+}
+
 .live-feed-hint {
   margin-top: 6px;
   font-size: 12px;
@@ -478,8 +523,40 @@ a:hover { text-decoration: underline; }
 
 .live-feed-footer {
   display: flex;
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 8px;
+}
+
+.live-feed-health {
+  font-size: 12px;
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.live-feed-health--ok {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.live-feed-health--warn {
+  border-color: color-mix(in srgb, #f0b429 50%, var(--border));
+  color: color-mix(in srgb, #f0b429 70%, var(--text));
+}
+
+.live-feed-health--bad {
+  border-color: color-mix(in srgb, #e05d5d 60%, var(--border));
+  color: color-mix(in srgb, #e05d5d 70%, var(--text));
+}
+
+.live-feed-health--idle {
+  color: var(--muted);
 }
 
 .live-feed-frame {

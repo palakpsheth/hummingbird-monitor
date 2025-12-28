@@ -70,7 +70,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
   - Missing sensitivity/identification fields are backfilled with current defaults when exporting older observations.
 
 ### Web UI pages
-- **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay and play/pause controls for the live feed, pauses when the tab is hidden)
+- **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for the live feed, a detection health indicator alongside stream diagnostics when streaming, and pauses when the tab is hidden)
 - **Observations**: filterable, sortable table (including dynamic extra metadata fields such as
   detector confidence) with compact thumbnails, column visibility checklist (sensitivity fields hidden
   by default), links to raw/annotated/clip snapshots + video, multi-select + bulk delete, and horizontal
@@ -80,6 +80,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Config**: tune detection thresholds, re-ID thresholds, and background subtraction settings
 - **Background image**: configure a reference background (select from observations, upload, or capture a live snapshot)
 - **API Docs**: interactive Swagger UI for API exploration (`/docs`)
+- Page headers mirror the footer status line (current time, time zone, version, and commit).
 
 ---
 
@@ -578,6 +579,10 @@ If video clips don't stream properly in Chrome/Firefox:
    ```
    http://<your-server>:8000/media/clips/2025-12-23/xxxxx.mp4
    ```
+
+### UI looks stale after an update
+The web app now sends no-cache headers on every response to prevent stale browser assets. If you
+still see old content, clear the browser cache or do a hard reload.
 
 ---
 
