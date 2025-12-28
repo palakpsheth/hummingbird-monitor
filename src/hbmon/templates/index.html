@@ -131,7 +131,34 @@
   var modalImg = document.getElementById('live-feed-modal-img');
   var modalClose = document.getElementById('live-feed-modal-close');
   var isStreaming = true;
-  var streamSrc = '/api/stream.mjpeg';
+  var defaultStreamSrc = '/api/stream.mjpeg';
+
+  function sanitizeStreamSrc(value) {
+    if (!value) {
+      return defaultStreamSrc;
+    }
+    var rawValue = String(value).trim();
+    if (!rawValue) {
+      return defaultStreamSrc;
+    }
+    try {
+      var parsedUrl = new URL(rawValue, window.location.origin);
+      if (parsedUrl.origin !== window.location.origin) {
+        return defaultStreamSrc;
+      }
+      if (!parsedUrl.pathname.startsWith('/api/')) {
+        return defaultStreamSrc;
+      }
+      return encodeURI(parsedUrl.pathname + parsedUrl.search);
+    } catch (error) {
+      return defaultStreamSrc;
+    }
+  }
+
+  var streamSrc = sanitizeStreamSrc(img ? img.getAttribute('src') : defaultStreamSrc);
+  if (img && img.getAttribute('src') !== streamSrc) {
+    img.setAttribute('src', streamSrc);
+  }
 
   function updateStatus(text) {
     if (statusEl) statusEl.textContent = text;
