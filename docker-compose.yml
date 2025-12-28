@@ -99,6 +99,65 @@ services:
       retries: 3
       start_period: 30s
 
+  hbmon-stream:
+    build:
+      context: .
+      args:
+        # Git commit hash/label shown in the hbmon-web footer; usually set by CI or build scripts.
+        # If not provided via the GIT_COMMIT environment variable (e.g. in .env), defaults to "unknown".
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    container_name: hbmon-stream
+    command:
+      [
+        "gunicorn",
+        "hbmon.web:app",
+        "-k",
+        "uvicorn.workers.UvicornWorker",
+        "--workers",
+        "1",
+        "--bind",
+        "0.0.0.0:8001",
+        "--log-level",
+        "info",
+        "--access-logfile",
+        "-",
+        "--error-logfile",
+        "-"
+      ]
+    environment:
+      - TZ=America/Los_Angeles
+
+      - HBMON_TITLE=${HBMON_TITLE}
+      - HBMON_RTSP_URL=${HBMON_RTSP_URL}
+
+      - HBMON_DATA_DIR=${HBMON_DATA_DIR}
+      - HBMON_MEDIA_DIR=${HBMON_MEDIA_DIR}
+      - HBMON_CONFIG_PATH=${HBMON_CONFIG_PATH}
+      - HBMON_DB_ASYNC_URL=${HBMON_DB_ASYNC_URL:-postgresql+asyncpg://hbmon:hbmon@hbmon-db:5432/hbmon}
+      - HBMON_DB_POOL_SIZE=${HBMON_DB_POOL_SIZE:-5}
+      - HBMON_DB_MAX_OVERFLOW=${HBMON_DB_MAX_OVERFLOW:-10}
+      - HBMON_DB_POOL_TIMEOUT=${HBMON_DB_POOL_TIMEOUT:-30}
+      - HBMON_DB_POOL_RECYCLE=${HBMON_DB_POOL_RECYCLE:-1800}
+      - HBMON_REDIS_URL=${HBMON_REDIS_URL:-redis://hbmon-redis:6379/0}
+
+    volumes:
+      - ./data:/data
+    depends_on:
+      wyze-bridge:
+        condition: service_healthy
+      hbmon-db:
+        condition: service_healthy
+      hbmon-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # Healthcheck: FastAPI health endpoint
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   hbmon-worker:
     build: .
     container_name: hbmon-worker
@@ -168,6 +227,8 @@ services:
     container_name: hbmon-proxy
     depends_on:
       hbmon-web:
+        condition: service_healthy
+      hbmon-stream:
         condition: service_healthy
     ports:
       - "80:80"
