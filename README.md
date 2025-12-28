@@ -208,6 +208,8 @@ SQLite fallback/testing:
 
 For local development, the repo includes a `Makefile` with common tasks. The targets use
 `uv` to manage the virtual environment and run commands (matching CI expectations).
+Note: `docker-up`/`docker-up-gpu` split build and run steps because build args must be
+passed to `docker compose build`, not `docker compose up`.
 
 ```bash
 make venv            # create .venv via uv
@@ -218,9 +220,9 @@ make test            # full pytest + coverage
 make test-unit       # unit tests + coverage (marker: not integration)
 make test-integration # integration/UI tests + coverage (marker: integration)
 make docker-build    # docker compose build
-make docker-up       # docker compose up -d --build
+make docker-up       # docker compose build + up -d
 make docker-build-gpu # docker compose build (CUDA-enabled PyTorch)
-make docker-up-gpu   # docker compose up -d --build (CUDA-enabled PyTorch)
+make docker-up-gpu   # docker compose build + up -d (CUDA-enabled PyTorch)
 make docker-down     # docker compose down
 make clean-db        # remove local database file only (defaults to ./data)
 make clean-media     # remove local media files (defaults to ./data/media)

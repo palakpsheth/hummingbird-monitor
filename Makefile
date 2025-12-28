@@ -48,13 +48,15 @@ docker-build: ## Build docker images
 	docker compose build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_INDEX_URL)
 
 docker-up: ## Start docker compose (build if needed)
-	docker compose up -d --build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_INDEX_URL)
+	docker compose build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_INDEX_URL)
+	docker compose up -d
 
 docker-build-gpu: ## Build docker images with CUDA-enabled PyTorch
 	docker compose build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_GPU_INDEX_URL)
 
 docker-up-gpu: ## Start docker compose with CUDA-enabled PyTorch (build if needed)
-	docker compose up -d --build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_GPU_INDEX_URL)
+	docker compose build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_GPU_INDEX_URL)
+	docker compose up -d
 
 docker-ps: ## Get docker compose status
 	docker compose ps
