@@ -57,6 +57,9 @@
       <div class="live-feed-hint">Click image to view full size video</div>
     </div>
     <div class="live-feed-footer">
+      <div class="live-feed-health live-feed-health--idle" id="live-feed-health" role="status">
+        Detection health: —
+      </div>
       <a class="muted" href="/calibrate">Calibrate ROI</a>
     </div>
   </div>
@@ -178,12 +181,23 @@
   var frame = document.getElementById('live-feed-frame');
   var playBtn = document.getElementById('live-feed-play');
   var pauseBtn = document.getElementById('live-feed-pause');
+  var healthEl = document.getElementById('live-feed-health');
 
   var isStreaming = false;
   var hasInteracted = false;
   var wasStreamingBeforeModal = false;
   var wasStreamingBeforeHidden = false;
   var diagnosticsTimer = null;
+  var healthTimer = null;
+  var lastStreamRestart = 0;
+  var staleFrameThresholdSeconds = 3.5;
+  var restartCooldownMs = 5000;
+  var latestDiagnostics = null;
+  var latestHealth = null;
+  var detectionWarnSeconds = 120;
+  var detectionCriticalSeconds = 300;
+  var streamWarnSeconds = 3;
+  var streamCriticalSeconds = 7;
 
   var defaultStreamSrc = '/api/stream.mjpeg';
   var diagnosticsSrc = '/api/stream_diagnostics';
@@ -228,6 +242,13 @@
     return url.pathname + url.search;
   }
 
+  function buildStreamSrc(base) {
+    if (!base) return base;
+    var url = new URL(base, window.location.origin);
+    url.searchParams.set('ts', Date.now().toString());
+    return url.pathname + url.search;
+  }
+
   function updateStatus(text) {
     if (statusEl) statusEl.textContent = text;
   }
@@ -242,6 +263,68 @@
     if (value === null || value === undefined) return '—';
     if (typeof value !== 'number') return String(value);
     return value.toFixed(digits);
+  }
+
+  function formatAge(seconds) {
+    if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '—';
+    if (seconds < 60) return Math.round(seconds) + 's';
+    if (seconds < 3600) return Math.round(seconds / 60) + 'm';
+    if (seconds < 86400) return Math.round(seconds / 3600) + 'h';
+    return Math.round(seconds / 86400) + 'd';
+  }
+
+  function updateHealthIndicator() {
+    if (!healthEl) return;
+    var level = 'ok';
+    var parts = [];
+    var rtspConfigured = latestHealth ? Boolean(latestHealth.rtsp_url) : null;
+
+    if (rtspConfigured === false) {
+      parts.push('RTSP not configured');
+      level = 'warn';
+    } else if (latestHealth && latestHealth.last_observation_utc) {
+      var lastDetection = Date.parse(latestHealth.last_observation_utc);
+      if (!Number.isNaN(lastDetection)) {
+        var detectionAge = (Date.now() - lastDetection) / 1000.0;
+        parts.push('Last detection: ' + formatAge(detectionAge) + ' ago');
+        if (detectionAge >= detectionCriticalSeconds) {
+          level = 'bad';
+        } else if (detectionAge >= detectionWarnSeconds) {
+          level = level === 'bad' ? level : 'warn';
+        }
+      } else {
+        parts.push('Last detection: —');
+        level = 'warn';
+      }
+    } else if (latestHealth) {
+      parts.push('Last detection: —');
+      level = 'warn';
+    } else {
+      parts.push('Last detection: —');
+      level = 'idle';
+    }
+
+    if (isStreaming) {
+      var frameAge = latestDiagnostics && latestDiagnostics.frame
+        ? latestDiagnostics.frame.last_frame_age_s
+        : null;
+      parts.push('Stream age: ' + formatAge(frameAge));
+      if (frameAge !== null && frameAge !== undefined) {
+        if (frameAge >= streamCriticalSeconds) {
+          level = 'bad';
+        } else if (frameAge >= streamWarnSeconds && level === 'ok') {
+          level = 'warn';
+        }
+      } else if (level === 'ok') {
+        level = 'warn';
+      }
+    } else {
+      parts.push('Stream: paused');
+    }
+
+    healthEl.textContent = parts.join(' · ');
+    healthEl.classList.remove('live-feed-health--ok', 'live-feed-health--warn', 'live-feed-health--bad', 'live-feed-health--idle');
+    healthEl.classList.add('live-feed-health--' + level);
   }
 
   function formatBitrate(kbps) {
@@ -310,9 +393,18 @@
       })
       .then(function(data) {
         renderDiagnostics(data);
+        latestDiagnostics = data;
+        updateHealthIndicator();
+        var frameAge = data && data.frame ? data.frame.last_frame_age_s : null;
+        if (frameAge !== null && frameAge !== undefined && frameAge > staleFrameThresholdSeconds) {
+          restartStream('Stale diagnostics data');
+        }
       })
       .catch(function() {
         clearDiagnostics();
+        latestDiagnostics = null;
+        updateHealthIndicator();
+        restartStream('Diagnostics unavailable');
       });
   }
 
@@ -328,6 +420,8 @@
       diagnosticsTimer = null;
     }
     clearDiagnostics();
+    latestDiagnostics = null;
+    updateHealthIndicator();
   }
 
   function updateButtons() {
@@ -346,6 +440,47 @@
     img.src = buildSnapshotSrc(snapshotSrc);
   }
 
+  function fetchHealth() {
+    if (!healthEl) return;
+    fetch('/api/health', { cache: 'no-store' })
+      .then(function(res) {
+        if (!res.ok) throw new Error('bad response');
+        return res.json();
+      })
+      .then(function(data) {
+        latestHealth = data;
+        updateHealthIndicator();
+      })
+      .catch(function() {
+        latestHealth = null;
+        updateHealthIndicator();
+      });
+  }
+
+  function startHealthPolling() {
+    if (!healthEl || healthTimer) return;
+    fetchHealth();
+    healthTimer = window.setInterval(fetchHealth, 10000);
+  }
+
+  function stopHealthPolling() {
+    if (healthTimer) {
+      window.clearInterval(healthTimer);
+      healthTimer = null;
+    }
+  }
+
+  function restartStream(reason) {
+    if (!img || !isStreaming) return;
+    if (document.visibilityState === 'hidden') return;
+    var now = Date.now();
+    if (now - lastStreamRestart < restartCooldownMs) return;
+    lastStreamRestart = now;
+    updateStatus('Reconnecting live stream...');
+    img.src = buildStreamSrc(streamSrc);
+    updateButtons();
+  }
+
   function startStream() {
     if (!img) return;
     if (document.visibilityState === 'hidden') {
@@ -353,10 +488,11 @@
       updateStatus('Stream paused (tab hidden)');
       return;
     }
-    img.src = streamSrc;
+    img.src = buildStreamSrc(streamSrc);
     isStreaming = true;
     updateStatus('Streaming live');
     startDiagnosticsPolling();
+    startHealthPolling();
     updateButtons();
   }
 
@@ -502,6 +638,7 @@
         stopStream(false);
         updateStatus('Stream paused (tab hidden)');
       }
+      stopHealthPolling();
       return;
     }
 
@@ -509,6 +646,7 @@
       startStream();
     }
     wasStreamingBeforeHidden = false;
+    startHealthPolling();
   });
 
   // Default state: paused until user interacts
@@ -516,6 +654,9 @@
     stopStream();
     updateStatus('Stream paused (click play to start)');
   }
+
+  startHealthPolling();
+  updateHealthIndicator();
 })();
 </script>
 {% endblock %}
