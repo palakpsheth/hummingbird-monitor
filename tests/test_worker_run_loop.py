@@ -161,3 +161,85 @@ async def test_run_worker_single_iteration(tmp_path, monkeypatch):
     async with db_module.async_session_scope() as session:
         total = (await session.execute(select(func.count(Observation.id)))).scalar_one()
         assert total == 1
+
+
+class _RejectBox:
+    def __init__(self):
+        self.cls = _DummyScalar(0)
+        self.conf = _DummyScalar(0.7)
+        self.xyxy = _DummyTensor(np.array([[1, 1, 6, 6]], dtype=np.float32))
+
+
+class _RejectResult:
+    def __init__(self):
+        self.boxes = [_RejectBox()]
+
+
+class _RejectYOLO:
+    names = ["bird"]
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+
+    def predict(self, frame, *, conf, iou, classes, imgsz, verbose):
+        return [_RejectResult()]
+
+
+@pytest.mark.anyio
+async def test_run_worker_logs_rejected_candidate(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    media_dir = tmp_path / "media"
+    db_path = tmp_path / "db.sqlite"
+
+    monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("HBMON_MEDIA_DIR", str(media_dir))
+    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("HBMON_RTSP_URL", "rtsp://example")
+    monkeypatch.setenv("HBMON_BG_LOG_REJECTED", "1")
+    monkeypatch.setenv("HBMON_BG_REJECTED_SAVE_CLIP", "0")
+
+    db_module.reset_db_state()
+
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+    monkeypatch.setattr(worker, "_YOLO_AVAILABLE", True)
+    monkeypatch.setattr(worker, "cv2", _DummyCV2)
+    monkeypatch.setattr(worker, "YOLO", _RejectYOLO)
+    monkeypatch.setattr(worker, "ClipModel", _DummyClip)
+    monkeypatch.setattr(worker, "_write_jpeg", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker, "_draw_bbox", lambda frame, det, **kwargs: frame)
+    monkeypatch.setattr(worker, "_draw_text_lines", lambda frame, lines, **kwargs: frame)
+    monkeypatch.setattr(worker, "_save_motion_mask_images", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker, "_compute_motion_mask", lambda *args, **kwargs: np.zeros((10, 10), dtype=np.uint8))
+    monkeypatch.setattr(worker, "_load_background_image", lambda: np.zeros((20, 20, 3), dtype=np.uint8))
+
+    async def _noop_sleep(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(worker.asyncio, "sleep", _noop_sleep)
+
+    settings = Settings()
+    settings.rtsp_url = "rtsp://example"
+    settings.camera_name = "camera"
+    settings.fps_limit = 0.0
+    settings.clip_seconds = 0.1
+    settings.detect_conf = 0.2
+    settings.detect_iou = 0.5
+    settings.min_box_area = 1
+    settings.cooldown_seconds = 0.0
+    settings.min_species_prob = 0.0
+    settings.match_threshold = 0.5
+    settings.ema_alpha = 0.2
+    settings.crop_padding = 0.0
+    settings.bg_subtraction_enabled = True
+    settings.bg_motion_threshold = 25
+    settings.bg_motion_blur = 3
+    settings.bg_min_overlap = 0.5
+    monkeypatch.setattr(worker, "load_settings", lambda apply_env_overrides=False: settings)
+
+    with pytest.raises(RuntimeError, match="stop loop"):
+        await worker.run_worker()
+
+    async with db_module.async_session_scope() as session:
+        total = (await session.execute(select(func.count(worker.Candidate.id)))).scalar_one()
+        assert total == 1

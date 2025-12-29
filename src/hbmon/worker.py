@@ -21,11 +21,22 @@ Expected env vars (common):
 - HBMON_FPS_LIMIT=8
 - HBMON_CLIP_SECONDS=2.0
 - HBMON_CROP_PADDING=0.05 (padding fraction around bird bbox for CLIP; lower = tighter crop)
+
+Background subtraction extras:
+- HBMON_BG_LOG_REJECTED=0 (set to 1 to log motion-rejected candidates)
+- HBMON_BG_REJECTED_COOLDOWN_SECONDS=3
+- HBMON_BG_REJECTED_SAVE_CLIP=0
+- HBMON_BG_REJECTED_MAX_PER_MINUTE=30 (optional cap)
+- HBMON_BG_SAVE_MASKS=1
+- HBMON_BG_SAVE_MASK_OVERLAY=1
+- HBMON_BG_MASK_FORMAT=png
+- HBMON_BG_MASK_DOWNSCALE_MAX=0 (0 disables downscale)
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import os
 import shutil
 import subprocess
@@ -41,9 +52,18 @@ from sqlalchemy import select  # type: ignore
 
 from hbmon.clip_model import ClipModel
 from hbmon.clustering import l2_normalize, update_prototype_ema, cosine_distance
-from hbmon.config import Settings, background_image_path, ensure_dirs, load_settings, snapshots_dir
+from hbmon.config import (
+    Settings,
+    background_image_path,
+    ensure_dirs,
+    env_bool,
+    env_int,
+    env_str,
+    load_settings,
+    media_dir,
+)
 from hbmon.db import async_session_scope, init_async_db
-from hbmon.models import Embedding, Individual, Observation
+from hbmon.models import Candidate, Embedding, Individual, Observation
 
 # ---------------------------------------------------------------------------
 # Optional heavy dependencies
@@ -96,6 +116,18 @@ class ObservationMediaPaths:
     clip_rel: str
 
 
+@dataclass(frozen=True)
+class CandidateMediaPaths:
+    """Relative media paths for a single candidate."""
+
+    candidate_uuid: str
+    snapshot_rel: str
+    snapshot_annotated_rel: str
+    clip_rel: str
+    mask_rel: str
+    mask_overlay_rel: str
+
+
 def _build_observation_media_paths(stamp: str, observation_uuid: str | None = None) -> ObservationMediaPaths:
     """Build the observation media paths with a shared UUID."""
 
@@ -107,6 +139,30 @@ def _build_observation_media_paths(stamp: str, observation_uuid: str | None = No
         snapshot_clip_rel=f"snapshots/{stamp}/{obs_uuid}_clip.jpg",
         snapshot_background_rel=f"snapshots/{stamp}/{obs_uuid}_background.jpg",
         clip_rel=f"clips/{stamp}/{obs_uuid}.mp4",
+    )
+
+
+def _build_candidate_media_paths(
+    stamp: str,
+    candidate_uuid: str | None = None,
+    *,
+    mask_ext: str = "png",
+) -> CandidateMediaPaths:
+    cand_uuid = candidate_uuid or uuid.uuid4().hex
+    return CandidateMediaPaths(
+        candidate_uuid=cand_uuid,
+        snapshot_rel=f"snapshots/candidates/{stamp}/{cand_uuid}.jpg",
+        snapshot_annotated_rel=f"snapshots/candidates/{stamp}/{cand_uuid}_ann.jpg",
+        clip_rel=f"clips/candidates/{stamp}/{cand_uuid}.mp4",
+        mask_rel=f"masks/candidates/{stamp}/{cand_uuid}_mask.{mask_ext}",
+        mask_overlay_rel=f"masks/candidates/{stamp}/{cand_uuid}_overlay.{mask_ext}",
+    )
+
+
+def _build_mask_paths(stamp: str, observation_uuid: str, *, mask_ext: str = "png") -> tuple[str, str]:
+    return (
+        f"masks/observations/{stamp}/{observation_uuid}_mask.{mask_ext}",
+        f"masks/observations/{stamp}/{observation_uuid}_overlay.{mask_ext}",
     )
 
 
@@ -264,6 +320,51 @@ def _compute_motion_mask(
     return mask
 
 
+def _motion_overlap_stats(det: "Det", motion_mask: np.ndarray) -> dict[str, float | int]:
+    """
+    Compute motion overlap stats within the detection bounding box (ROI coords).
+
+    Returns a dict with motion pixel counts and overlap ratio.
+    """
+    h, w = motion_mask.shape[:2]
+
+    x1 = max(0, min(det.x1, w - 1))
+    y1 = max(0, min(det.y1, h - 1))
+    x2 = max(x1 + 1, min(det.x2, w))
+    y2 = max(y1 + 1, min(det.y2, h))
+
+    if x2 <= x1 or y2 <= y1:
+        return {
+            "bbox_motion_pixels": 0,
+            "bbox_total_pixels": 0,
+            "bbox_overlap_ratio": 0.0,
+        }
+
+    roi_mask = motion_mask[y1:y2, x1:x2]
+    motion_pixels = int(np.count_nonzero(roi_mask))
+    total_pixels = int(roi_mask.size)
+    overlap_ratio = float(motion_pixels) / max(total_pixels, 1)
+    return {
+        "bbox_motion_pixels": motion_pixels,
+        "bbox_total_pixels": total_pixels,
+        "bbox_overlap_ratio": overlap_ratio,
+    }
+
+
+def _roi_motion_stats(motion_mask: np.ndarray) -> dict[str, float | int]:
+    """
+    Compute motion coverage stats for the full ROI mask.
+    """
+    motion_pixels = int(np.count_nonzero(motion_mask))
+    total_pixels = int(motion_mask.size)
+    motion_fraction = float(motion_pixels) / max(total_pixels, 1)
+    return {
+        "roi_motion_pixels": motion_pixels,
+        "roi_total_pixels": total_pixels,
+        "roi_motion_fraction": motion_fraction,
+    }
+
+
 def _detection_overlaps_motion(
     det: "Det",
     motion_mask: np.ndarray,
@@ -281,30 +382,10 @@ def _detection_overlaps_motion(
     - motion_mask: Binary mask from background subtraction
     - min_overlap_ratio: Minimum fraction of detection area that must have motion
     """
-    h, w = motion_mask.shape[:2]
-
-    # Clamp bbox to mask dimensions, ensuring x2 >= x1 and y2 >= y1
-    x1 = max(0, min(det.x1, w - 1))
-    y1 = max(0, min(det.y1, h - 1))
-    x2 = max(x1 + 1, min(det.x2, w))
-    y2 = max(y1 + 1, min(det.y2, h))
-
-    if x2 <= x1 or y2 <= y1:
-        return True  # Edge case: keep detection if bbox is invalid
-
-    # Extract the region of the mask corresponding to the detection
-    roi_mask = motion_mask[y1:y2, x1:x2]
-
-    # Calculate the fraction of the detection area with motion
-    motion_pixels = np.count_nonzero(roi_mask)
-    total_pixels = roi_mask.size
-
-    if total_pixels == 0:
-        return True  # Edge case
-
-    overlap_ratio = motion_pixels / total_pixels
-
-    return overlap_ratio >= min_overlap_ratio
+    stats = _motion_overlap_stats(det, motion_mask)
+    if stats["bbox_total_pixels"] == 0:
+        return True
+    return float(stats["bbox_overlap_ratio"]) >= min_overlap_ratio
 
 
 def _pick_best_bird_det(
@@ -358,6 +439,48 @@ def _pick_best_bird_det(
     return best
 
 
+def _collect_bird_detections(
+    results: Any,
+    min_box_area: int,
+    bird_class_id: int,
+) -> list[Det]:
+    """
+    Collect bird detections from ultralytics results, filtering by min box area.
+    """
+    if not results:
+        return []
+    r0 = results[0]
+    if r0.boxes is None:
+        return []
+
+    boxes = r0.boxes
+    if len(boxes) == 0:
+        return []
+
+    detections: list[Det] = []
+    for b in boxes:
+        try:
+            cls = int(b.cls.item()) if hasattr(b.cls, "item") else int(b.cls)
+            conf = float(b.conf.item()) if hasattr(b.conf, "item") else float(b.conf)
+            if cls != bird_class_id:
+                continue
+
+            xyxy = b.xyxy[0].detach().cpu().numpy()
+            x1, y1, x2, y2 = [int(v) for v in xyxy.tolist()]
+            d = Det(x1=x1, y1=y1, x2=x2, y2=y2, conf=conf)
+            if d.area < min_box_area:
+                continue
+            detections.append(d)
+        except Exception:
+            continue
+
+    return detections
+
+
+def _select_best_detection(entries: list[tuple[Det, dict[str, float | int]]]) -> tuple[Det, dict[str, float | int]]:
+    return max(entries, key=lambda item: (item[0].area, item[0].conf))
+
+
 def _write_jpeg(path: Path, frame_bgr: np.ndarray) -> None:
     """
     Write a JPEG image to disk.  Requires OpenCV; raises RuntimeError if
@@ -371,6 +494,66 @@ def _write_jpeg(path: Path, frame_bgr: np.ndarray) -> None:
     if not ok:
         raise RuntimeError("cv2.imencode failed for jpeg")
     path.write_bytes(buf.tobytes())
+
+
+def _write_png(path: Path, image: np.ndarray) -> None:
+    """
+    Write a PNG image to disk.  Requires OpenCV; raises RuntimeError if
+    OpenCV is unavailable.
+    """
+    if not _CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is not installed; cannot write PNGs")
+    assert cv2 is not None  # for type checkers
+    _safe_mkdir(path.parent)
+    ok, buf = cv2.imencode(".png", image)
+    if not ok:
+        raise RuntimeError("cv2.imencode failed for png")
+    path.write_bytes(buf.tobytes())
+
+
+def _downscale_shape(height: int, width: int, max_dim: int) -> tuple[int, int] | None:
+    if max_dim <= 0:
+        return None
+    largest = max(height, width)
+    if largest <= max_dim:
+        return None
+    scale = max_dim / float(largest)
+    new_w = max(1, int(round(width * scale)))
+    new_h = max(1, int(round(height * scale)))
+    return new_h, new_w
+
+
+def _save_motion_mask_images(
+    *,
+    motion_mask: np.ndarray,
+    roi_frame: np.ndarray,
+    mask_path: Path,
+    overlay_path: Path | None,
+    downscale_max: int,
+) -> None:
+    """
+    Save a binary motion mask and optional overlay visualization.
+    """
+    if not _CV2_AVAILABLE:
+        return
+    assert cv2 is not None
+
+    mask_uint8 = (motion_mask > 0).astype(np.uint8) * 255
+    h, w = mask_uint8.shape[:2]
+    target = _downscale_shape(h, w, downscale_max)
+    if target:
+        target_h, target_w = target
+        mask_uint8 = cv2.resize(mask_uint8, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+        roi_frame = cv2.resize(roi_frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+
+    _write_png(mask_path, mask_uint8)
+    if overlay_path is not None:
+        overlay = roi_frame.copy()
+        color_mask = np.zeros_like(overlay)
+        color_mask[:, :, 2] = mask_uint8
+        overlay = cv2.addWeighted(overlay, 0.75, color_mask, 0.35, 0)
+        _write_png(overlay_path, overlay)
+    return
 
 
 def _draw_bbox(
@@ -429,6 +612,40 @@ def _draw_bbox(
         # Draw text in black for contrast
         cv2.putText(annotated, label, (text_x + 2, text_y), font, font_scale, (0, 0, 0), font_thickness)
 
+    return annotated
+
+
+def _draw_text_lines(
+    frame_bgr: np.ndarray,
+    lines: list[str],
+    *,
+    origin: tuple[int, int] = (12, 24),
+    color: tuple[int, int, int] = (0, 255, 255),
+) -> np.ndarray:
+    """
+    Draw multiple text lines at the given origin.
+    """
+    if not _CV2_AVAILABLE:
+        raise RuntimeError("OpenCV (cv2) is not installed; cannot draw text")
+    assert cv2 is not None
+
+    annotated = frame_bgr.copy()
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.6
+    font_thickness = 2
+    x, y = origin
+    line_height = 22
+    for line in lines:
+        (text_w, text_h), _ = cv2.getTextSize(line, font, font_scale, font_thickness)
+        cv2.rectangle(
+            annotated,
+            (x - 4, y - text_h - 6),
+            (x + text_w + 4, y + 4),
+            color,
+            -1,
+        )
+        cv2.putText(annotated, line, (x, y), font, font_scale, (0, 0, 0), font_thickness)
+        y += line_height
     return annotated
 
 
@@ -831,6 +1048,19 @@ async def run_worker() -> None:
     last_bg_settings: tuple[bool, int, int, float] | None = None
 
     last_trigger = 0.0
+    last_logged_candidate_ts = 0.0
+    candidate_log_times: deque[float] = deque()
+
+    def _can_log_candidate(now: float, cooldown_seconds: float, max_per_minute: int | None) -> bool:
+        nonlocal last_logged_candidate_ts, candidate_log_times
+        if now - last_logged_candidate_ts < cooldown_seconds:
+            return False
+        if max_per_minute and max_per_minute > 0:
+            while candidate_log_times and (now - candidate_log_times[0]) > 60.0:
+                candidate_log_times.popleft()
+            if len(candidate_log_times) >= max_per_minute:
+                return False
+        return True
 
     def get_settings() -> Settings:
         nonlocal last_settings_load, settings
@@ -908,7 +1138,6 @@ async def run_worker() -> None:
             print(f"[worker] alive frame_shape={frame.shape} rtsp={s.rtsp_url}")
 
             if debug_save:
-                from hbmon.config import media_dir
                 p = media_dir() / "debug_latest.jpg"
                 _write_jpeg(p, frame)
                 print(f"[worker] wrote debug frame {p}")
@@ -945,6 +1174,17 @@ async def run_worker() -> None:
             elif not bg_enabled:
                 print("[worker] Background subtraction disabled via config/env.")
             last_bg_settings = bg_settings
+
+        log_rejected = env_bool("HBMON_BG_LOG_REJECTED", False)
+        rejected_cooldown = float(env_int("HBMON_BG_REJECTED_COOLDOWN_SECONDS", 3))
+        rejected_save_clip = env_bool("HBMON_BG_REJECTED_SAVE_CLIP", False)
+        rejected_max_per_minute = env_int("HBMON_BG_REJECTED_MAX_PER_MINUTE", 0)
+        save_masks = env_bool("HBMON_BG_SAVE_MASKS", True)
+        save_mask_overlay = env_bool("HBMON_BG_SAVE_MASK_OVERLAY", True)
+        mask_format = env_str("HBMON_BG_MASK_FORMAT", "png").lower()
+        if mask_format not in {"png"}:
+            mask_format = "png"
+        mask_downscale_max = env_int("HBMON_BG_MASK_DOWNSCALE_MAX", 0)
 
         roi_frame, (xoff, yoff) = _apply_roi(frame, s)
 
@@ -986,14 +1226,155 @@ async def run_worker() -> None:
             n = 0 if r0.boxes is None else len(r0.boxes)
             print(f"[worker] yolo boxes={n}")
 
-        det = _pick_best_bird_det(
-            results,
-            int(s.min_box_area),
-            bird_class_id,
-            motion_mask=motion_mask,
-            min_motion_overlap=bg_min_overlap,
-        )
+        detections = _collect_bird_detections(results, int(s.min_box_area), bird_class_id)
+        if not detections:
+            continue
+
+        kept_entries: list[tuple[Det, dict[str, float | int]]] = []
+        rejected_entries: list[tuple[Det, dict[str, float | int]]] = []
+        if motion_mask is not None:
+            for candidate_det in detections:
+                stats = _motion_overlap_stats(candidate_det, motion_mask)
+                if float(stats["bbox_overlap_ratio"]) >= float(bg_min_overlap):
+                    kept_entries.append((candidate_det, stats))
+                else:
+                    rejected_entries.append((candidate_det, stats))
+        else:
+            kept_entries = [(det, {}) for det in detections]
+
+        det_stats: dict[str, float | int] | None = None
+        if kept_entries:
+            det, det_stats = _select_best_detection(kept_entries)
+        else:
+            det = None
+
         if det is None:
+            if log_rejected and rejected_entries:
+                now_reject = time.time()
+                max_per_minute = rejected_max_per_minute if rejected_max_per_minute > 0 else None
+                if _can_log_candidate(now_reject, rejected_cooldown, max_per_minute):
+                    best_rejected, rejected_stats = _select_best_detection(rejected_entries)
+                    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    candidate_paths = _build_candidate_media_paths(stamp, mask_ext=mask_format)
+                    media_root = media_dir()
+                    snapshot_path = media_root / candidate_paths.snapshot_rel
+                    snapshot_annotated_path = media_root / candidate_paths.snapshot_annotated_rel
+                    clip_path = media_root / candidate_paths.clip_rel
+                    mask_path = media_root / candidate_paths.mask_rel
+                    mask_overlay_path = media_root / candidate_paths.mask_overlay_rel
+
+                    det_full = Det(
+                        x1=best_rejected.x1 + xoff,
+                        y1=best_rejected.y1 + yoff,
+                        x2=best_rejected.x2 + xoff,
+                        y2=best_rejected.y2 + yoff,
+                        conf=best_rejected.conf,
+                    )
+
+                    try:
+                        _write_jpeg(snapshot_path, frame)
+                        annotated = _draw_bbox(frame, det_full, show_confidence=True)
+                        overlay_text = (
+                            f"motion_rejected overlap={rejected_stats['bbox_overlap_ratio']:.2f} "
+                            f"< min={bg_min_overlap:.2f} thr={bg_motion_threshold} blur={bg_motion_blur}"
+                        )
+                        annotated = _draw_text_lines(annotated, [overlay_text])
+                        _write_jpeg(snapshot_annotated_path, annotated)
+                    except Exception as e:
+                        print(f"[worker] candidate snapshot write failed: {e}")
+                        for path in (snapshot_path, snapshot_annotated_path):
+                            try:
+                                if path.exists():
+                                    path.unlink()
+                            except Exception as cleanup_err:
+                                print(f"[worker] candidate snapshot cleanup failed for {path}: {cleanup_err}")
+                        continue
+
+                    clip_rel = ""
+                    if rejected_save_clip:
+                        try:
+                            recorded_path = await asyncio.to_thread(
+                                _record_clip_from_rtsp,
+                                s.rtsp_url,
+                                clip_path,
+                                float(s.clip_seconds),
+                                max_fps=20.0,
+                            )
+                            clip_rel = str(recorded_path.relative_to(media_root))
+                        except Exception as e:
+                            print(f"[worker] candidate clip record failed: {e}")
+
+                    mask_rel = None
+                    mask_overlay_rel = None
+                    if save_masks and motion_mask is not None:
+                        try:
+                            overlay_dest = mask_overlay_path if save_mask_overlay else None
+                            _save_motion_mask_images(
+                                motion_mask=motion_mask,
+                                roi_frame=roi_frame,
+                                mask_path=mask_path,
+                                overlay_path=overlay_dest,
+                                downscale_max=mask_downscale_max,
+                            )
+                            mask_rel = candidate_paths.mask_rel
+                            if save_mask_overlay:
+                                mask_overlay_rel = candidate_paths.mask_overlay_rel
+                        except Exception as e:
+                            print(f"[worker] candidate mask save failed: {e}")
+
+                    roi_stats = _roi_motion_stats(motion_mask) if motion_mask is not None else {}
+                    candidate_extra = {
+                        "reason": "motion_rejected",
+                        "bg": {
+                            "active": True,
+                            "threshold": int(bg_motion_threshold),
+                            "blur": int(bg_motion_blur),
+                            "min_overlap": float(bg_min_overlap),
+                        },
+                        "motion": {
+                            **roi_stats,
+                            **rejected_stats,
+                        },
+                        "detection": {
+                            "confidence": float(best_rejected.conf),
+                            "bbox_xyxy": [
+                                int(best_rejected.x1),
+                                int(best_rejected.y1),
+                                int(best_rejected.x2),
+                                int(best_rejected.y2),
+                            ],
+                            "bbox_area": int(best_rejected.area),
+                            "roi_offset_xy": [int(xoff), int(yoff)],
+                        },
+                        "media": {
+                            "snapshot_raw_path": candidate_paths.snapshot_rel,
+                            "snapshot_annotated_path": candidate_paths.snapshot_annotated_rel,
+                            "mask_path": mask_rel,
+                            "mask_overlay_path": mask_overlay_rel,
+                        },
+                        "review": {"label": None, "labeled_at_utc": None},
+                    }
+
+                    async with async_session_scope() as db:
+                        candidate = Candidate(
+                            ts=utcnow(),
+                            camera_name=s.camera_name,
+                            bbox_x1=int(det_full.x1),
+                            bbox_y1=int(det_full.y1),
+                            bbox_x2=int(det_full.x2),
+                            bbox_y2=int(det_full.y2),
+                            snapshot_path=candidate_paths.snapshot_rel,
+                            annotated_snapshot_path=candidate_paths.snapshot_annotated_rel,
+                            mask_path=mask_rel,
+                            mask_overlay_path=mask_overlay_rel,
+                            clip_path=clip_rel or None,
+                            extra_json=None,
+                        )
+                        candidate.set_extra(candidate_extra)
+                        db.add(candidate)
+
+                    last_logged_candidate_ts = now_reject
+                    candidate_log_times.append(now_reject)
             continue
 
         # cooldown to avoid repeated triggers for the same visit
@@ -1021,7 +1402,7 @@ async def run_worker() -> None:
         snap_background_rel = media_paths.snapshot_background_rel
         clip_rel = media_paths.clip_rel
 
-        media_root = snapshots_dir().parent  # /media
+        media_root = media_dir()
         snap_path = media_root / snap_rel
         snap_annotated_path = media_root / snap_annotated_rel
         snap_clip_path = media_root / snap_clip_rel
@@ -1081,6 +1462,26 @@ async def run_worker() -> None:
             except Exception as e:
                 print(f"[worker] background snapshot write failed: {e}")
 
+        mask_rel: str | None = None
+        mask_overlay_rel: str | None = None
+        if save_masks and motion_mask is not None and bg_enabled and background_img is not None:
+            mask_rel_path, mask_overlay_rel_path = _build_mask_paths(stamp, snap_id, mask_ext=mask_format)
+            mask_path = media_root / mask_rel_path
+            overlay_dest = (media_root / mask_overlay_rel_path) if save_mask_overlay else None
+            try:
+                _save_motion_mask_images(
+                    motion_mask=motion_mask,
+                    roi_frame=roi_frame,
+                    mask_path=mask_path,
+                    overlay_path=overlay_dest,
+                    downscale_max=mask_downscale_max,
+                )
+                mask_rel = mask_rel_path
+                if save_mask_overlay:
+                    mask_overlay_rel = mask_overlay_rel_path
+            except Exception as e:
+                print(f"[worker] motion mask save failed: {e}")
+
         # Species + embedding
         try:
             raw_species_label, raw_species_prob = clip.predict_species_label_prob(crop)
@@ -1115,6 +1516,19 @@ async def run_worker() -> None:
                 snapshots_data["clip_path"] = clip_snapshot_rel
             if background_snapshot_rel:
                 snapshots_data["background_path"] = background_snapshot_rel
+            motion_stats: dict[str, float | int] | None = None
+            if motion_mask is not None and bg_active:
+                roi_stats = _roi_motion_stats(motion_mask)
+                bbox_stats = det_stats if det_stats else _motion_overlap_stats(det, motion_mask)
+                motion_stats = {**roi_stats, **bbox_stats}
+
+            media_data: dict[str, Any] = {}
+            if mask_rel:
+                media_data["mask_path"] = mask_rel
+            if mask_overlay_rel:
+                media_data["mask_overlay_path"] = mask_overlay_rel
+            if background_snapshot_rel:
+                media_data["background_path"] = background_snapshot_rel
 
             sensitivity_data = {
                 "detect_conf": float(s.detect_conf),
@@ -1158,6 +1572,10 @@ async def run_worker() -> None:
                 identification=identification_data,
                 snapshots=snapshots_data,
             )
+            if motion_stats:
+                extra_data["motion"] = motion_stats
+            if media_data:
+                extra_data["media"] = media_data
 
             obs = Observation(
                 ts=utcnow(),

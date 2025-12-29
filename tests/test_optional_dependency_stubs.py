@@ -104,6 +104,10 @@ def test_models_dataclass_stubs():
     assert merged["meta"]["y"] == 2
     assert obs.review_label == "true_positive"
 
+    candidate = mod.Candidate(id=5, snapshot_path="snap.jpg")
+    candidate.set_extra({"reason": "motion_rejected"})
+    assert candidate.get_extra()["reason"] == "motion_rejected"
+
     emb = mod.Embedding(id=3, observation_id=obs.id)
     emb.set_vec(vec)
     unpacked = emb.get_vec()

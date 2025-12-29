@@ -112,6 +112,144 @@ def test_record_clip_falls_back_to_avi(monkeypatch, tmp_path):
     assert writes[0][1] == "XVID"
 
 
+def test_record_clip_converts_mp4v(monkeypatch, tmp_path):
+    frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
+
+    class DummyWriter:
+        def __init__(self, path, fourcc, fps, size) -> None:
+            self.path = Path(path)
+            self.fourcc = fourcc
+            self._opened = self.fourcc == "mp4v"
+
+        def isOpened(self) -> bool:  # noqa: N802
+            return self._opened
+
+        def write(self, frame) -> None:
+            self.path.write_bytes(b"frame")
+
+        def release(self) -> None:
+            return None
+
+    fake_cv2 = types.SimpleNamespace(
+        VideoWriter=DummyWriter,
+        VideoWriter_fourcc=lambda *chars: "".join(chars),
+    )
+
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+    monkeypatch.setattr(worker, "cv2", fake_cv2)
+    monkeypatch.setattr(worker.time, "sleep", lambda _: None)
+
+    def fake_convert(input_path: Path, output_path: Path, *, timeout: float = 60.0) -> bool:
+        output_path.write_bytes(b"converted")
+        return True
+
+    monkeypatch.setattr(worker, "_convert_to_h264", fake_convert)
+
+    out_path = tmp_path / "clip.mp4"
+    result_path = worker._record_clip_opencv(_dummy_cap(frames), out_path, seconds=0.01, max_fps=5.0)
+
+    assert result_path.suffix == ".mp4"
+    assert result_path.exists()
+
+
+def test_record_clip_conversion_failure_cleans_tmp(monkeypatch, tmp_path):
+    frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
+
+    class DummyWriter:
+        def __init__(self, path, fourcc, fps, size) -> None:
+            self.path = Path(path)
+            self.fourcc = fourcc
+            self._opened = self.fourcc == "mp4v"
+
+        def isOpened(self) -> bool:  # noqa: N802
+            return self._opened
+
+        def write(self, frame) -> None:
+            self.path.write_bytes(b"frame")
+
+        def release(self) -> None:
+            return None
+
+    fake_cv2 = types.SimpleNamespace(
+        VideoWriter=DummyWriter,
+        VideoWriter_fourcc=lambda *chars: "".join(chars),
+    )
+
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+    monkeypatch.setattr(worker, "cv2", fake_cv2)
+    monkeypatch.setattr(worker.time, "sleep", lambda _: None)
+
+    def fake_convert(input_path: Path, output_path: Path, *, timeout: float = 60.0) -> bool:
+        output_path.write_bytes(b"converted")
+        return False
+
+    monkeypatch.setattr(worker, "_convert_to_h264", fake_convert)
+
+    out_path = tmp_path / "clip.mp4"
+    original_unlink = Path.unlink
+
+    def fake_unlink(self):
+        if self.suffix == ".mp4" and self.name.endswith("_h264.mp4"):
+            raise OSError("boom")
+        return original_unlink(self)
+
+    monkeypatch.setattr(Path, "unlink", fake_unlink)
+
+    result_path = worker._record_clip_opencv(_dummy_cap(frames), out_path, seconds=0.01, max_fps=5.0)
+
+    assert result_path.suffix == ".mp4"
+    assert result_path.exists()
+
+
+def test_record_clip_conversion_rename_failure(monkeypatch, tmp_path):
+    frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
+
+    class DummyWriter:
+        def __init__(self, path, fourcc, fps, size) -> None:
+            self.path = Path(path)
+            self.fourcc = fourcc
+            self._opened = self.fourcc == "mp4v"
+
+        def isOpened(self) -> bool:  # noqa: N802
+            return self._opened
+
+        def write(self, frame) -> None:
+            self.path.write_bytes(b"frame")
+
+        def release(self) -> None:
+            return None
+
+    fake_cv2 = types.SimpleNamespace(
+        VideoWriter=DummyWriter,
+        VideoWriter_fourcc=lambda *chars: "".join(chars),
+    )
+
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+    monkeypatch.setattr(worker, "cv2", fake_cv2)
+    monkeypatch.setattr(worker.time, "sleep", lambda _: None)
+
+    def fake_convert(input_path: Path, output_path: Path, *, timeout: float = 60.0) -> bool:
+        output_path.write_bytes(b"converted")
+        return True
+
+    monkeypatch.setattr(worker, "_convert_to_h264", fake_convert)
+
+    original_rename = Path.rename
+
+    def fake_rename(self, target):
+        if self.suffix == ".mp4" and self.name.endswith("_h264.mp4"):
+            raise OSError("boom")
+        return original_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fake_rename)
+
+    out_path = tmp_path / "clip.mp4"
+    result_path = worker._record_clip_opencv(_dummy_cap(frames), out_path, seconds=0.01, max_fps=5.0)
+
+    assert result_path.suffix == ".mp4"
+    assert result_path.exists()
+
+
 def test_record_clip_raises_when_all_codecs_fail(monkeypatch, tmp_path):
     frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(2)]
     writes: list[tuple[Path, str]] = []
