@@ -9,10 +9,12 @@ services:
       - TZ=America/Los_Angeles
       - WB_AUTH=false
       - NET_MODE=LAN
+      # only handle the wanted camera
+      - FILTER_NAMES=${WYZE_CAMERA_NAME:-hummingbirdcam}
 
       # Performance settings
       - ON_DEMAND=False
-      - QUALITY=${WYZE_QUALITY:-HD60}
+      - QUALITY=${WYZE_QUALITY:-HD30}
 
       - WYZE_EMAIL=${WYZE_EMAIL}
       - WYZE_PASSWORD=${WYZE_PASSWORD}
@@ -23,6 +25,15 @@ services:
       - WYZE_MFA_TYPE=${WYZE_MFA_TYPE:-}
       - WYZE_MFA_CODE=${WYZE_MFA_CODE:-}
       - WYZE_REGION=${WYZE_REGION:-}
+
+      # Stability options
+      - LOG_TIME=true
+      - LOG_LEVEL=info
+      - MTX_LOGLEVEL=info
+      - MTX_READTIMEOUT=60s
+      - MTX_WRITEQUEUESIZE=4096
+      - CONNECT_TIMEOUT=30
+      - IGNORE_OFFLINE=true
 
     # NOTE: with network_mode: host, "ports:" is ignored by Docker.
     # Keeping it out avoids confusion.
@@ -69,6 +80,9 @@ services:
 
       - HBMON_TITLE=${HBMON_TITLE}
       - HBMON_RTSP_URL=${HBMON_RTSP_URL}
+      - HBMON_RTSP_SNAPSHOT_URL=${HBMON_RTSP_SNAPSHOT_URL}
+      - HBMON_SNAPSHOT_TIMEOUT=${HBMON_SNAPSHOT_TIMEOUT:-10.0}
+      - HBMON_SNAPSHOT_RETRIES=${HBMON_SNAPSHOT_RETRIES:-10}
 
       - HBMON_DATA_DIR=${HBMON_DATA_DIR}
       - HBMON_MEDIA_DIR=${HBMON_MEDIA_DIR}
@@ -79,6 +93,8 @@ services:
       - HBMON_DB_POOL_TIMEOUT=${HBMON_DB_POOL_TIMEOUT:-30}
       - HBMON_DB_POOL_RECYCLE=${HBMON_DB_POOL_RECYCLE:-1800}
       - HBMON_REDIS_URL=${HBMON_REDIS_URL:-redis://hbmon-redis:6379/0}
+
+      - OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;tcp
 
     volumes:
       - ./data:/data
@@ -98,7 +114,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   hbmon-stream:
     build:
@@ -131,6 +147,9 @@ services:
 
       - HBMON_TITLE=${HBMON_TITLE}
       - HBMON_RTSP_URL=${HBMON_RTSP_URL}
+      - HBMON_RTSP_SNAPSHOT_URL=${HBMON_RTSP_SNAPSHOT_URL}
+      - HBMON_SNAPSHOT_TIMEOUT=${HBMON_SNAPSHOT_TIMEOUT:-10.0}
+      - HBMON_SNAPSHOT_RETRIES=${HBMON_SNAPSHOT_RETRIES:-10}
 
       - HBMON_DATA_DIR=${HBMON_DATA_DIR}
       - HBMON_MEDIA_DIR=${HBMON_MEDIA_DIR}
@@ -141,6 +160,8 @@ services:
       - HBMON_DB_POOL_TIMEOUT=${HBMON_DB_POOL_TIMEOUT:-30}
       - HBMON_DB_POOL_RECYCLE=${HBMON_DB_POOL_RECYCLE:-1800}
       - HBMON_REDIS_URL=${HBMON_REDIS_URL:-redis://hbmon-redis:6379/0}
+
+      - OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;tcp
 
     volumes:
       - ./data:/data
@@ -158,7 +179,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   hbmon-worker:
     build:
@@ -172,6 +193,9 @@ services:
       - TZ=America/Los_Angeles
 
       - HBMON_RTSP_URL=${HBMON_RTSP_URL}
+      - HBMON_RTSP_SNAPSHOT_URL=${HBMON_RTSP_SNAPSHOT_URL}
+      - HBMON_SNAPSHOT_TIMEOUT=${HBMON_SNAPSHOT_TIMEOUT:-10.0}
+      - HBMON_SNAPSHOT_RETRIES=${HBMON_SNAPSHOT_RETRIES:-10}
 
       - HBMON_DATA_DIR=${HBMON_DATA_DIR}
       - HBMON_MEDIA_DIR=${HBMON_MEDIA_DIR}
@@ -208,6 +232,8 @@ services:
       - HBMON_DEBUG_SAVE_FRAMES=${HBMON_DEBUG_SAVE_FRAMES:-0}
       - HBMON_DEBUG_EVERY_SECONDS=${HBMON_DEBUG_EVERY_SECONDS:-10}
       - HBMON_YOLO_IMGSZ=${HBMON_YOLO_IMGSZ:-1280}
+
+      - OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;tcp
 
     volumes:
       - ./data:/data
