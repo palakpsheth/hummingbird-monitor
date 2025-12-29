@@ -205,6 +205,26 @@
         </form>
       </div>
 
+      {% if mask_path or mask_overlay_path %}
+        <div style="margin-top:16px;">
+          <h3 style="margin-top:0;">Motion masks</h3>
+          <div class="grid2">
+            {% if mask_path %}
+            <div>
+              <div class="muted" style="margin-bottom:6px;">Mask</div>
+              <img class="bigimg" src="/media/{{ mask_path }}" alt="motion mask" />
+            </div>
+            {% endif %}
+            {% if mask_overlay_path %}
+            <div>
+              <div class="muted" style="margin-bottom:6px;">Overlay</div>
+              <img class="bigimg" src="/media/{{ mask_overlay_path }}" alt="motion mask overlay" />
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
+
       {% if video_info and video_info.exists %}
         <div style="margin-top:16px;">
           <h3 style="margin-top:0;">Video Clip</h3>

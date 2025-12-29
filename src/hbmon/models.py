@@ -5,6 +5,7 @@ SQLAlchemy ORM models for hbmon.
 Tables:
 - individuals: 1 row per inferred hummingbird individual (cluster)
 - observations: 1 row per detection event (snapshot + clip + labels)
+- candidates: motion-rejected detections for review/labeling
 - embeddings: optional, stores per-observation embedding vectors (compressed blob)
 
 Rationale:
@@ -66,6 +67,7 @@ __all__ = [
     "Base",
     "Individual",
     "Observation",
+    "Candidate",
     "Embedding",
     "_pack_embedding",
     "_unpack_embedding",
@@ -312,6 +314,70 @@ if _SQLALCHEMY_AVAILABLE:
             return _extract_review_label(self.get_extra())
 
 
+    class Candidate(Base):
+        __tablename__ = "candidates"
+
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+        # When it happened (UTC)
+        ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utcnow)
+
+        # Camera info
+        camera_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+        # Detection bounding box (pixel coords in original frame)
+        bbox_x1: Mapped[int | None] = mapped_column(Integer, nullable=True)
+        bbox_y1: Mapped[int | None] = mapped_column(Integer, nullable=True)
+        bbox_x2: Mapped[int | None] = mapped_column(Integer, nullable=True)
+        bbox_y2: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+        # Media (relative to /media mount)
+        snapshot_path: Mapped[str] = mapped_column(String(512), nullable=False)
+        annotated_snapshot_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+        mask_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+        mask_overlay_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+        clip_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+        # Extra JSON metadata (e.g., detector outputs)
+        extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+        @property
+        def ts_utc(self) -> str:
+            return _to_utc(self.ts).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+        @property
+        def bbox_xyxy(self) -> tuple[int, int, int, int] | None:
+            if None in (self.bbox_x1, self.bbox_y1, self.bbox_x2, self.bbox_y2):
+                return None
+            return (int(self.bbox_x1), int(self.bbox_y1), int(self.bbox_x2), int(self.bbox_y2))
+
+        def set_extra(self, d: dict[str, Any]) -> None:
+            self.extra_json = json.dumps(d, sort_keys=True)
+
+        def get_extra(self) -> dict[str, Any] | None:
+            if not self.extra_json:
+                return None
+            try:
+                obj = json.loads(self.extra_json)
+                if isinstance(obj, dict):
+                    return obj
+            except Exception:
+                return None
+            return None
+
+        def merge_extra(self, updates: dict[str, Any]) -> dict[str, Any]:
+            """
+            Deep-merge ``updates`` into existing extra metadata and persist.
+            Nested dicts are merged recursively; other values overwrite.
+            """
+            base_dict: dict[str, Any] = self.get_extra() or {}
+            if not isinstance(base_dict, dict):
+                base_dict = {}
+            merged = _deep_merge(base_dict, updates)
+            self.set_extra(merged)
+            return merged
+
+
     class Embedding(Base):
         """
         Optional per-observation embeddings (for debugging/split tools).
@@ -452,6 +518,63 @@ else:
         @property
         def review_label(self) -> str | None:
             return _extract_review_label(self.get_extra())
+
+
+    @dataclass
+    class Candidate(Base):
+        """
+        Lightweight stand-in for the ``Candidate`` model used when SQLAlchemy
+        is unavailable.
+        """
+        id: int
+        ts: datetime = field(default_factory=utcnow)
+        camera_name: Optional[str] = None
+        bbox_x1: Optional[int] = None
+        bbox_y1: Optional[int] = None
+        bbox_x2: Optional[int] = None
+        bbox_y2: Optional[int] = None
+        snapshot_path: str = ""
+        annotated_snapshot_path: Optional[str] = None
+        mask_path: Optional[str] = None
+        mask_overlay_path: Optional[str] = None
+        clip_path: Optional[str] = None
+        extra_json: Optional[str] = None
+
+        @property
+        def ts_utc(self) -> str:
+            return _to_utc(self.ts).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+        @property
+        def bbox_xyxy(self) -> Optional[tuple[int, int, int, int]]:
+            if None in (self.bbox_x1, self.bbox_y1, self.bbox_x2, self.bbox_y2):
+                return None
+            return (int(self.bbox_x1), int(self.bbox_y1), int(self.bbox_x2), int(self.bbox_y2))
+
+        def set_extra(self, d: dict[str, Any]) -> None:
+            self.extra_json = json.dumps(d, sort_keys=True)
+
+        def get_extra(self) -> Optional[dict[str, Any]]:
+            if not self.extra_json:
+                return None
+            try:
+                obj = json.loads(self.extra_json)
+                if isinstance(obj, dict):
+                    return obj
+            except Exception:
+                return None
+            return None
+
+        def merge_extra(self, updates: dict[str, Any]) -> dict[str, Any]:
+            """
+            Deep-merge ``updates`` into existing extra metadata and persist.
+            Nested dicts are merged recursively; other values overwrite.
+            """
+            base_dict: dict[str, Any] = self.get_extra() or {}
+            if not isinstance(base_dict, dict):
+                base_dict = {}
+            merged = _deep_merge(base_dict, updates)
+            self.set_extra(merged)
+            return merged
 
 
     @dataclass

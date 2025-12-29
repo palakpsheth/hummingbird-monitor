@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Candidates</h1>
+    <div class="muted page-meta">
+      Motion-rejected detections awaiting review.
+    </div>
+  </div>
+
+  <div class="card">
+    <form class="inline" method="get" action="/candidates">
+      <label class="stack">
+        <span class="muted">Reason</span>
+        <input type="text" name="reason" value="{{ selected_reason }}" placeholder="motion_rejected" />
+      </label>
+      <label class="stack">
+        <span class="muted">Label</span>
+        <select name="label">
+          <option value="">All</option>
+          {% for lab in candidate_labels %}
+            {% set label_display = "Unknown" if lab == "unknown" else lab.replace("_", " ").title() %}
+            <option value="{{ lab }}" {% if selected_label == lab %}selected{% endif %}>{{ label_display }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="stack">
+        <span class="muted">Start date</span>
+        <input type="date" name="start_date" value="{{ selected_start_date }}" />
+      </label>
+      <label class="stack">
+        <span class="muted">End date</span>
+        <input type="date" name="end_date" value="{{ selected_end_date }}" />
+      </label>
+      <label style="margin-left:8px;">Per page:</label>
+      <select name="page_size">
+        {% for n in limit_options %}
+          <option value="{{ n }}" {% if candidates_page_size == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+      <input type="hidden" name="page" value="1" />
+      <button type="submit">Apply</button>
+      <span class="muted" style="margin-left:auto;">
+        Total shown: {{ count_shown }}{% if count_total is not none %} / {{ count_total }}{% endif %}
+      </span>
+    </form>
+  </div>
+
+  {% set redirect_target = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
+  <form
+    class="bulk-actions"
+    method="post"
+    action="/candidates/bulk_delete"
+    data-bulk-delete
+    data-table-id="candidates"
+    onsubmit="return confirm('Delete selected candidates?');"
+  >
+    <input type="hidden" name="redirect_to" value="{{ redirect_target }}" />
+    {% if csrf_token %}
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    {% endif %}
+    <div class="bulk-actions__bar">
+      <button type="submit" data-bulk-delete-button disabled>
+        Delete selected (<span data-bulk-count>0</span>)
+      </button>
+    </div>
+    <div class="card table-scroll">
+      <table class="observations-table sortable" data-table-id="candidates">
+        <thead>
+          <tr>
+            <th><input type="checkbox" data-select-all aria-label="Select all candidates" /></th>
+            <th>Thumbnail</th>
+            <th>Timestamp</th>
+            <th>Label</th>
+            <th>Overlap</th>
+            <th>Confidence</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if candidates %}
+            {% for c in candidates %}
+            <tr>
+              <td>
+                <input type="checkbox" name="candidate_ids" value="{{ c.id }}" data-select-row />
+              </td>
+              <td>
+                <a href="/candidates/{{ c.id }}">
+                  <img src="/media/{{ c.display_snapshot_path }}" alt="candidate snapshot" style="width:120px; border-radius:6px;" />
+                </a>
+              </td>
+              <td>
+                <span data-utc-ts="{{ c.ts_utc }}">{{ c.ts_utc }}</span>
+              </td>
+              <td>
+                {% if c.review_label %}
+                  {% set label_display = "Unknown" if c.review_label == "unknown" else c.review_label.replace("_", " ").title() %}
+                  <span class="badge">{{ label_display }}</span>
+                {% else %}
+                  <span class="muted">not set</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if c.motion_overlap_ratio is not none %}
+                  {{ "%.3f"|format(c.motion_overlap_ratio) }}
+                {% else %}
+                  <span class="muted">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if c.detection_confidence is not none %}
+                  {{ "%.3f"|format(c.detection_confidence) }}
+                {% else %}
+                  <span class="muted">—</span>
+                {% endif %}
+              </td>
+              <td><a href="/candidates/{{ c.id }}">Details</a></td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="7" class="muted">No candidates found.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </form>
+
+  {% if candidates_total_pages > 1 %}
+    <div class="inline" style="margin-top: 16px; gap: 8px; flex-wrap: wrap;">
+      {% if candidates_page > 1 %}
+        <a href="/candidates?page={{ candidates_page - 1 }}&page_size={{ candidates_page_size }}&label={{ selected_label }}&reason={{ selected_reason }}&start_date={{ selected_start_date }}&end_date={{ selected_end_date }}">← Previous</a>
+      {% endif %}
+      <span class="muted">Page {{ candidates_page }} of {{ candidates_total_pages }} ({{ count_total }} total)</span>
+      {% if candidates_page < candidates_total_pages %}
+        <a href="/candidates?page={{ candidates_page + 1 }}&page_size={{ candidates_page_size }}&label={{ selected_label }}&reason={{ selected_reason }}&start_date={{ selected_start_date }}&end_date={{ selected_end_date }}">Next →</a>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+  <script src="/static/observations_bulk.js"></script>
+{% endblock %}

@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Candidate #{{ candidate.id }}</h1>
+    <div class="muted page-meta">
+      Timestamp: <span data-utc-ts="{{ candidate.ts_utc }}">{{ candidate.ts_utc }}</span>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3 style="margin-top:0;">Snapshots</h3>
+      <div class="stack" style="gap:12px;">
+        <div>
+          <div class="muted" style="margin-bottom:6px;">Raw</div>
+          <img class="bigimg" src="/media/{{ candidate.snapshot_path }}" alt="candidate raw snapshot" />
+        </div>
+        {% if annotated_snapshot_path %}
+        <div>
+          <div class="muted" style="margin-bottom:6px;">Annotated</div>
+          <img class="bigimg" src="/media/{{ annotated_snapshot_path }}" alt="candidate annotated snapshot" />
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Review</h3>
+      <div class="stack" style="gap:10px;">
+        <div class="muted">
+          Current label:
+          {% if candidate.review_label %}
+            {% set review_display = "Unknown" if candidate.review_label == "unknown" else candidate.review_label.replace("_", " ").title() %}
+            <span class="badge">{{ review_display }}</span>
+          {% else %}
+            not set
+          {% endif %}
+        </div>
+        <div style="display:grid; gap:10px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
+          {% for lab in allowed_review_labels %}
+            {% set label_display = "Unknown" if lab == "unknown" else lab.replace("_", " ").title() %}
+            <form method="post" action="/candidates/{{ candidate.id }}/label">
+              <input type="hidden" name="label" value="{{ lab }}" />
+              {% if csrf_token %}
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              {% endif %}
+              <button type="submit">Mark {{ label_display }}</button>
+            </form>
+          {% endfor %}
+          <form method="post" action="/candidates/{{ candidate.id }}/label">
+            <input type="hidden" name="label" value="" />
+            {% if csrf_token %}
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            {% endif %}
+            <button type="submit">Clear label</button>
+          </form>
+        </div>
+        <div class="inline" style="margin-top:10px;">
+          <a href="/candidates">Back to candidates</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h3 style="margin-top:0;">Export integration test</h3>
+    <form
+      id="export-candidate-test-form"
+      method="post"
+      action="/candidates/{{ candidate.id }}/export_integration_test"
+      style="margin-top:12px;"
+    >
+      {% if csrf_token %}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      {% endif %}
+      <button type="button" id="export-candidate-test-button">Export as Integration Test</button>
+      <div
+        id="export-candidate-test-fields"
+        style="display:none; margin-top:10px; padding:12px; border:1px solid #ddd; border-radius:8px;"
+      >
+        <div class="stack" style="gap:8px;">
+          <label class="stack">
+            <span class="muted">Test case folder name</span>
+            <input type="text" name="case_name" required />
+          </label>
+          <label class="stack">
+            <span class="muted">Description</span>
+            <input type="text" name="description" required />
+          </label>
+          <label class="stack">
+            <span class="muted">Behavior label</span>
+            <input type="text" name="behavior" required />
+          </label>
+          <label class="stack">
+            <span class="muted">Location</span>
+            <input type="text" name="location" />
+          </label>
+          <label class="stack">
+            <span class="muted">Human verified</span>
+            <select name="human_verified" required>
+              <option value="false">false</option>
+              <option value="true">true</option>
+            </select>
+          </label>
+          <div class="inline" style="gap:8px;">
+            <button type="submit">Export bundle</button>
+            <button type="button" id="export-candidate-test-cancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  {% if mask_path or mask_overlay_path %}
+  <div class="card" style="margin-top:16px;">
+    <h3 style="margin-top:0;">Motion masks</h3>
+    <div class="grid2">
+      {% if mask_path %}
+      <div>
+        <div class="muted" style="margin-bottom:6px;">Mask</div>
+        <img class="bigimg" src="/media/{{ mask_path }}" alt="motion mask" />
+      </div>
+      {% endif %}
+      {% if mask_overlay_path %}
+      <div>
+        <div class="muted" style="margin-bottom:6px;">Overlay</div>
+        <img class="bigimg" src="/media/{{ mask_overlay_path }}" alt="motion mask overlay" />
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card" style="margin-top:16px;">
+    <h3 style="margin-top:0;">Metadata</h3>
+    {% if candidate.extra_pretty %}
+      <pre class="code">{{ candidate.extra_pretty }}</pre>
+    {% else %}
+      <div class="muted">No metadata available.</div>
+    {% endif %}
+  </div>
+
+  <script>
+    (function() {
+      var form = document.getElementById('export-candidate-test-form');
+      var button = document.getElementById('export-candidate-test-button');
+      if (!form || !button) {
+        return;
+      }
+      var fields = document.getElementById('export-candidate-test-fields');
+      var cancelButton = document.getElementById('export-candidate-test-cancel');
+      if (!fields || !cancelButton) {
+        return;
+      }
+      var caseNameInput = form.querySelector('input[name="case_name"]');
+      var descriptionInput = form.querySelector('input[name="description"]');
+      var behaviorInput = form.querySelector('input[name="behavior"]');
+      var locationInput = form.querySelector('input[name="location"]');
+      var humanVerifiedSelect = form.querySelector('select[name="human_verified"]');
+      var showForm = function(defaultLocation) {
+        if (caseNameInput && !caseNameInput.value) {
+          caseNameInput.value = 'candidate_{{ candidate.id }}';
+        }
+        if (descriptionInput && !descriptionInput.value) {
+          descriptionInput.value = 'Candidate {{ candidate.id }} integration test';
+        }
+        if (behaviorInput && !behaviorInput.value) {
+          behaviorInput.value = 'unknown';
+        }
+        if (locationInput && !locationInput.value) {
+          locationInput.value = defaultLocation || '';
+        }
+        if (humanVerifiedSelect && !humanVerifiedSelect.value) {
+          humanVerifiedSelect.value = 'false';
+        }
+        fields.style.display = 'block';
+        button.style.display = 'none';
+      };
+
+      button.addEventListener('click', function() {
+        var timezone = '';
+        try {
+          timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        } catch (err) {
+          timezone = '';
+        }
+        if (navigator.geolocation && navigator.geolocation.getCurrentPosition) {
+          navigator.geolocation.getCurrentPosition(
+            function(pos) {
+              var coords = pos.coords;
+              var loc = coords ? coords.latitude.toFixed(4) + ', ' + coords.longitude.toFixed(4) : timezone;
+              showForm(loc || timezone);
+            },
+            function() {
+              showForm(timezone);
+            }
+          );
+        } else {
+          showForm(timezone);
+        }
+      });
+
+      cancelButton.addEventListener('click', function() {
+        fields.style.display = 'none';
+        button.style.display = 'inline-block';
+      });
+    })();
+  </script>
+{% endblock %}
