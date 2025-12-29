@@ -384,13 +384,15 @@ User settings are stored in `/data/config.json` and include:
 ### Adding Configuration Options
 
 1. Add environment variable with `HBMON_` prefix
-2. Document in code module docstrings
-3. **Update README in relevant sections:**
+2. Ensure new environment variables can pass through `.env` to Docker (e.g., `docker-compose.yml`) and
+   into the running application (web/worker) as appropriate.
+3. Document in code module docstrings
+4. **Update README in relevant sections:**
    - Add to "Configuration" > "Environment Variables"
    - Update tuning guide if it's a tunable parameter
    - Add to `.env.example` with helpful comments
-4. Provide sensible defaults
-5. **Run ruff and full pytest before committing (MANDATORY)**
+5. Provide sensible defaults
+6. **Run ruff and full pytest before committing (MANDATORY)**
 
 ## Security Considerations
 
