@@ -71,7 +71,7 @@ import sys
 import tarfile
 import threading
 from urllib.parse import urlsplit
-from urllib.request import urlopen, Request
+from urllib.request import urlopen, Request as UrllibRequest
 from urllib.error import URLError, HTTPError
 import time
 import weakref
@@ -2971,7 +2971,7 @@ def make_app() -> Any:
         attempts = max(1, int(retries))
         for attempt in range(1, attempts + 1):
             try:
-                req = Request(url, headers={"User-Agent": "hbmon/1"})
+                req = UrllibRequest(url, headers={"User-Agent": "hbmon/1"})
                 with urlopen(req, timeout=timeout) as res:
                     ct = (res.getheader("Content-Type") or "").lower()
                     if not ct.startswith("image/"):
@@ -2998,7 +2998,7 @@ def make_app() -> Any:
         detail = f"Snapshot fetch failed: {last_exc}" if last_exc is not None else "Snapshot fetch failed"
         raise HTTPException(status_code=503, detail=detail)
 
-    def _encode_jpeg(frame: Any, cv2: Any, quality: int = 80) -> bytes:
+    def _encode_jpeg(frame: Any, cv2: Any, quality: int = 100) -> bytes:
         ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
         if not ok:
             raise HTTPException(status_code=500, detail="Failed to encode frame")
