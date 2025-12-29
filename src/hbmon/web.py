@@ -119,7 +119,7 @@ except Exception:  # pragma: no cover
     OperationalError = Exception  # type: ignore
     _SQLA_AVAILABLE = False
 
-ALLOWED_REVIEW_LABELS = ["true_positive", "false_positive", "false_negative"]
+ALLOWED_REVIEW_LABELS = ["true_positive", "false_positive", "unknown"]
 
 
 from hbmon import __version__

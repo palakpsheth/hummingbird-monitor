@@ -346,7 +346,7 @@ class TestAllowedReviewLabels:
         assert hasattr(web, "ALLOWED_REVIEW_LABELS")
         assert "true_positive" in web.ALLOWED_REVIEW_LABELS
         assert "false_positive" in web.ALLOWED_REVIEW_LABELS
-        assert "false_negative" in web.ALLOWED_REVIEW_LABELS
+        assert "unknown" in web.ALLOWED_REVIEW_LABELS
 
 
 class TestToUtc:
