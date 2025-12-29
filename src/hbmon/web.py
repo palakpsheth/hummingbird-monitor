@@ -71,6 +71,8 @@ import sys
 import tarfile
 import threading
 from urllib.parse import urlsplit
+from urllib.request import urlopen, Request as UrllibRequest
+from urllib.error import URLError, HTTPError
 import time
 import weakref
 from pathlib import Path
@@ -2936,11 +2938,94 @@ def make_app() -> Any:
 
         return frame, cv2
 
-    def _encode_jpeg(frame: Any, cv2: Any, quality: int = 80) -> bytes:
+    def _get_snapshot_config():
+        """
+        Return (snapshot_url: str|None, timeout: float, retries: int).
+        Env vars:
+          - HBMON_RTSP_SNAPSHOT_URL: explicit full snapshot URL (preferred)
+          - HBMON_SNAPSHOT_TIMEOUT: float seconds (default 10.0)
+          - HBMON_SNAPSHOT_RETRIES: int retries (default 10)
+        """
+        url = os.getenv("HBMON_RTSP_SNAPSHOT_URL") or None
+        try:
+            timeout = float(os.getenv("HBMON_SNAPSHOT_TIMEOUT", "10"))
+        except Exception:
+            timeout = 10.0
+        try:
+            retries = int(os.getenv("HBMON_SNAPSHOT_RETRIES", "10"))
+        except Exception:
+            retries = 10
+        if retries < 1:
+            retries = 1
+        if timeout <= 0:
+            timeout = 10.0
+        return url, timeout, retries
+
+    def _fetch_snapshot_http(url: str, timeout: float = 10.0, retries: int = 10) -> bytes:
+        """
+        Fetch a snapshot via HTTP with simple retries and return raw bytes.
+
+        Raises HTTPException(status_code=503, detail=...) on failure.
+        """
+        last_exc = None
+        attempts = max(1, int(retries))
+        for attempt in range(1, attempts + 1):
+            try:
+                req = UrllibRequest(url, headers={"User-Agent": "hbmon/1"})
+                with urlopen(req, timeout=timeout) as res:
+                    ct = (res.getheader("Content-Type") or "").lower()
+                    if not ct.startswith("image/"):
+                        raise HTTPException(status_code=503, detail="Snapshot endpoint did not return an image")
+                    data = res.read()
+                    if not data:
+                        raise HTTPException(status_code=503, detail="Snapshot endpoint returned empty body")
+                    return data
+            except (HTTPError, URLError, ValueError) as e:
+                last_exc = e
+                # backoff: small sleep (blocking; caller should run this in threadpool)
+                try:
+                    time.sleep(0.5 * attempt)
+                except Exception:
+                    pass
+                continue
+            except Exception as e:
+                last_exc = e
+                try:
+                    time.sleep(0.5 * attempt)
+                except Exception:
+                    pass
+                continue
+        detail = f"Snapshot fetch failed: {last_exc}" if last_exc is not None else "Snapshot fetch failed"
+        raise HTTPException(status_code=503, detail=detail)
+
+    def _encode_jpeg(frame: Any, cv2: Any, quality: int = 100) -> bytes:
         ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
         if not ok:
             raise HTTPException(status_code=500, detail="Failed to encode frame")
         return jpeg.tobytes()
+
+    def _get_live_snapshot_bytes_sync(settings, jpeg_quality: int = 100) -> bytes:
+        """
+        Synchronous helper: return JPEG bytes for a live snapshot.
+
+        Preference:
+          1) HBMON_RTSP_SNAPSHOT_URL via _fetch_snapshot_http
+          2) RTSP capture via _capture_live_frame + _encode_jpeg
+
+        This is meant to be run inside _run_blocking from async endpoints.
+        """
+        snapshot_url, timeout, retries = _get_snapshot_config()
+        if snapshot_url:
+            # _fetch_snapshot_http is synchronous/blocking (uses urlopen)
+            return _fetch_snapshot_http(snapshot_url, timeout, retries)
+
+        # fallback to RTSP
+        rtsp_url = getattr(settings, "rtsp_url", "") if settings is not None else None
+        if not rtsp_url:
+            raise HTTPException(status_code=503, detail="RTSP URL not configured")
+
+        frame, cv2 = _capture_live_frame(rtsp_url)
+        return _encode_jpeg(frame, cv2, jpeg_quality)
 
     @app.get("/api/background.jpg")
     async def get_background_jpg() -> Any:
@@ -3012,17 +3097,11 @@ def make_app() -> Any:
 
     @app.post("/api/background/from_live")
     async def set_background_from_live() -> RedirectResponse:
-        """
-        Capture a live RTSP frame and save it as the background image.
-        """
         s = load_settings()
-        if not s.rtsp_url:
-            raise HTTPException(status_code=503, detail="RTSP URL not configured")
+        # get bytes (http snapshot preferred, otherwise RTSP)
+        jpeg_bytes = await _run_blocking(_get_live_snapshot_bytes_sync, s, 100)
 
-        frame, cv2 = await _run_blocking(_capture_live_frame, s.rtsp_url)
-        jpeg_bytes = await _run_blocking(_encode_jpeg, frame, cv2, 85)
-
-        # Ensure background directory exists
+        # Ensure background directory exists and save (same as current logic)
         bg_dir = background_dir()
         await _run_blocking(bg_dir.mkdir, parents=True, exist_ok=True)
         dst_path = background_image_path()
@@ -3148,16 +3227,9 @@ def make_app() -> Any:
 
     @app.get("/api/live_frame.jpg")
     async def live_frame_jpg() -> Any:
-        """
-        Return a single snapshot from the live RTSP stream.
-        """
         s = load_settings()
-        if not s.rtsp_url:
-            raise HTTPException(status_code=503, detail="RTSP URL not configured")
-
-        frame, cv2 = await _run_blocking(_capture_live_frame, s.rtsp_url)
-        jpeg_bytes = await _run_blocking(_encode_jpeg, frame, cv2, 80)
-
+        # run blocking helper once in threadpool
+        jpeg_bytes = await _run_blocking(_get_live_snapshot_bytes_sync, s, 100)
         return StreamingResponse(io.BytesIO(jpeg_bytes), media_type="image/jpeg")
 
     @app.get("/api/stream.mjpeg")

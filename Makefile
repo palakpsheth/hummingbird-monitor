@@ -30,7 +30,7 @@ sync-gpu: ## Sync dev dependencies with CUDA-enabled PyTorch wheels
 	$(UV) pip install -e ".[dev]" --index-url $(PYTORCH_GPU_INDEX_URL) --extra-index-url https://pypi.org/simple
 
 lint: ## Run Ruff linting
-	$(RUFF) check .
+	$(RUFF) check --fix .
 
 test: ## Run full pytest suite with coverage
 	$(PYTEST) --cov=hbmon --cov-report=term
