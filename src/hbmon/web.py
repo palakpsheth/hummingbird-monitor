@@ -107,7 +107,7 @@ except Exception:  # pragma: no cover
     _FASTAPI_AVAILABLE = False
 
 try:
-    from sqlalchemy import delete, desc, func, select  # type: ignore
+    from sqlalchemy import Integer, cast, delete, desc, func, select  # type: ignore
     from sqlalchemy.exc import OperationalError  # type: ignore
     from sqlalchemy.orm import Session  # type: ignore
     from sqlalchemy.ext.asyncio import AsyncSession  # type: ignore
@@ -1943,12 +1943,12 @@ def make_app() -> Any:
 
         last_seen = _as_utc_str(ind.last_seen_at)
 
-        # SQLite hour-of-day counts in UTC:
-        # Observation.ts stored as timezone-aware; SQLite stores as text.
-        # Use strftime('%H', ts) which yields 00..23.
+        # Hour-of-day counts in UTC.
+        # Observation.ts stored as timezone-aware.
+        hour_expr = cast(func.extract("hour", Observation.ts), Integer).label("hh")
         rows = (
             await db.execute(
-                select(func.strftime("%H", Observation.ts).label("hh"), func.count(Observation.id))
+                select(hour_expr, func.count(Observation.id))
                 .where(Observation.individual_id == individual_id)
                 .group_by("hh")
                 .order_by("hh")
