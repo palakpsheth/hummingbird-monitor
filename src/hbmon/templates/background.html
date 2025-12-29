@@ -98,6 +98,18 @@
     </p>
 
     {% if observations %}
+      <div class="inline" style="justify-content: space-between; align-items: center; gap: 10px; margin: 6px 0 12px 0; flex-wrap: wrap;">
+        <form class="inline" method="get" action="/background" style="gap: 6px; flex-wrap: wrap;">
+          <label class="muted">Per page:</label>
+          <select name="page_size">
+            {% for n in obs_page_size_options %}
+              <option value="{{ n }}" {% if obs_page_size == n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+          </select>
+          <input type="hidden" name="page" value="1" />
+          <button type="submit">Apply</button>
+        </form>
+      </div>
       <div class="gallery" style="margin-top: 16px;">
         {% for o in observations %}
           {% set hue = ((o.individual_id or 0) * 47) % 360 %}
