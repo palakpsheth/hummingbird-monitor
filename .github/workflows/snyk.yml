@@ -34,7 +34,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           # Avoid the “cache will never get invalidated” warning when you don't have uv.lock
           cache-dependency-glob: |
