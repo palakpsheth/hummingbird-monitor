@@ -1234,6 +1234,9 @@ def paginate(total_count: int, page: int, page_size: int, max_page_size: int = 1
     return current, size, total_pages, offset
 
 
+PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200, 500]
+
+
 # ----------------------------
 # App factory
 # ----------------------------
@@ -1387,7 +1390,7 @@ def make_app() -> Any:
     async def index(
         request: Request,
         page: int = 1,
-        page_size: int = 10,
+        page_size: int = 25,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
@@ -1419,7 +1422,7 @@ def make_app() -> Any:
 
             total_recent = (await db.execute(select(func.count(Observation.id)))).scalar_one()
             current_page, clamped_page_size, total_pages, offset = paginate(
-                total_recent, page=page, page_size=page_size, max_page_size=200
+                total_recent, page=page, page_size=page_size, max_page_size=500
             )
 
             recent_rows = (
@@ -1486,7 +1489,7 @@ def make_app() -> Any:
                 recent_page_size=clamped_page_size,
                 recent_total_pages=total_pages,
                 recent_total=int(total_recent),
-                recent_page_size_options=[10, 20, 50, 100],
+                recent_page_size_options=PAGE_SIZE_OPTIONS,
                 roi=roi,
                 roi_str=roi_str,
                 rtsp_url=rtsp,
@@ -1500,12 +1503,12 @@ def make_app() -> Any:
     async def observations(
         request: Request,
         individual_id: int | None = None,
-        limit: int = 200,
+        limit: int = 25,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
 
-        limit = max(10, min(int(limit), 2000))
+        limit = max(10, min(int(limit), 500))
 
         q = select(Observation).order_by(desc(Observation.ts)).limit(limit)
         if individual_id is not None:
@@ -1547,6 +1550,7 @@ def make_app() -> Any:
                 extra_column_defaults=extra_column_defaults,
                 selected_individual=individual_id,
                 selected_limit=limit,
+                limit_options=PAGE_SIZE_OPTIONS,
                 count_shown=len(obs),
                 count_total=int(total),
                 rtsp_url=s.rtsp_url,
@@ -1931,18 +1935,30 @@ def make_app() -> Any:
     async def individual_detail(
         individual_id: int,
         request: Request,
+        page: int = 1,
+        page_size: int = 25,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         ind = await db.get(Individual, individual_id)
         if ind is None:
             raise HTTPException(status_code=404, detail="Individual not found")
 
+        total_obs = (
+            await db.execute(
+                select(func.count(Observation.id)).where(Observation.individual_id == individual_id)
+            )
+        ).scalar_one()
+        current_page, clamped_page_size, total_pages, offset = paginate(
+            total_obs, page=page, page_size=page_size, max_page_size=500
+        )
+
         obs = (
             await db.execute(
                 select(Observation)
                 .where(Observation.individual_id == individual_id)
                 .order_by(desc(Observation.ts))
-                .limit(500)
+                .offset(offset)
+                .limit(clamped_page_size)
             )
         ).scalars().all()
 
@@ -1957,7 +1973,7 @@ def make_app() -> Any:
         extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
         extra_column_defaults = _default_extra_column_visibility(extra_columns)
 
-        total = int(ind.visit_count)
+        total = int(total_obs)
 
         last_seen = _as_utc_str(ind.last_seen_at)
 
@@ -1998,6 +2014,11 @@ def make_app() -> Any:
                 f"Individual {ind.id}",
                 individual=ind,
                 observations=obs,
+                obs_page=current_page,
+                obs_page_size=clamped_page_size,
+                obs_total_pages=total_pages,
+                obs_total=int(total_obs),
+                obs_page_size_options=PAGE_SIZE_OPTIONS,
                 extra_columns=extra_columns,
                 extra_column_sort_types=extra_sort_types,
                 extra_column_labels=extra_labels,
@@ -2334,7 +2355,7 @@ def make_app() -> Any:
     async def background_page(
         request: Request,
         page: int = 1,
-        page_size: int = 20,
+        page_size: int = 25,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         """
@@ -2353,7 +2374,7 @@ def make_app() -> Any:
         # Get recent observations for selection
         total_obs = (await db.execute(select(func.count(Observation.id)))).scalar_one()
         current_page, clamped_page_size, total_pages, offset = paginate(
-            total_obs, page=page, page_size=page_size, max_page_size=100
+            total_obs, page=page, page_size=page_size, max_page_size=500
         )
 
         recent_obs = (
@@ -2385,6 +2406,7 @@ def make_app() -> Any:
                 obs_page_size=clamped_page_size,
                 obs_total_pages=total_pages,
                 obs_total=int(total_obs),
+                obs_page_size_options=PAGE_SIZE_OPTIONS,
                 ts=int(time.time()),
             ),
         )
