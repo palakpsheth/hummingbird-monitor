@@ -110,7 +110,10 @@ def _extract_review_label(extra: Any) -> str | None:
     label = review.get("label")
     if not label:
         return None
-    return str(label)
+    label_value = str(label)
+    if label_value == "false_negative":
+        return "unknown"
+    return label_value
 
 # ---------------------------------------------------------------------------
 # SQLAlchemy base or stub

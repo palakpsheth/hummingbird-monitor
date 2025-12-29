@@ -110,6 +110,13 @@ class TestExtractReviewLabel:
         })
         assert result == "true_positive"
 
+    def test_extract_review_label_maps_false_negative(self):
+        """Test that legacy false negative labels map to unknown."""
+        result = models._extract_review_label({
+            "review": {"label": "false_negative"}
+        })
+        assert result == "unknown"
+
 
 class TestPackUnpackEmbedding:
     """Tests for the _pack_embedding and _unpack_embedding functions."""
