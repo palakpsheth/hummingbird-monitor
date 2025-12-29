@@ -36,10 +36,10 @@ test: ## Run full pytest suite with coverage
 	$(PYTEST) --cov=hbmon --cov-report=term
 
 test-unit: ## Run unit tests with coverage (marker: not integration)
-	$(PYTEST) $(PYTEST_UNIT_ARGS) --cov=hbmon --cov-report=term
+	$(PYTEST) $(PYTEST_UNIT_ARGS) -vvv --cov=hbmon --cov-report=term
 
 test-integration: ## Run integration/UI tests with coverage (marker: integration)
-	$(PYTEST) $(PYTEST_INTEGRATION_ARGS) --cov=hbmon --cov-report=term
+	$(PYTEST) $(PYTEST_INTEGRATION_ARGS) -vvv --cov=hbmon --cov-report=term
 
 pre-commit: ## Run all pre-commit hooks
 	$(UV_RUN) pre-commit run --all-files

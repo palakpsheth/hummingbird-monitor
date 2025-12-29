@@ -1,0 +1,123 @@
+{
+    "description": "Observation 1 integration test",
+    "expected": {
+        "behavior": "perched",
+        "detection": true,
+        "human_verified": true,
+        "species_accepted": true,
+        "species_label": "Costa's Hummingbird",
+        "species_label_final": "Allen's Hummingbird"
+    },
+    "original_observation": {
+        "bbox_xyxy": [
+            1081,
+            473,
+            1329,
+            748
+        ],
+        "extra": {
+            "detection": {
+                "background_subtraction_enabled": true,
+                "bbox_area": 68200,
+                "bbox_area_ratio": 0.03288966049382716,
+                "bbox_area_ratio_frame": 0.03288966049382716,
+                "bbox_area_ratio_roi": 0.05742389019070289,
+                "bbox_xyxy": [
+                    1081,
+                    473,
+                    1329,
+                    748
+                ],
+                "box_confidence": 0.1069146916270256,
+                "nms_iou_threshold": 0.45,
+                "roi_offset_xy": [
+                    404,
+                    11
+                ]
+            },
+            "identification": {
+                "individual_id": 1,
+                "match_score": 0.0,
+                "species_accepted": true,
+                "species_label": "Allen's Hummingbird",
+                "species_label_final": "Allen's Hummingbird",
+                "species_prob": 0.0724666739735191
+            },
+            "media": {
+                "background_path": "snapshots/2025-12-29/7d70b207164b424aaac789c96d63b9ab_background.jpg",
+                "mask_overlay_path": "mask_overlay.png",
+                "mask_path": "mask.png"
+            },
+            "motion": {
+                "bbox_motion_pixels": 30450,
+                "bbox_overlap_ratio": 0.4464809384164223,
+                "bbox_total_pixels": 68200,
+                "roi_motion_fraction": 0.054214214686202016,
+                "roi_motion_pixels": 64388,
+                "roi_total_pixels": 1187659
+            },
+            "observation_uuid": "7d70b207164b424aaac789c96d63b9ab",
+            "review": {
+                "label": "true_positive",
+                "labeled_at_utc": "2025-12-29T15:32:48Z"
+            },
+            "sensitivity": {
+                "background_image_available": true,
+                "bg_min_overlap": 0.01,
+                "bg_motion_blur": 5,
+                "bg_motion_threshold": 30,
+                "bg_subtraction_configured": true,
+                "bg_subtraction_enabled": true,
+                "cooldown_seconds": 1.0,
+                "crop_padding": 0.05,
+                "detect_conf": 0.1,
+                "detect_iou": 0.45,
+                "ema_alpha": 0.1,
+                "match_threshold": 0.05,
+                "min_box_area": 500,
+                "min_species_prob": 0.21
+            },
+            "snapshots": {
+                "annotated_path": "snapshots/2025-12-29/7d70b207164b424aaac789c96d63b9ab_annotated.jpg",
+                "background_path": "background.jpg",
+                "clip_path": "snapshots/2025-12-29/7d70b207164b424aaac789c96d63b9ab_clip.jpg"
+            }
+        },
+        "match_score": 0.0,
+        "species_label": "Allen's Hummingbird",
+        "species_prob": 0.0724666739735191
+    },
+    "sensitivity_tests": [
+        {
+            "expected_detection": true,
+            "name": "default",
+            "params": {
+                "bg_min_overlap": 0.01,
+                "bg_motion_blur": 5,
+                "bg_motion_threshold": 30,
+                "bg_subtraction_enabled": true,
+                "detect_conf": 0.1,
+                "detect_iou": 0.45,
+                "min_box_area": 500
+            }
+        },
+        {
+            "expected_detection": true,
+            "name": "high_confidence",
+            "params": {
+                "bg_min_overlap": 0.01,
+                "bg_motion_blur": 5,
+                "bg_motion_threshold": 30,
+                "bg_subtraction_enabled": true,
+                "detect_conf": 0.5,
+                "detect_iou": 0.45,
+                "min_box_area": 500
+            }
+        }
+    ],
+    "source": {
+        "camera": "hummingbirdcam",
+        "location": "America/Los_Angeles",
+        "timestamp_utc": "2025-12-29T15:19:19Z"
+    }
+}
