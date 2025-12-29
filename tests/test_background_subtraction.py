@@ -190,6 +190,35 @@ class TestDetectionOverlapsMotion:
         assert result is True
 
 
+class TestMotionStats:
+    """Tests for motion overlap/stat helpers."""
+
+    def test_motion_overlap_stats(self):
+        """Overlap stats should count motion pixels inside bbox."""
+        from hbmon.worker import _motion_overlap_stats, Det
+
+        mask = np.zeros((20, 20), dtype=np.uint8)
+        mask[5:10, 5:10] = 255
+        det = Det(x1=0, y1=0, x2=10, y2=10, conf=0.5)
+
+        stats = _motion_overlap_stats(det, mask)
+        assert stats["bbox_motion_pixels"] == 25
+        assert stats["bbox_total_pixels"] == 100
+        assert stats["bbox_overlap_ratio"] == 0.25
+
+    def test_roi_motion_stats(self):
+        """ROI motion stats should compute fraction of active pixels."""
+        from hbmon.worker import _roi_motion_stats
+
+        mask = np.zeros((10, 10), dtype=np.uint8)
+        mask[0:2, 0:5] = 255  # 10 pixels
+        stats = _roi_motion_stats(mask)
+
+        assert stats["roi_motion_pixels"] == 10
+        assert stats["roi_total_pixels"] == 100
+        assert stats["roi_motion_fraction"] == 0.1
+
+
 class TestLoadBackgroundImage:
     """Tests for the _load_background_image function."""
 

@@ -7,6 +7,7 @@ These tests cover helper functions and dataclass behaviors in models.py.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 
 import numpy as np
 
@@ -159,6 +160,19 @@ class TestPackUnpackEmbedding:
 
         expected = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
         np.testing.assert_array_almost_equal(unpacked, expected)
+
+
+class TestCandidateExtraHelpers:
+    """Tests for Candidate extra_json helpers."""
+
+    def test_candidate_extra_round_trip(self):
+        candidate = models.Candidate(snapshot_path="snap.jpg")
+        data = {"reason": "motion_rejected", "review": {"label": "false_negative"}}
+        candidate.set_extra(data)
+        assert candidate.get_extra() == json.loads(json.dumps(data, sort_keys=True))
+
+        merged = candidate.merge_extra({"review": {"label": "true_negative"}})
+        assert merged["review"]["label"] == "true_negative"
 
 
 class TestToUtc:

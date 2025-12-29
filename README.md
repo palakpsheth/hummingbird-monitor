@@ -66,7 +66,9 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
     - `snapshot.jpg` (raw snapshot)
     - `clip.mp4` (video clip)
     - Optional `background.jpg` (reference background frame used for background subtraction)
+    - Optional `mask.png` and `mask_overlay.png` when motion masks are saved
     - Optional `snapshot_annotated.jpg` and `snapshot_clip.jpg` when available
+  - Candidate detail pages can export a similar bundle for motion-rejected detections.
   - Missing sensitivity/identification fields are backfilled with current defaults when exporting older observations.
 
 ### Web UI pages
@@ -75,6 +77,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
   detector confidence) with compact thumbnails, a per-page selector, column visibility checklist (sensitivity
   fields hidden by default), links to raw/annotated/clip snapshots + video, multi-select + bulk delete, and
   horizontal scrolling for wide metadata + detail page
+- **Candidates**: motion-rejected detections for review (thumbnails, overlap/confidence, label form, bulk delete)
 - **Individuals**: sortable list + detail page with prototypical snapshot and a paginated observations table with a per-page selector
 - **ROI calibration**: draw a box on the latest snapshot
 - **Config**: tune detection thresholds, re-ID thresholds, and background subtraction settings
@@ -188,6 +191,8 @@ ip a
 
 The Docker setup runs PostgreSQL for the database and Redis for short-lived cache entries. Both the
 web service and worker use the async driver (`HBMON_DB_ASYNC_URL`).
+Production deployments should keep Postgres and Redis enabled (the defaults in `.env.example`) so
+candidate filtering/counting stays in the database and hot-path lookups stay cached.
 
 Pool tuning (optional):
 - `HBMON_DB_POOL_SIZE`: base pool size (default: 5)
@@ -343,12 +348,29 @@ continue to override them when set.
   - Higher values require more of the detection area to show change
 - `HBMON_DEBUG_BG` (default "0")
   - Set to "1" to enable debug logging for motion mask errors
+- `HBMON_BG_LOG_REJECTED` (default "1")
+  - Set to "1" to log motion-rejected detections as reviewable candidates
+- `HBMON_BG_REJECTED_COOLDOWN_SECONDS` (default 3)
+  - Cooldown between logged candidates
+- `HBMON_BG_REJECTED_SAVE_CLIP` (default "1")
+  - Set to "1" to save a short clip for logged candidates
+- `HBMON_BG_REJECTED_MAX_PER_MINUTE` (default 30)
+  - Optional rate limit for logged candidates (0 disables)
+- `HBMON_BG_SAVE_MASKS` (default "1")
+  - Set to "1" to save motion masks for observations and candidates
+- `HBMON_BG_SAVE_MASK_OVERLAY` (default "1")
+  - Set to "1" to save a mask overlay blended onto the ROI frame
+- `HBMON_BG_MASK_FORMAT` (default "png")
+  - Image format for masks/overlays (png recommended)
+- `HBMON_BG_MASK_DOWNSCALE_MAX` (default 0)
+  - Max dimension for mask images (0 disables downscale)
 
 **How it works:**
 1. Configure a background image showing the feeder without any birds (upload, pick an observation, or capture a live snapshot)
 2. The worker computes a motion mask by comparing each frame to the background
 3. YOLO detections are filtered: only those overlapping significantly with motion areas are kept
 4. This reduces false positives from static objects or lighting changes
+5. When `HBMON_BG_LOG_REJECTED=1`, rejected detections are logged in the **Candidates** page for review/labeling
 
 ### Debugging and diagnostics
 - `HBMON_DEBUG_YOLO` (default "0")

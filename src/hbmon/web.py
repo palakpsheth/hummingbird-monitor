@@ -6,6 +6,8 @@ Routes:
 - /                      Dashboard
 - /observations           Gallery + filters
 - /observations/{id}      Observation detail (with inline video player)
+- /candidates             Motion-rejected detections for review
+- /candidates/{id}        Candidate detail + labeling
 - /individuals            Individuals list
 - /individuals/{id}       Individual detail + heatmap + rename
 - /individuals/{id}/split_review  Suggest A/B split & review UI
@@ -54,7 +56,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 import csv
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import partial
 import importlib.util
 import io
@@ -69,10 +71,12 @@ import sys
 import tarfile
 import threading
 from urllib.parse import urlsplit
+from urllib.request import urlopen, Request as UrllibRequest
+from urllib.error import URLError, HTTPError
 import time
 import weakref
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Iterable, Iterator
+from typing import Any, AsyncIterator, Callable, Iterable, Iterator, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import anyio
@@ -107,19 +111,21 @@ except Exception:  # pragma: no cover
     _FASTAPI_AVAILABLE = False
 
 try:
-    from sqlalchemy import Integer, cast, delete, desc, func, select  # type: ignore
+    from sqlalchemy import JSON, Integer, cast, delete, desc, func, select  # type: ignore
+    from sqlalchemy.dialects.postgresql import JSONB  # type: ignore
     from sqlalchemy.exc import OperationalError  # type: ignore
     from sqlalchemy.orm import Session  # type: ignore
     from sqlalchemy.ext.asyncio import AsyncSession  # type: ignore
     _SQLA_AVAILABLE = True
 except Exception:  # pragma: no cover
-    delete = desc = func = select = None  # type: ignore
+    delete = desc = func = select = JSON = JSONB = None  # type: ignore
     Session = object  # type: ignore
     AsyncSession = object  # type: ignore
     OperationalError = Exception  # type: ignore
     _SQLA_AVAILABLE = False
 
 ALLOWED_REVIEW_LABELS = ["true_positive", "false_positive", "unknown"]
+CANDIDATE_REVIEW_LABELS = ["false_negative", "true_negative", "unknown"]
 
 
 from hbmon import __version__
@@ -146,7 +152,7 @@ from hbmon.db import (
     init_db,
     is_async_db_available,
 )
-from hbmon.models import Embedding, Individual, Observation, _to_utc
+from hbmon.models import Candidate, Embedding, Individual, Observation, _to_utc
 from hbmon.schema import HealthOut, RoiOut
 from hbmon.clustering import l2_normalize, suggest_split_two_groups
 
@@ -184,6 +190,18 @@ def _get_db_dialect_name(db: AsyncSession | _AsyncSessionAdapter) -> str:
     if hasattr(bind, "sync_engine") and hasattr(bind.sync_engine, "dialect"):
         return str(getattr(bind.sync_engine.dialect, "name", ""))
     return ""
+
+
+def _candidate_json_value(expr: Any, path: Sequence[str], dialect: str) -> Any | None:
+    if not path:
+        return None
+    if dialect == "sqlite":
+        return func.json_extract(expr, f"$.{'.'.join(path)}")
+    if dialect in {"postgres", "postgresql"}:
+        if JSONB is not None:
+            return func.jsonb_extract_path_text(cast(expr, JSONB), *path)
+        return func.json_extract_path_text(cast(expr, JSON), *path)
+    return None
 
 
 @dataclass(frozen=True)
@@ -580,15 +598,28 @@ def _timezone_label(tz: str | None) -> str:
 
 
 def _sanitize_redirect_path(raw: str | None, default: str = "/observations") -> str:
+    """
+    Sanitize a user-provided redirect path so that only internal, absolute
+    paths (starting with a single "/") are allowed.
+
+    This prevents open redirects to external sites by rejecting any value
+    that has a scheme or netloc, or that could be interpreted as a
+    protocol-relative URL.
+    """
     if not raw:
         return default
+    # Normalize to string and replace backslashes, which some browsers treat
+    # as equivalent to forward slashes in URLs.
     text = str(raw)
-    parsed = urlsplit(text)
+    clean = text.replace("\\", "/")
+    parsed = urlsplit(clean)
+    # Disallow any explicit scheme or network location (external URLs).
     if parsed.scheme or parsed.netloc:
         return default
+    # Require a single leading "/" and forbid protocol-relative ("//") paths.
     if not parsed.path.startswith("/") or parsed.path.startswith("//"):
         return default
-    return text
+    return clean
 
 
 def _get_git_commit() -> str:
@@ -790,6 +821,26 @@ def get_annotated_snapshot_path(obs: Observation) -> str | None:
     if not isinstance(snapshots_data, dict):
         return None
     return snapshots_data.get("annotated_path")
+
+
+def get_observation_media_paths(obs: Observation) -> dict[str, str]:
+    """
+    Extract media-related paths from observation extra metadata.
+    """
+    extra = obs.get_extra()
+    if not extra or not isinstance(extra, dict):
+        return {}
+    media = extra.get("media")
+    if not isinstance(media, dict):
+        return {}
+    return {k: v for k, v in media.items() if isinstance(v, str) and v}
+
+
+def _normalize_candidate_label(raw: str | None) -> str:
+    if not raw:
+        return ""
+    clean = raw.strip().lower().replace(" ", "_")
+    return clean
 
 
 async def select_prototype_observations(
@@ -994,6 +1045,24 @@ def _as_utc_str(dt: datetime | None) -> str | None:
     if dt is None:
         return None
     return _to_utc(dt).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _parse_date_filter(raw: str | None, *, end: bool = False) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        if len(raw) == 10:
+            day = date.fromisoformat(raw)
+            dt = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+        else:
+            dt = datetime.fromisoformat(raw)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if end and len(raw) == 10:
+        dt = dt + timedelta(days=1)
+    return dt
 
 
 def _flatten_extra_metadata(extra: dict[str, Any] | None, prefix: str = "") -> dict[str, Any]:
@@ -1583,6 +1652,9 @@ def make_app() -> Any:
         annotated_snapshot_path = get_annotated_snapshot_path(o)
         clip_snapshot_path = get_clip_snapshot_path(o)
         background_snapshot_path = get_background_snapshot_path(o)
+        media_paths = get_observation_media_paths(o)
+        mask_path = media_paths.get("mask_path")
+        mask_overlay_path = media_paths.get("mask_overlay_path")
 
         # Video file diagnostics
         video_info: dict[str, Any] | None = None
@@ -1612,6 +1684,8 @@ def make_app() -> Any:
                 annotated_snapshot_path=annotated_snapshot_path,
                 clip_snapshot_path=clip_snapshot_path,
                 background_snapshot_path=background_snapshot_path,
+                mask_path=mask_path,
+                mask_overlay_path=mask_overlay_path,
             ),
         )
 
@@ -1693,6 +1767,9 @@ def make_app() -> Any:
         _safe_unlink_media(get_annotated_snapshot_path(o))
         _safe_unlink_media(get_clip_snapshot_path(o))
         _safe_unlink_media(get_background_snapshot_path(o))
+        media_paths = get_observation_media_paths(o)
+        _safe_unlink_media(media_paths.get("mask_path"))
+        _safe_unlink_media(media_paths.get("mask_overlay_path"))
 
         await db.execute(delete(Embedding).where(Embedding.observation_id == obs_id))
         await db.delete(o)
@@ -1703,6 +1780,361 @@ def make_app() -> Any:
         await _commit_with_retry(db)
 
         return RedirectResponse(url="/observations", status_code=303)
+
+    @app.get("/candidates", response_class=HTMLResponse)
+    async def candidates(
+        request: Request,
+        page: int = 1,
+        page_size: int = 25,
+        label: str | None = None,
+        reason: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> HTMLResponse:
+        s = load_settings()
+
+        start_dt = _parse_date_filter(start_date)
+        end_dt = _parse_date_filter(end_date, end=True)
+        label_filter = _normalize_candidate_label(label)
+        reason_filter = (reason or "").strip()
+
+        q = select(Candidate).order_by(desc(Candidate.ts))
+        count_query = select(func.count(Candidate.id))
+        if start_dt is not None:
+            q = q.where(Candidate.ts >= start_dt)
+            count_query = count_query.where(Candidate.ts >= start_dt)
+        if end_dt is not None:
+            q = q.where(Candidate.ts < end_dt)
+            count_query = count_query.where(Candidate.ts < end_dt)
+
+        dialect = _get_db_dialect_name(db)
+        use_db_filters = dialect in {"sqlite", "postgres", "postgresql"}
+        if use_db_filters:
+            if reason_filter:
+                reason_expr = _candidate_json_value(Candidate.extra_json, ["reason"], dialect)
+                if reason_expr is None:
+                    use_db_filters = False
+                else:
+                    q = q.where(reason_expr == reason_filter)
+                    count_query = count_query.where(reason_expr == reason_filter)
+            if use_db_filters and label_filter:
+                label_expr = _candidate_json_value(Candidate.extra_json, ["review", "label"], dialect)
+                if label_expr is None:
+                    use_db_filters = False
+                else:
+                    q = q.where(label_expr == label_filter)
+                    count_query = count_query.where(label_expr == label_filter)
+
+        def _decorate_candidate(c: Candidate) -> Candidate:
+            extra = c.get_extra() or {}
+            review = extra.get("review") if isinstance(extra, dict) else {}
+            if not isinstance(review, dict):
+                review = {}
+            review_label = _normalize_candidate_label(review.get("label"))
+            motion = extra.get("motion") if isinstance(extra, dict) else {}
+            detection = extra.get("detection") if isinstance(extra, dict) else {}
+            media = extra.get("media") if isinstance(extra, dict) else {}
+            if not isinstance(media, dict):
+                media = {}
+            annotated_fallback = media.get("snapshot_annotated_path")
+            if not isinstance(annotated_fallback, str):
+                annotated_fallback = None
+            c.display_snapshot_path = (  # type: ignore[attr-defined]
+                c.annotated_snapshot_path or annotated_fallback or c.snapshot_path
+            )
+            c.review_label = review_label or None  # type: ignore[attr-defined]
+            c.motion_overlap_ratio = None  # type: ignore[attr-defined]
+            if isinstance(motion, dict):
+                c.motion_overlap_ratio = motion.get("bbox_overlap_ratio")  # type: ignore[attr-defined]
+            c.detection_confidence = None  # type: ignore[attr-defined]
+            if isinstance(detection, dict):
+                c.detection_confidence = detection.get("confidence")  # type: ignore[attr-defined]
+            return c
+
+        if use_db_filters:
+            total = int((await db.execute(count_query)).scalar_one())
+            current_page, clamped_page_size, total_pages, offset = paginate(
+                total, page=page, page_size=page_size, max_page_size=max(PAGE_SIZE_OPTIONS)
+            )
+            page_rows = (
+                await db.execute(q.offset(offset).limit(clamped_page_size))
+            ).scalars().all()
+            page_rows = [_decorate_candidate(c) for c in page_rows]
+        else:
+            rows = (await db.execute(q)).scalars().all()
+            filtered: list[Candidate] = []
+            for c in rows:
+                extra = c.get_extra() or {}
+                review = extra.get("review") if isinstance(extra, dict) else {}
+                if not isinstance(review, dict):
+                    review = {}
+                review_label = _normalize_candidate_label(review.get("label"))
+                reason_value = extra.get("reason") if isinstance(extra, dict) else None
+
+                if reason_filter and reason_value != reason_filter:
+                    continue
+                if label_filter and review_label != label_filter:
+                    continue
+                filtered.append(_decorate_candidate(c))
+
+            total = len(filtered)
+            current_page, clamped_page_size, total_pages, offset = paginate(
+                total, page=page, page_size=page_size, max_page_size=max(PAGE_SIZE_OPTIONS)
+            )
+            page_rows = filtered[offset:offset + clamped_page_size]
+
+        return templates.TemplateResponse(
+            request,
+            "candidates.html",
+            _context(
+                request,
+                "Candidates",
+                settings=s,
+                candidates=page_rows,
+                candidate_labels=CANDIDATE_REVIEW_LABELS,
+                candidates_page=current_page,
+                candidates_page_size=clamped_page_size,
+                candidates_total_pages=total_pages,
+                limit_options=PAGE_SIZE_OPTIONS,
+                selected_label=label_filter,
+                selected_reason=reason_filter,
+                selected_start_date=start_date or "",
+                selected_end_date=end_date or "",
+                count_shown=len(page_rows),
+                count_total=int(total),
+            ),
+        )
+
+    @app.get("/candidates/{candidate_id}", response_class=HTMLResponse)
+    async def candidate_detail(
+        candidate_id: int,
+        request: Request,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> HTMLResponse:
+        c = await db.get(Candidate, candidate_id)
+        if c is None:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        extra = c.get_extra() or {}
+        media = extra.get("media") if isinstance(extra, dict) else {}
+        if not isinstance(media, dict):
+            media = {}
+        review = extra.get("review") if isinstance(extra, dict) else {}
+        if not isinstance(review, dict):
+            review = {}
+        review_label = _normalize_candidate_label(review.get("label"))
+
+        mask_path = c.mask_path or media.get("mask_path")
+        mask_overlay_path = c.mask_overlay_path or media.get("mask_overlay_path")
+        annotated_path = c.annotated_snapshot_path or (
+            media.get("snapshot_annotated_path") if isinstance(media.get("snapshot_annotated_path"), str) else None
+        )
+
+        c.extra_pretty = pretty_json_obj(extra)  # type: ignore[attr-defined]
+        c.review_label = review_label or None  # type: ignore[attr-defined]
+
+        return templates.TemplateResponse(
+            request,
+            "candidate_detail.html",
+            _context(
+                request,
+                f"Candidate {c.id}",
+                candidate=c,
+                extra=extra,
+                allowed_review_labels=CANDIDATE_REVIEW_LABELS,
+                mask_path=mask_path,
+                mask_overlay_path=mask_overlay_path,
+                annotated_snapshot_path=annotated_path,
+            ),
+        )
+
+    @app.post("/candidates/{candidate_id}/label")
+    async def label_candidate(
+        candidate_id: int,
+        label: str = Form(""),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> RedirectResponse:
+        c = await db.get(Candidate, candidate_id)
+        if c is None:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        raw_label = label or ""
+        if len(raw_label) > 64:
+            raise HTTPException(status_code=400, detail="Label too long")
+        clean = _normalize_candidate_label(raw_label)
+        allowed = set(CANDIDATE_REVIEW_LABELS)
+        review_label = clean if clean in allowed else ""
+
+        if review_label:
+            c.merge_extra(
+                {
+                    "review": {
+                        "label": review_label,
+                        "labeled_at_utc": _as_utc_str(datetime.now(timezone.utc)),
+                    }
+                }
+            )
+        else:
+            extra = c.get_extra() or {}
+            if isinstance(extra, dict):
+                extra_copy = dict(extra)
+                raw_review = extra_copy.get("review")
+                review = dict(raw_review) if isinstance(raw_review, dict) else {}
+                review.pop("label", None)
+                review.pop("labeled_at_utc", None)
+                if review:
+                    extra_copy["review"] = review
+                else:
+                    extra_copy.pop("review", None)
+                c.set_extra(extra_copy)
+
+        await _commit_with_retry(db)
+        return RedirectResponse(url=f"/candidates/{candidate_id}", status_code=303)
+
+    @app.post("/candidates/{candidate_id}/export_integration_test")
+    async def export_candidate_integration_test(
+        candidate_id: int,
+        case_name: str = Form(""),
+        description: str = Form(""),
+        behavior: str = Form(""),
+        location: str = Form(""),
+        human_verified: str = Form("false"),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> FileResponse:
+        c = await db.get(Candidate, candidate_id)
+        if c is None:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        extra = c.get_extra() or {}
+        extra_copy = extra.copy() if isinstance(extra, dict) else {}
+        media = extra_copy.get("media")
+        media_data = dict(media) if isinstance(media, dict) else {}
+
+        mask_rel = c.mask_path or media_data.get("mask_path")
+        mask_overlay_rel = c.mask_overlay_path or media_data.get("mask_overlay_path")
+        annotated_rel = c.annotated_snapshot_path or media_data.get("snapshot_annotated_path")
+        clip_rel = c.clip_path or media_data.get("clip_path")
+
+        if mask_rel:
+            media_data["mask_path"] = "mask.png"
+        if mask_overlay_rel:
+            media_data["mask_overlay_path"] = "mask_overlay.png"
+        if annotated_rel:
+            media_data["snapshot_annotated_path"] = "snapshot_annotated.jpg"
+        if clip_rel:
+            media_data["clip_path"] = "clip.mp4"
+        if media_data:
+            extra_copy["media"] = media_data
+
+        bg = extra_copy.get("bg") if isinstance(extra_copy.get("bg"), dict) else {}
+        motion = extra_copy.get("motion") if isinstance(extra_copy.get("motion"), dict) else {}
+
+        original_candidate = {
+            "bbox_xyxy": list(c.bbox_xyxy) if c.bbox_xyxy else None,
+            "extra": extra_copy,
+        }
+
+        expected = {
+            "detection": False,
+            "behavior": behavior or "unknown",
+            "human_verified": human_verified.strip().lower() in {"1", "true", "yes", "y", "on"},
+        }
+
+        sensitivity_params = {
+            "bg_threshold": bg.get("threshold") if isinstance(bg, dict) else None,
+            "bg_blur": bg.get("blur") if isinstance(bg, dict) else None,
+            "bg_min_overlap": bg.get("min_overlap") if isinstance(bg, dict) else None,
+            "bg_active": bg.get("active") if isinstance(bg, dict) else None,
+        }
+
+        metadata = {
+            "description": description or f"Candidate {c.id} integration test",
+            "expected": expected,
+            "source": {
+                "camera": c.camera_name or "",
+                "timestamp_utc": c.ts_utc,
+                "location": location or "",
+            },
+            "sensitivity_tests": [
+                {
+                    "name": "default",
+                    "params": sensitivity_params,
+                    "expected_detection": expected["detection"],
+                }
+            ],
+            "motion": motion,
+            "original_candidate": original_candidate,
+        }
+
+        ensure_dirs()
+        out_dir = data_dir() / "exports"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        safe_case = _sanitize_case_name(case_name, f"candidate_{c.id}")
+        out_path = out_dir / f"hbmon-candidate-{safe_case}-{stamp}.tar.gz"
+
+        metadata_bytes = json.dumps(metadata, indent=4, sort_keys=True).encode("utf-8")
+        metadata_info = tarfile.TarInfo(name=f"{safe_case}/metadata.json")
+        metadata_info.size = len(metadata_bytes)
+
+        snapshot_path = media_dir() / c.snapshot_path
+        annotated_path = (media_dir() / annotated_rel) if isinstance(annotated_rel, str) else None
+        clip_path = (media_dir() / clip_rel) if isinstance(clip_rel, str) else None
+        mask_path = (media_dir() / mask_rel) if isinstance(mask_rel, str) else None
+        mask_overlay_path = (media_dir() / mask_overlay_rel) if isinstance(mask_overlay_rel, str) else None
+
+        def _build_bundle() -> None:
+            with tarfile.open(out_path, "w:gz") as tf:
+                tf.addfile(metadata_info, io.BytesIO(metadata_bytes))
+                if snapshot_path.exists():
+                    tf.add(snapshot_path, arcname=f"{safe_case}/snapshot.jpg")
+                if annotated_path and annotated_path.exists():
+                    tf.add(annotated_path, arcname=f"{safe_case}/snapshot_annotated.jpg")
+                if clip_path and clip_path.exists():
+                    tf.add(clip_path, arcname=f"{safe_case}/clip.mp4")
+                if mask_path and mask_path.exists():
+                    tf.add(mask_path, arcname=f"{safe_case}/mask.png")
+                if mask_overlay_path and mask_overlay_path.exists():
+                    tf.add(mask_overlay_path, arcname=f"{safe_case}/mask_overlay.png")
+
+        await _run_blocking(_build_bundle)
+
+        return FileResponse(str(out_path), filename=out_path.name, media_type="application/gzip")
+
+    @app.post("/candidates/bulk_delete")
+    async def bulk_delete_candidates(
+        candidate_ids: list[int] = Form([]),
+        redirect_to: str | None = Form(None),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> RedirectResponse:
+        ids = [int(i) for i in candidate_ids if int(i) > 0]
+        if not ids:
+            redirect_path = _sanitize_redirect_path(redirect_to, default="/candidates")
+            return RedirectResponse(url=redirect_path, status_code=303)
+
+        rows = (await db.execute(select(Candidate).where(Candidate.id.in_(ids)))).scalars().all()
+        for c in rows:
+            _safe_unlink_media(c.snapshot_path)
+            _safe_unlink_media(c.annotated_snapshot_path)
+            _safe_unlink_media(c.mask_path)
+            _safe_unlink_media(c.mask_overlay_path)
+            _safe_unlink_media(c.clip_path)
+            extra = c.get_extra() or {}
+            media = extra.get("media") if isinstance(extra, dict) else {}
+            if isinstance(media, dict):
+                _safe_unlink_media(media.get("snapshot_raw_path"))
+                _safe_unlink_media(media.get("snapshot_annotated_path"))
+                _safe_unlink_media(media.get("mask_path"))
+                _safe_unlink_media(media.get("mask_overlay_path"))
+                _safe_unlink_media(media.get("clip_path"))
+
+        await db.execute(delete(Candidate).where(Candidate.id.in_(ids)))
+        await _commit_with_retry(db)
+
+        redirect_path = _sanitize_redirect_path(redirect_to, default="/candidates")
+        return RedirectResponse(url=redirect_path, status_code=303)
 
     @app.post("/observations/{obs_id}/export_integration_test")
     async def export_observation_integration_test(
@@ -1761,11 +2193,19 @@ def make_app() -> Any:
         extra_copy["identification"] = identification
 
         background_rel = get_background_snapshot_path(o)
+        media_paths = get_observation_media_paths(o)
         if background_rel:
             snapshots = extra_copy.get("snapshots")
             snapshots_data = dict(snapshots) if isinstance(snapshots, dict) else {}
             snapshots_data["background_path"] = "background.jpg"
             extra_copy["snapshots"] = snapshots_data
+        if media_paths:
+            media_copy = dict(media_paths)
+            if media_copy.get("mask_path"):
+                media_copy["mask_path"] = "mask.png"
+            if media_copy.get("mask_overlay_path"):
+                media_copy["mask_overlay_path"] = "mask_overlay.png"
+            extra_copy["media"] = media_copy
 
         species_label_final = identification.get("species_label_final")
         species_accepted = identification.get("species_accepted")
@@ -1837,6 +2277,10 @@ def make_app() -> Any:
         annotated_path = (media_dir() / annotated_rel) if annotated_rel else None
         clip_path = (media_dir() / clip_rel) if clip_rel else None
         background_path = (media_dir() / background_rel) if background_rel else None
+        mask_rel = media_paths.get("mask_path")
+        mask_overlay_rel = media_paths.get("mask_overlay_path")
+        mask_path = (media_dir() / mask_rel) if mask_rel else None
+        mask_overlay_path = (media_dir() / mask_overlay_rel) if mask_overlay_rel else None
 
         def _build_bundle() -> None:
             with tarfile.open(out_path, "w:gz") as tf:
@@ -1851,6 +2295,10 @@ def make_app() -> Any:
                     tf.add(clip_path, arcname=f"{safe_case}/snapshot_clip.jpg")
                 if background_path and background_path.exists():
                     tf.add(background_path, arcname=f"{safe_case}/background.jpg")
+                if mask_path and mask_path.exists():
+                    tf.add(mask_path, arcname=f"{safe_case}/mask.png")
+                if mask_overlay_path and mask_overlay_path.exists():
+                    tf.add(mask_overlay_path, arcname=f"{safe_case}/mask_overlay.png")
 
         await _run_blocking(_build_bundle)
 
@@ -2490,11 +2938,94 @@ def make_app() -> Any:
 
         return frame, cv2
 
-    def _encode_jpeg(frame: Any, cv2: Any, quality: int = 80) -> bytes:
+    def _get_snapshot_config():
+        """
+        Return (snapshot_url: str|None, timeout: float, retries: int).
+        Env vars:
+          - HBMON_RTSP_SNAPSHOT_URL: explicit full snapshot URL (preferred)
+          - HBMON_SNAPSHOT_TIMEOUT: float seconds (default 10.0)
+          - HBMON_SNAPSHOT_RETRIES: int retries (default 10)
+        """
+        url = os.getenv("HBMON_RTSP_SNAPSHOT_URL") or None
+        try:
+            timeout = float(os.getenv("HBMON_SNAPSHOT_TIMEOUT", "10"))
+        except Exception:
+            timeout = 10.0
+        try:
+            retries = int(os.getenv("HBMON_SNAPSHOT_RETRIES", "10"))
+        except Exception:
+            retries = 10
+        if retries < 1:
+            retries = 1
+        if timeout <= 0:
+            timeout = 10.0
+        return url, timeout, retries
+
+    def _fetch_snapshot_http(url: str, timeout: float = 10.0, retries: int = 10) -> bytes:
+        """
+        Fetch a snapshot via HTTP with simple retries and return raw bytes.
+
+        Raises HTTPException(status_code=503, detail=...) on failure.
+        """
+        last_exc = None
+        attempts = max(1, int(retries))
+        for attempt in range(1, attempts + 1):
+            try:
+                req = UrllibRequest(url, headers={"User-Agent": "hbmon/1"})
+                with urlopen(req, timeout=timeout) as res:
+                    ct = (res.getheader("Content-Type") or "").lower()
+                    if not ct.startswith("image/"):
+                        raise HTTPException(status_code=503, detail="Snapshot endpoint did not return an image")
+                    data = res.read()
+                    if not data:
+                        raise HTTPException(status_code=503, detail="Snapshot endpoint returned empty body")
+                    return data
+            except (HTTPError, URLError, ValueError) as e:
+                last_exc = e
+                # backoff: small sleep (blocking; caller should run this in threadpool)
+                try:
+                    time.sleep(0.5 * attempt)
+                except Exception:
+                    pass
+                continue
+            except Exception as e:
+                last_exc = e
+                try:
+                    time.sleep(0.5 * attempt)
+                except Exception:
+                    pass
+                continue
+        detail = f"Snapshot fetch failed: {last_exc}" if last_exc is not None else "Snapshot fetch failed"
+        raise HTTPException(status_code=503, detail=detail)
+
+    def _encode_jpeg(frame: Any, cv2: Any, quality: int = 100) -> bytes:
         ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
         if not ok:
             raise HTTPException(status_code=500, detail="Failed to encode frame")
         return jpeg.tobytes()
+
+    def _get_live_snapshot_bytes_sync(settings, jpeg_quality: int = 100) -> bytes:
+        """
+        Synchronous helper: return JPEG bytes for a live snapshot.
+
+        Preference:
+          1) HBMON_RTSP_SNAPSHOT_URL via _fetch_snapshot_http
+          2) RTSP capture via _capture_live_frame + _encode_jpeg
+
+        This is meant to be run inside _run_blocking from async endpoints.
+        """
+        snapshot_url, timeout, retries = _get_snapshot_config()
+        if snapshot_url:
+            # _fetch_snapshot_http is synchronous/blocking (uses urlopen)
+            return _fetch_snapshot_http(snapshot_url, timeout, retries)
+
+        # fallback to RTSP
+        rtsp_url = getattr(settings, "rtsp_url", "") if settings is not None else None
+        if not rtsp_url:
+            raise HTTPException(status_code=503, detail="RTSP URL not configured")
+
+        frame, cv2 = _capture_live_frame(rtsp_url)
+        return _encode_jpeg(frame, cv2, jpeg_quality)
 
     @app.get("/api/background.jpg")
     async def get_background_jpg() -> Any:
@@ -2566,17 +3097,11 @@ def make_app() -> Any:
 
     @app.post("/api/background/from_live")
     async def set_background_from_live() -> RedirectResponse:
-        """
-        Capture a live RTSP frame and save it as the background image.
-        """
         s = load_settings()
-        if not s.rtsp_url:
-            raise HTTPException(status_code=503, detail="RTSP URL not configured")
+        # get bytes (http snapshot preferred, otherwise RTSP)
+        jpeg_bytes = await _run_blocking(_get_live_snapshot_bytes_sync, s, 100)
 
-        frame, cv2 = await _run_blocking(_capture_live_frame, s.rtsp_url)
-        jpeg_bytes = await _run_blocking(_encode_jpeg, frame, cv2, 85)
-
-        # Ensure background directory exists
+        # Ensure background directory exists and save (same as current logic)
         bg_dir = background_dir()
         await _run_blocking(bg_dir.mkdir, parents=True, exist_ok=True)
         dst_path = background_image_path()
@@ -2702,16 +3227,9 @@ def make_app() -> Any:
 
     @app.get("/api/live_frame.jpg")
     async def live_frame_jpg() -> Any:
-        """
-        Return a single snapshot from the live RTSP stream.
-        """
         s = load_settings()
-        if not s.rtsp_url:
-            raise HTTPException(status_code=503, detail="RTSP URL not configured")
-
-        frame, cv2 = await _run_blocking(_capture_live_frame, s.rtsp_url)
-        jpeg_bytes = await _run_blocking(_encode_jpeg, frame, cv2, 80)
-
+        # run blocking helper once in threadpool
+        jpeg_bytes = await _run_blocking(_get_live_snapshot_bytes_sync, s, 100)
         return StreamingResponse(io.BytesIO(jpeg_bytes), media_type="image/jpeg")
 
     @app.get("/api/stream.mjpeg")
