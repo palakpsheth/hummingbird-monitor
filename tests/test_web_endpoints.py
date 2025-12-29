@@ -138,6 +138,13 @@ def test_label_observation_and_clear(tmp_path, monkeypatch):
         assert "review" not in extra or not extra["review"]
 
 
+def test_candidates_endpoint_empty(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+
+    response = client.get("/candidates")
+    assert response.status_code == 200
+
+
 def test_health_endpoint_sync_fallback(tmp_path, monkeypatch):
     import hbmon.db as db_module
 
