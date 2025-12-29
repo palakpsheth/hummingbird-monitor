@@ -107,7 +107,7 @@ except Exception:  # pragma: no cover
     _FASTAPI_AVAILABLE = False
 
 try:
-    from sqlalchemy import delete, desc, func, select  # type: ignore
+    from sqlalchemy import Integer, cast, delete, desc, func, select  # type: ignore
     from sqlalchemy.exc import OperationalError  # type: ignore
     from sqlalchemy.orm import Session  # type: ignore
     from sqlalchemy.ext.asyncio import AsyncSession  # type: ignore
@@ -166,6 +166,24 @@ def _load_cv2() -> Any:
     import cv2  # type: ignore
 
     return cv2
+
+
+def _get_db_dialect_name(db: AsyncSession | _AsyncSessionAdapter) -> str:
+    bind = None
+    if hasattr(db, "get_bind"):
+        try:
+            bind = db.get_bind()
+        except Exception:  # pragma: no cover - defensive fallback
+            bind = None
+    if bind is None:
+        bind = getattr(db, "bind", None)
+    if bind is None:
+        return ""
+    if hasattr(bind, "dialect"):
+        return str(getattr(bind.dialect, "name", ""))
+    if hasattr(bind, "sync_engine") and hasattr(bind.sync_engine, "dialect"):
+        return str(getattr(bind.sync_engine.dialect, "name", ""))
+    return ""
 
 
 @dataclass(frozen=True)
@@ -1943,12 +1961,21 @@ def make_app() -> Any:
 
         last_seen = _as_utc_str(ind.last_seen_at)
 
-        # SQLite hour-of-day counts in UTC:
-        # Observation.ts stored as timezone-aware; SQLite stores as text.
-        # Use strftime('%H', ts) which yields 00..23.
+        # Hour-of-day counts in UTC for heatmap bucketing.
+        # Observation.ts stored as timezone-aware.
+        db_dialect = _get_db_dialect_name(db)
+        if db_dialect == "sqlite":
+            hour_expr = cast(func.strftime("%H", Observation.ts), Integer).label("hh")
+        elif db_dialect == "postgresql":
+            hour_expr = cast(
+                func.extract("hour", func.timezone("UTC", Observation.ts)),
+                Integer,
+            ).label("hh")
+        else:
+            hour_expr = cast(func.extract("hour", Observation.ts), Integer).label("hh")
         rows = (
             await db.execute(
-                select(func.strftime("%H", Observation.ts).label("hh"), func.count(Observation.id))
+                select(hour_expr, func.count(Observation.id))
                 .where(Observation.individual_id == individual_id)
                 .group_by("hh")
                 .order_by("hh")
