@@ -105,6 +105,24 @@ def test_observation_stub_bbox_and_extra(monkeypatch):
     assert obs.review_label == "true_positive"
 
 
+def test_candidate_stub_extra(monkeypatch):
+    stub_models = _get_stub_models(monkeypatch)
+
+    candidate = stub_models.Candidate(id=10, snapshot_path="snap.jpg")
+    candidate.bbox_x1 = 1
+    candidate.bbox_y1 = 2
+    candidate.bbox_x2 = 3
+    candidate.bbox_y2 = 4
+    assert candidate.bbox_xyxy == (1, 2, 3, 4)
+    candidate.set_extra({"reason": "motion_rejected", "review": {"label": "false_negative"}})
+    extra = candidate.get_extra()
+    assert extra is not None
+    assert extra["review"]["label"] == "false_negative"
+
+    merged = candidate.merge_extra({"review": {"label": "true_negative"}})
+    assert merged["review"]["label"] == "true_negative"
+
+
 def test_embedding_stub_set_get_vector(monkeypatch):
     stub_models = _get_stub_models(monkeypatch)
 
