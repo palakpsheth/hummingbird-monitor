@@ -596,15 +596,28 @@ def _timezone_label(tz: str | None) -> str:
 
 
 def _sanitize_redirect_path(raw: str | None, default: str = "/observations") -> str:
+    """
+    Sanitize a user-provided redirect path so that only internal, absolute
+    paths (starting with a single "/") are allowed.
+
+    This prevents open redirects to external sites by rejecting any value
+    that has a scheme or netloc, or that could be interpreted as a
+    protocol-relative URL.
+    """
     if not raw:
         return default
+    # Normalize to string and replace backslashes, which some browsers treat
+    # as equivalent to forward slashes in URLs.
     text = str(raw)
-    parsed = urlsplit(text)
+    clean = text.replace("\\", "/")
+    parsed = urlsplit(clean)
+    # Disallow any explicit scheme or network location (external URLs).
     if parsed.scheme or parsed.netloc:
         return default
+    # Require a single leading "/" and forbid protocol-relative ("//") paths.
     if not parsed.path.startswith("/") or parsed.path.startswith("//"):
         return default
-    return text
+    return clean
 
 
 def _get_git_commit() -> str:
