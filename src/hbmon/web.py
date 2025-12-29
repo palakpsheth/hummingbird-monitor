@@ -168,6 +168,24 @@ def _load_cv2() -> Any:
     return cv2
 
 
+def _get_db_dialect_name(db: AsyncSession | _AsyncSessionAdapter) -> str:
+    bind = None
+    if hasattr(db, "get_bind"):
+        try:
+            bind = db.get_bind()
+        except Exception:  # pragma: no cover - defensive fallback
+            bind = None
+    if bind is None:
+        bind = getattr(db, "bind", None)
+    if bind is None:
+        return ""
+    if hasattr(bind, "dialect"):
+        return str(getattr(bind.dialect, "name", ""))
+    if hasattr(bind, "sync_engine") and hasattr(bind.sync_engine, "dialect"):
+        return str(getattr(bind.sync_engine.dialect, "name", ""))
+    return ""
+
+
 @dataclass(frozen=True)
 class MJPEGSettings:
     target_fps: float
@@ -1943,9 +1961,18 @@ def make_app() -> Any:
 
         last_seen = _as_utc_str(ind.last_seen_at)
 
-        # Hour-of-day counts in UTC.
+        # Hour-of-day counts in UTC for heatmap bucketing.
         # Observation.ts stored as timezone-aware.
-        hour_expr = cast(func.extract("hour", Observation.ts), Integer).label("hh")
+        db_dialect = _get_db_dialect_name(db)
+        if db_dialect == "sqlite":
+            hour_expr = cast(func.strftime("%H", Observation.ts), Integer).label("hh")
+        elif db_dialect == "postgresql":
+            hour_expr = cast(
+                func.extract("hour", func.timezone("UTC", Observation.ts)),
+                Integer,
+            ).label("hh")
+        else:
+            hour_expr = cast(func.extract("hour", Observation.ts), Integer).label("hh")
         rows = (
             await db.execute(
                 select(hour_expr, func.count(Observation.id))
