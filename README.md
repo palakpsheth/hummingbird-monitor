@@ -379,7 +379,7 @@ continue to override them when set.
   - Set to "1" to write periodic debug frames to disk
 - `HBMON_DEBUG_EVERY_SECONDS` (default 10)
   - Interval (seconds) between debug snapshots when saving frames
-- `HBMON_YOLO_IMGSZ` (default 1280)
+- `HBMON_YOLO_IMGSZ` (default 1088,1920)
   - Override the YOLO inference image size (larger values increase detail and CPU/GPU cost)
 
 ### MJPEG live stream tuning

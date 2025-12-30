@@ -8,8 +8,9 @@ This repository contains **hbmon** (`hummingbird-monitor`), a LAN-only hummingbi
 - **Package Manager**: `uv` (primary), `pip` (fallback)
 - **Framework**: FastAPI + Jinja2 for web UI
 - **ML Stack**: PyTorch, Ultralytics YOLO, OpenCLIP
-- **Database**: SQLAlchemy with SQLite
-- **Deployment**: Docker Compose (multi-container)
+- **Database**: PostgreSQL (production), SQLite (testing/local fallback)
+- **Cache/Queue**: Redis
+- **Deployment**: Docker Compose (multi-container: web, stream, worker, proxy, db, redis, wyze-bridge)
 
 ## Code Style & Conventions
 
@@ -31,7 +32,7 @@ This repository contains **hbmon** (`hummingbird-monitor`), a LAN-only hummingbi
 ### Code Organization
 
 - **Source code**: `src/hbmon/` (package structure)
-- **Tests**: `tests/` (pytest-based)
+- **Tests**: `tests/` (pytest-based, uses SQLite in-memory or file-based for isolation)
 - **Configuration**: Environment variables + `/data/config.json` (persisted settings)
 - **Media**: `/media` (snapshots + clips)
 
@@ -68,8 +69,9 @@ The codebase is designed to allow importing core modules without requiring heavy
 
 ### Optional Dependencies
 
-- **SQLAlchemy**: For database models (fallback to dataclass stubs if missing)
-- **FastAPI/Uvicorn**: For web UI (only needed when running web server)
+- **SQLAlchemy / asyncpg**: For database models and PostgreSQL async connectivity
+- **Redis**: For caching and state management
+- **FastAPI/Uvicorn/Gunicorn**: For web UI and streaming (only needed when running web server)
 - **PyTorch/YOLO/CLIP**: For ML inference (only needed when running worker)
 - **OpenCV**: For video processing (only needed when running worker)
 
@@ -179,6 +181,10 @@ docker compose down
 
 Key environment variables (with defaults):
 
+**Infrastructure & Database**
+- `HBMON_DB_ASYNC_URL`: PostgreSQL connection string (default: `postgresql+asyncpg://hbmon:hbmon@hbmon-db:5432/hbmon`)
+- `HBMON_REDIS_URL`: Redis connection string (default: `redis://hbmon-redis:6379/0`)
+
 **RTSP & Camera**
 - `HBMON_RTSP_URL`: RTSP stream URL (required for worker)
 - `HBMON_CAMERA_NAME`: Camera identifier (default: "hummingbirdcam")
@@ -256,7 +262,14 @@ User settings are stored in `/data/config.json` and include:
 
 - **individuals**: Cluster of observations (one per identified bird)
 - **observations**: Individual detection events with metadata
-- **embeddings**: Optional storage of per-observation embedding vectors
+- **embeddings**: Per-observation embedding vectors (linked via observation UUID)
+
+### Infrastructure Components
+
+- **PostgreSQL**: Primary persistent storage for metadata, observations, and embeddings
+- **Redis**: Fast state management, caching, and potentially future task queuing
+- **Nginx (Proxy)**: Unified entry point for web and stream services
+- **Wyze Bridge**: Local RTSP provider for Wyze cameras
 
 ## Documentation & README Updates
 
@@ -358,14 +371,14 @@ User settings are stored in `/data/config.json` and include:
 
 ### Database Changes
 
-1. Update SQLAlchemy models in `models.py`
-2. Maintain dataclass stubs for testing
+1. Update SQLAlchemy models in `models.py` (ensure compatibility with PostgreSQL)
+2. Maintain dataclass stubs for testing (which may still use SQLite/memory)
 3. **Update schema documentation**
    - Update README "Architecture" section (see "Persistent storage" and database schema details) if schema changes
    - Add a dedicated "Database Schema" subsection if more detailed documentation is needed
    - Document new tables, columns, or relationships
-4. Consider migration path for existing databases
-5. **Update README if backup/export procedures change**
+4. Handle PostgreSQL migrations (Alembic or similar if implemented)
+5. **Update README if backup/export procedures change** (e.g., `pg_dump`)
 6. **Run ruff and full pytest before committing (MANDATORY)**
 
 ### Docker & Deployment Changes

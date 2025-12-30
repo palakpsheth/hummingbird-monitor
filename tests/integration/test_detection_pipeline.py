@@ -235,7 +235,11 @@ def _run_detection_pipeline(
         except Exception:
             motion_mask = None
 
-    imgsz = int(os.getenv("HBMON_YOLO_IMGSZ", "1280"))
+    imgsz = os.getenv("HBMON_YOLO_IMGSZ", "1088,1920")
+    imgsz = imgsz.split(",")
+    imgsz = list(map(int, imgsz))
+    if not len(imgsz) == 2:
+        imgsz = [1920, 1080]
     results = yolo.predict(
         roi_frame,
         conf=float(settings.detect_conf),

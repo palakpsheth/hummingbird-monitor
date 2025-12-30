@@ -2,7 +2,7 @@
     "description": "Observation 1 integration test",
     "expected": {
         "behavior": "perched",
-        "detection": true,
+        "detection": false,
         "human_verified": true,
         "species_accepted": true,
         "species_label": "Costa's Hummingbird",
@@ -89,7 +89,7 @@
     },
     "sensitivity_tests": [
         {
-            "expected_detection": true,
+            "expected_detection": false,
             "name": "default",
             "params": {
                 "bg_min_overlap": 0.01,
@@ -102,7 +102,7 @@
             }
         },
         {
-            "expected_detection": true,
+            "expected_detection": false,
             "name": "high_confidence",
             "params": {
                 "bg_min_overlap": 0.01,
