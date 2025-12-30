@@ -1497,10 +1497,11 @@ async def run_worker() -> None:
 
         # Species + embedding (run in thread pool to avoid blocking event loop)
         try:
-            raw_species_label, raw_species_prob = await asyncio.to_thread(
-                clip.predict_species_label_prob, crop
+            results = await asyncio.gather(
+                asyncio.to_thread(clip.predict_species_label_prob, crop),
+                asyncio.to_thread(clip.encode_embedding, crop),
             )
-            emb = await asyncio.to_thread(clip.encode_embedding, crop)
+            (raw_species_label, raw_species_prob), emb = results
         except Exception as e:
             print(f"[worker] CLIP error: {e}")
             raw_species_label, raw_species_prob = "Hummingbird (unknown species)", 0.0

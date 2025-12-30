@@ -228,9 +228,9 @@ if _SQLALCHEMY_AVAILABLE:
         __tablename__ = "observations"
         __table_args__ = (
             # Composite index for efficient pagination (ORDER BY ts DESC, id DESC)
-            Index("ix_observations_ts_id_desc", "ts", "id"),
+            Index("ix_observations_ts_id_desc", desc("ts"), desc("id")),
             # Composite index for individual filtering with time ordering
-            Index("ix_observations_individual_ts", "individual_id", "ts"),
+            Index("ix_observations_individual_ts", "individual_id", desc("ts")),
         )
 
         id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -324,7 +324,7 @@ if _SQLALCHEMY_AVAILABLE:
         __tablename__ = "candidates"
         __table_args__ = (
             # Composite index for efficient pagination (ORDER BY ts DESC, id DESC)
-            Index("ix_candidates_ts_id_desc", "ts", "id"),
+            Index("ix_candidates_ts_id_desc", desc("ts"), desc("id")),
         )
 
         id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
