@@ -52,6 +52,7 @@ try:
         Text,
         UniqueConstraint,
         Index,
+        desc
     )
     from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship  # type: ignore
     _SQLALCHEMY_AVAILABLE = True
