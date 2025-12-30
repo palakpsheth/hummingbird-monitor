@@ -273,6 +273,8 @@ User settings are stored in `/data/config.json` and include:
 
 ## Documentation & README Updates
 
+**ALWAYS keep `AGENTS.md` and `.github/copilot-instructions.md` in sync.** If you modify this file, you **must** update `AGENTS.md` (in the project root) to reflect the changes, and vice versa.
+
 **ALWAYS update the README when making changes that affect:**
 
 ### User-Facing Changes
