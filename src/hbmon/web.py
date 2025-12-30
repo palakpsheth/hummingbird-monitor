@@ -459,54 +459,88 @@ class FrameBroadcaster:
         cv2 = _load_cv2()
         cap = None
         last_frame_time = 0.0
+        # Exponential backoff for reconnection
+        reconnect_delay = 0.5
+        max_reconnect_delay = 10.0
+        consecutive_failures = 0
+        max_consecutive_failures = 5
         try:
             while not self._stop_event.is_set():
                 if cap is None:
                     cap = self._open_capture(cv2)
                     if cap is None:
-                        time.sleep(0.5)
+                        # Exponential backoff on connection failure
+                        consecutive_failures += 1
+                        if consecutive_failures >= max_consecutive_failures:
+                            reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
+                        time.sleep(reconnect_delay)
                         continue
+                    else:
+                        # Reset on successful connection
+                        consecutive_failures = 0
+                        reconnect_delay = 0.5
 
                 current_time = time.monotonic()
                 if current_time - last_frame_time < self._frame_interval:
                     time.sleep(0.01)
                     continue
 
-                ok, frame = cap.read()
+                try:
+                    ok, frame = cap.read()
+                except Exception:
+                    # Handle read errors gracefully
+                    ok, frame = False, None
+
                 if not ok or frame is None:
-                    cap.release()
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
                     cap = None
+                    consecutive_failures += 1
+                    # Brief delay before reconnect attempt
+                    time.sleep(min(0.2 * consecutive_failures, 2.0))
                     continue
 
+                # Reset failure counter on successful frame read
+                consecutive_failures = 0
                 last_frame_time = current_time
-                frame = _resize_mjpeg_frame(frame, cv2, self._settings)
-                encode_start = time.perf_counter()
-                ok, jpeg = cv2.imencode(
-                    ".jpg",
-                    frame,
-                    [cv2.IMWRITE_JPEG_QUALITY, self._current_quality],
-                )
-                if not ok:
-                    continue
-                encode_duration = time.perf_counter() - encode_start
-                self._current_fps, self._current_quality = _update_mjpeg_adaptive(
-                    self._current_fps,
-                    self._current_quality,
-                    self._settings,
-                    encode_duration,
-                )
-                self._frame_interval = 1.0 / self._current_fps if self._current_fps > 0 else 0.0
 
-                frame_bytes = jpeg.tobytes()
-                with self._lock:
-                    self._latest_frame = frame_bytes
-                    self._latest_timestamp = current_time
-                    self._last_frame_shape = frame.shape[:2]
-                    self._last_frame_size = len(frame_bytes)
-                    self._last_encode_duration = encode_duration
+                try:
+                    frame = _resize_mjpeg_frame(frame, cv2, self._settings)
+                    encode_start = time.perf_counter()
+                    ok, jpeg = cv2.imencode(
+                        ".jpg",
+                        frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, self._current_quality],
+                    )
+                    if not ok:
+                        continue
+                    encode_duration = time.perf_counter() - encode_start
+                    self._current_fps, self._current_quality = _update_mjpeg_adaptive(
+                        self._current_fps,
+                        self._current_quality,
+                        self._settings,
+                        encode_duration,
+                    )
+                    self._frame_interval = 1.0 / self._current_fps if self._current_fps > 0 else 0.0
+
+                    frame_bytes = jpeg.tobytes()
+                    with self._lock:
+                        self._latest_frame = frame_bytes
+                        self._latest_timestamp = current_time
+                        self._last_frame_shape = frame.shape[:2]
+                        self._last_frame_size = len(frame_bytes)
+                        self._last_encode_duration = encode_duration
+                except Exception:
+                    # Handle encoding errors gracefully, continue to next frame
+                    continue
         finally:
             if cap is not None:
-                cap.release()
+                try:
+                    cap.release()
+                except Exception:
+                    pass
             with self._lock:
                 self._thread = None
 
@@ -3311,19 +3345,32 @@ def make_app() -> Any:
             nonlocal last_seen_timestamp, last_update
             if initial_chunk is not None:
                 yield initial_chunk
+            # Increase timeout to 10s to prevent premature disconnects
+            # Frontend detects stale at 3.5s, so we give more buffer
+            stream_timeout = 10.0
+            last_yielded_frame: bytes | None = None
             while True:
                 frame_bytes, frame_timestamp = broadcaster.latest_frame()
                 if frame_bytes:
                     if frame_timestamp and frame_timestamp != last_seen_timestamp:
                         last_seen_timestamp = frame_timestamp
                         last_update = time.monotonic()
+                    last_yielded_frame = frame_bytes
                     yield (
                         b"--frame\r\n"
                         b"Content-Type: image/jpeg\r\n"
                         b"Content-Length: " + str(len(frame_bytes)).encode() + b"\r\n"
                         b"\r\n" + frame_bytes + b"\r\n"
                     )
-                if time.monotonic() - last_update > 2.0:
+                elif last_yielded_frame is not None:
+                    # Keep yielding last frame to maintain connection
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(last_yielded_frame)).encode() + b"\r\n"
+                        b"\r\n" + last_yielded_frame + b"\r\n"
+                    )
+                if time.monotonic() - last_update > stream_timeout:
                     break
                 time.sleep(frame_interval)
 

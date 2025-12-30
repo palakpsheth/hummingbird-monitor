@@ -114,7 +114,7 @@
         {% for o in observations %}
           {% set hue = ((o.individual_id or 0) * 47) % 360 %}
           <div class="thumb">
-            <img src="/media/{{ o.snapshot_path }}" alt="Observation {{ o.id }}" />
+            <img src="/media/{{ o.snapshot_path }}" alt="Observation {{ o.id }}" loading="lazy" />
             <div class="meta">
               <div>
                 <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>

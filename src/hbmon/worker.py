@@ -496,6 +496,13 @@ def _write_jpeg(path: Path, frame_bgr: np.ndarray) -> None:
     path.write_bytes(buf.tobytes())
 
 
+async def _write_jpeg_async(path: Path, frame_bgr: np.ndarray) -> None:
+    """
+    Async wrapper for _write_jpeg to enable parallel I/O operations.
+    """
+    await asyncio.to_thread(_write_jpeg, path, frame_bgr)
+
+
 def _write_png(path: Path, image: np.ndarray) -> None:
     """
     Write a PNG image to disk.  Requires OpenCV; raises RuntimeError if
@@ -1413,13 +1420,15 @@ async def run_worker() -> None:
         snap_background_path = media_root / snap_background_rel
         clip_path = media_root / clip_rel
 
-        # Save both raw and annotated snapshots
+        # Save both raw and annotated snapshots in parallel
         try:
-            # Save raw image first
-            _write_jpeg(snap_path, frame)
-            # Save annotated image with bbox and confidence
+            # Prepare annotated image with bbox and confidence
             annotated_frame = _draw_bbox(frame, det_full, show_confidence=True)
-            _write_jpeg(snap_annotated_path, annotated_frame)
+            # Write both snapshots concurrently for better I/O performance
+            await asyncio.gather(
+                _write_jpeg_async(snap_path, frame),
+                _write_jpeg_async(snap_annotated_path, annotated_frame),
+            )
         except Exception as e:
             print(f"[worker] snapshot write failed: {e}")
             # Clean up any partially written snapshot files to avoid orphans
@@ -1486,10 +1495,12 @@ async def run_worker() -> None:
             except Exception as e:
                 print(f"[worker] motion mask save failed: {e}")
 
-        # Species + embedding
+        # Species + embedding (run in thread pool to avoid blocking event loop)
         try:
-            raw_species_label, raw_species_prob = clip.predict_species_label_prob(crop)
-            emb = clip.encode_embedding(crop)
+            raw_species_label, raw_species_prob = await asyncio.to_thread(
+                clip.predict_species_label_prob, crop
+            )
+            emb = await asyncio.to_thread(clip.encode_embedding, crop)
         except Exception as e:
             print(f"[worker] CLIP error: {e}")
             raw_species_label, raw_species_prob = "Hummingbird (unknown species)", 0.0

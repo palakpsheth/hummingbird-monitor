@@ -226,6 +226,12 @@ if _SQLALCHEMY_AVAILABLE:
 
     class Observation(Base):
         __tablename__ = "observations"
+        __table_args__ = (
+            # Composite index for efficient pagination (ORDER BY ts DESC, id DESC)
+            Index("ix_observations_ts_id_desc", "ts", "id"),
+            # Composite index for individual filtering with time ordering
+            Index("ix_observations_individual_ts", "individual_id", "ts"),
+        )
 
         id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
@@ -236,7 +242,7 @@ if _SQLALCHEMY_AVAILABLE:
         camera_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
         # Species prediction
-        species_label: Mapped[str] = mapped_column(String(128), nullable=False, default="Hummingbird (unknown species)")
+        species_label: Mapped[str] = mapped_column(String(128), nullable=False, default="Hummingbird (unknown species)", index=True)
         species_prob: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
         # Individual match
@@ -316,6 +322,10 @@ if _SQLALCHEMY_AVAILABLE:
 
     class Candidate(Base):
         __tablename__ = "candidates"
+        __table_args__ = (
+            # Composite index for efficient pagination (ORDER BY ts DESC, id DESC)
+            Index("ix_candidates_ts_id_desc", "ts", "id"),
+        )
 
         id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
