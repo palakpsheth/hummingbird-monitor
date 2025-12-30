@@ -70,7 +70,7 @@ import subprocess
 import sys
 import tarfile
 import threading
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import urlopen, Request as UrllibRequest
 from urllib.error import URLError, HTTPError
 import time
@@ -612,14 +612,27 @@ def _sanitize_redirect_path(raw: str | None, default: str = "/observations") -> 
     # as equivalent to forward slashes in URLs.
     text = str(raw)
     clean = text.replace("\\", "/")
+    # Reject any paths with embedded control characters (CR/LF) to prevent response splitting.
+    if '\r' in clean or '\n' in clean:
+        return default
+    # Quickly reject obvious scheme-based URLs like "https:/example.com" or
+    # "custom-scheme:foo" that some browsers may still treat as external.
+    # If there is a ":" before any "/", treat it as a (possibly malformed) scheme.
+    first_colon = clean.find(":")
+    first_slash = clean.find("/")
+    if first_colon != -1 and (first_slash == -1 or first_colon < first_slash):
+        return default
+    # Also reject protocol-relative URLs or anything starting with multiple slashes.
+    if clean.startswith("//"):
+        return default
     parsed = urlsplit(clean)
     # Disallow any explicit scheme or network location (external URLs).
     if parsed.scheme or parsed.netloc:
         return default
-    # Require a single leading "/" and forbid protocol-relative ("//") paths.
-    if not parsed.path.startswith("/") or parsed.path.startswith("//"):
+    # Require a leading "/" for internal absolute paths.
+    if not parsed.path.startswith("/"):
         return default
-    return clean
+    return urlunsplit(('', '', parsed.path, parsed.query, parsed.fragment))
 
 
 def _get_git_commit() -> str:
