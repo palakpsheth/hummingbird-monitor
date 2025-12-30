@@ -407,11 +407,44 @@ def test_default_extra_column_visibility_hides_sensitivity(monkeypatch):
 
 def test_sanitize_redirect_path(monkeypatch):
     web = _import_web(monkeypatch)
+    # Basic cases
     assert web._sanitize_redirect_path(None) == "/observations"
     assert web._sanitize_redirect_path("") == "/observations"
     assert web._sanitize_redirect_path("nope") == "/observations"
     assert web._sanitize_redirect_path("/ok") == "/ok"
     assert web._sanitize_redirect_path("/ok", default="/default") == "/ok"
+
+    # External URLs with schemes should be rejected
+    assert web._sanitize_redirect_path("https://evil.com") == "/observations"
+    assert web._sanitize_redirect_path("http://evil.com") == "/observations"
+    assert web._sanitize_redirect_path("javascript:alert(1)") == "/observations"
+    assert web._sanitize_redirect_path("data:text/html,<script>") == "/observations"
+
+    # Malformed scheme URLs (colon before slash) should be rejected
+    assert web._sanitize_redirect_path("https:/evil.com") == "/observations"
+    assert web._sanitize_redirect_path("custom-scheme:foo") == "/observations"
+
+    # Protocol-relative URLs should be rejected
+    assert web._sanitize_redirect_path("//evil.com") == "/observations"
+    assert web._sanitize_redirect_path("//evil.com/path") == "/observations"
+
+    # Backslash normalization - backslashes converted to forward slashes
+    assert web._sanitize_redirect_path("\\\\evil.com") == "/observations"
+    assert web._sanitize_redirect_path("\\/evil.com") == "/observations"
+
+    # Valid internal paths should be allowed
+    assert web._sanitize_redirect_path("/observations") == "/observations"
+    assert web._sanitize_redirect_path("/candidates") == "/candidates"
+    assert web._sanitize_redirect_path("/individuals/123") == "/individuals/123"
+
+    # Query strings and fragments should be preserved
+    assert web._sanitize_redirect_path("/page?foo=bar") == "/page?foo=bar"
+    assert web._sanitize_redirect_path("/page#section") == "/page#section"
+    assert web._sanitize_redirect_path("/page?a=1#sec") == "/page?a=1#sec"
+
+    # Custom default should be used when input is invalid
+    assert web._sanitize_redirect_path("https://evil.com", default="/custom") == "/custom"
+    assert web._sanitize_redirect_path("//evil.com", default="/custom") == "/custom"
 
 
 def test_sanitize_case_name(monkeypatch):

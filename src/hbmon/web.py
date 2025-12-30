@@ -70,7 +70,7 @@ import subprocess
 import sys
 import tarfile
 import threading
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import urlopen, Request as UrllibRequest
 from urllib.error import URLError, HTTPError
 import time
