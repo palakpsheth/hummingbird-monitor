@@ -446,6 +446,10 @@ def test_sanitize_redirect_path(monkeypatch):
     assert web._sanitize_redirect_path("https://evil.com", default="/custom") == "/custom"
     assert web._sanitize_redirect_path("//evil.com", default="/custom") == "/custom"
 
+    # Control characters (CR/LF) should be rejected to prevent response splitting
+    assert web._sanitize_redirect_path("/path\r\nInjected: header") == "/observations"
+    assert web._sanitize_redirect_path("/path\nInjected: header") == "/observations"
+
 
 def test_sanitize_case_name(monkeypatch):
     web = _import_web(monkeypatch)

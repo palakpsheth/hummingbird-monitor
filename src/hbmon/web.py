@@ -612,6 +612,9 @@ def _sanitize_redirect_path(raw: str | None, default: str = "/observations") -> 
     # as equivalent to forward slashes in URLs.
     text = str(raw)
     clean = text.replace("\\", "/")
+    # Reject any paths with embedded control characters (CR/LF) to prevent response splitting.
+    if '\r' in clean or '\n' in clean:
+        return default
     # Quickly reject obvious scheme-based URLs like "https:/example.com" or
     # "custom-scheme:foo" that some browsers may still treat as external.
     # If there is a ":" before any "/", treat it as a (possibly malformed) scheme.
