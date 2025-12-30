@@ -24,11 +24,12 @@
       </select>
 
       <label style="margin-left:8px;">Per page:</label>
-      <select name="limit">
+      <select name="page_size">
         {% for n in limit_options %}
-          <option value="{{ n }}" {% if selected_limit == n %}selected{% endif %}>{{ n }}</option>
+          <option value="{{ n }}" {% if obs_page_size == n %}selected{% endif %}>{{ n }}</option>
         {% endfor %}
       </select>
+      <input type="hidden" name="page" value="1" />
 
       <button type="submit">Apply</button>
 
@@ -227,6 +228,20 @@
       </table>
     </div>
   </form>
+
+  {% if obs_total_pages > 1 %}
+    <div class="inline" style="margin-top: 16px; gap: 8px; flex-wrap: wrap;">
+      <form method="get" action="/observations" class="inline" style="gap: 8px;">
+        {% if selected_individual %}
+          <input type="hidden" name="individual_id" value="{{ selected_individual }}" />
+        {% endif %}
+        <input type="hidden" name="page_size" value="{{ obs_page_size }}" />
+        <button type="submit" name="page" value="{{ obs_page - 1 }}" {% if obs_page <= 1 %}disabled{% endif %}>← Previous</button>
+        <div class="muted">Page {{ obs_page }} / {{ obs_total_pages }} ({{ count_total }} total)</div>
+        <button type="submit" name="page" value="{{ obs_page + 1 }}" {% if obs_page >= obs_total_pages %}disabled{% endif %}>Next →</button>
+      </form>
+    </div>
+  {% endif %}
 {% endblock %}
 
 {% block scripts %}
