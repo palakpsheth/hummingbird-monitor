@@ -1459,7 +1459,7 @@ def make_app() -> Any:
     async def index(
         request: Request,
         page: int = 1,
-        page_size: int = 25,
+        page_size: int = 10,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
@@ -1572,14 +1572,22 @@ def make_app() -> Any:
     async def observations(
         request: Request,
         individual_id: int | None = None,
-        limit: int = 25,
+        page: int = 1,
+        page_size: int = 10,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
 
-        limit = max(10, min(int(limit), 500))
+        count_query = select(func.count(Observation.id))
+        if individual_id is not None:
+            count_query = count_query.where(Observation.individual_id == individual_id)
+        total = (await db.execute(count_query)).scalar_one()
 
-        q = select(Observation).order_by(desc(Observation.ts)).limit(limit)
+        current_page, clamped_page_size, total_pages, offset = paginate(
+            total, page=page, page_size=page_size, max_page_size=max(PAGE_SIZE_OPTIONS)
+        )
+
+        q = select(Observation).order_by(desc(Observation.ts)).offset(offset).limit(clamped_page_size)
         if individual_id is not None:
             q = q.where(Observation.individual_id == individual_id)
 
@@ -1602,8 +1610,6 @@ def make_app() -> Any:
             )
         ).scalars().all()
 
-        total = (await db.execute(select(func.count(Observation.id)))).scalar_one()
-
         return templates.TemplateResponse(
             request,
             "observations.html",
@@ -1618,7 +1624,9 @@ def make_app() -> Any:
                 extra_column_labels=extra_labels,
                 extra_column_defaults=extra_column_defaults,
                 selected_individual=individual_id,
-                selected_limit=limit,
+                obs_page=current_page,
+                obs_page_size=clamped_page_size,
+                obs_total_pages=total_pages,
                 limit_options=PAGE_SIZE_OPTIONS,
                 count_shown=len(obs),
                 count_total=int(total),
@@ -1785,7 +1793,7 @@ def make_app() -> Any:
     async def candidates(
         request: Request,
         page: int = 1,
-        page_size: int = 25,
+        page_size: int = 10,
         label: str | None = None,
         reason: str | None = None,
         start_date: str | None = None,
@@ -2339,12 +2347,17 @@ def make_app() -> Any:
     @app.get("/individuals", response_class=HTMLResponse)
     async def individuals(
         request: Request,
+        page: int = 1,
+        page_size: int = 10,
         sort: str = "visits",
-        limit: int = 200,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
-        limit = max(10, min(int(limit), 5000))
         sort = (sort or "visits").lower()
+
+        total = (await db.execute(select(func.count(Individual.id)))).scalar_one()
+        current_page, clamped_page_size, total_pages, offset = paginate(
+            total, page=page, page_size=page_size, max_page_size=max(PAGE_SIZE_OPTIONS)
+        )
 
         q = select(Individual)
         if sort == "id":
@@ -2354,8 +2367,7 @@ def make_app() -> Any:
         else:
             q = q.order_by(desc(Individual.visit_count))
 
-        inds = (await db.execute(q.limit(limit))).scalars().all()
-        total = (await db.execute(select(func.count(Individual.id)))).scalar_one()
+        inds = (await db.execute(q.offset(offset).limit(clamped_page_size))).scalars().all()
         prototype_map = await select_prototype_observations(db, [int(ind.id) for ind in inds])
         for ind in inds:
             proto_obs = prototype_map.get(int(ind.id))
@@ -2373,7 +2385,10 @@ def make_app() -> Any:
                 "Individuals",
                 individuals=inds,
                 sort=sort,
-                limit=limit,
+                individuals_page=current_page,
+                individuals_page_size=clamped_page_size,
+                individuals_total_pages=total_pages,
+                limit_options=PAGE_SIZE_OPTIONS,
                 count_shown=len(inds),
                 count_total=int(total),
             ),
@@ -2384,7 +2399,7 @@ def make_app() -> Any:
         individual_id: int,
         request: Request,
         page: int = 1,
-        page_size: int = 25,
+        page_size: int = 10,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         ind = await db.get(Individual, individual_id)
@@ -2803,7 +2818,7 @@ def make_app() -> Any:
     async def background_page(
         request: Request,
         page: int = 1,
-        page_size: int = 25,
+        page_size: int = 10,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         """

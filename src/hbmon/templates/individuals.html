@@ -20,12 +20,13 @@
         <option value="id" {% if sort == "id" %}selected{% endif %}>ID</option>
       </select>
 
-      <label style="margin-left:8px;">Limit:</label>
-      <select name="limit">
-        {% for n in [50, 100, 200, 500, 1000] %}
-          <option value="{{ n }}" {% if limit == n %}selected{% endif %}>{{ n }}</option>
+      <label style="margin-left:8px;">Per page:</label>
+      <select name="page_size">
+        {% for n in limit_options %}
+          <option value="{{ n }}" {% if individuals_page_size == n %}selected{% endif %}>{{ n }}</option>
         {% endfor %}
       </select>
+      <input type="hidden" name="page" value="1" />
 
       <button type="submit">Apply</button>
 
@@ -73,4 +74,16 @@
       {% endfor %}
     </div>
   </div>
+
+  {% if individuals_total_pages > 1 %}
+    <div class="inline" style="margin-top: 16px; gap: 8px; flex-wrap: wrap;">
+      <form method="get" action="/individuals" class="inline" style="gap: 8px;">
+        <input type="hidden" name="sort" value="{{ sort }}" />
+        <input type="hidden" name="page_size" value="{{ individuals_page_size }}" />
+        <button type="submit" name="page" value="{{ individuals_page - 1 }}" {% if individuals_page <= 1 %}disabled{% endif %}>← Previous</button>
+        <div class="muted">Page {{ individuals_page }} / {{ individuals_total_pages }} ({{ count_total }} total)</div>
+        <button type="submit" name="page" value="{{ individuals_page + 1 }}" {% if individuals_page >= individuals_total_pages %}disabled{% endif %}>Next →</button>
+      </form>
+    </div>
+  {% endif %}
 {% endblock %}
