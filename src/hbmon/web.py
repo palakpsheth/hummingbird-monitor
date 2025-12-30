@@ -629,7 +629,7 @@ def _sanitize_redirect_path(raw: str | None, default: str = "/observations") -> 
     # Require a leading "/" for internal absolute paths.
     if not parsed.path.startswith("/"):
         return default
-    return parsed.path or default
+    return urlunsplit(('', '', parsed.path, parsed.query, parsed.fragment))
 
 
 def _get_git_commit() -> str:
