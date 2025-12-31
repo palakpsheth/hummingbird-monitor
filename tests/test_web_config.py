@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-import os
-import pytest
 from fastapi.testclient import TestClient
 
-from hbmon.config import load_settings, save_settings
+from hbmon.config import load_settings
 from hbmon.db import init_db, reset_db_state
 from hbmon.web import make_app
 

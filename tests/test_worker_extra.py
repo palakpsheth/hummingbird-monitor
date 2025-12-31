@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 from hbmon.worker import (
     Det,
     _motion_overlap_stats,

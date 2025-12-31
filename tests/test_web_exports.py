@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-import os
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
-from hbmon.config import load_settings, save_settings, media_dir, snapshots_dir, clips_dir
+from hbmon.config import snapshots_dir, clips_dir
 from hbmon.db import init_db, reset_db_state, get_async_session_factory
 from hbmon.models import Individual, Observation
 from hbmon.web import make_app

@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-import os
 import json
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
-from hbmon.config import load_settings, save_settings, media_dir
+from hbmon.config import media_dir
 from hbmon.db import init_db, reset_db_state, get_async_session_factory
-from hbmon.models import Individual, Observation
+from hbmon.models import Observation
 from hbmon.web import make_app
 
 def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:

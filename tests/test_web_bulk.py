@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, delete
+from sqlalchemy import select
 
 from hbmon.config import media_dir
 from hbmon.db import get_async_session_factory, init_db, reset_db_state

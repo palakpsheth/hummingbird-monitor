@@ -5,7 +5,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
 from hbmon.db import get_async_session_factory, init_db, reset_db_state
 from hbmon.models import Individual, Observation, Embedding, _pack_embedding
