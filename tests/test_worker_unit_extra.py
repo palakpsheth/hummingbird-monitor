@@ -44,7 +44,9 @@ def test_load_yolo_model_path_resolution(mock_gpu, mock_ov_av, mock_yolo, monkey
 
 @patch("hbmon.worker.YOLO")
 @patch("hbmon.worker.is_openvino_available")
-def test_load_yolo_model_export_path(mock_ov_av, mock_yolo, monkeypatch, tmp_path):
+@patch("shutil.move")
+@patch("shutil.rmtree")
+def test_load_yolo_model_export_path(mock_rmtree, mock_move, mock_ov_av, mock_yolo, monkeypatch, tmp_path):
     mock_ov_av.return_value = True
     
     cache_dir = tmp_path / "ov_cache_export"
@@ -56,24 +58,25 @@ def test_load_yolo_model_export_path(mock_ov_av, mock_yolo, monkeypatch, tmp_pat
     expected_parent = cache_dir / "yolo"
     
     def exists_side_effect_3(self_path):
+        # Always return False for the model path to trigger export
         if str(self_path) == str(expected_path):
             return False
-        return True # Default to True so mkdir works or check works
+        return True
 
-    # Mock Path.exists to return False only for the model path itself
+    # Mock Path.exists
     with patch("hbmon.worker.Path.exists", autospec=True, side_effect=exists_side_effect_3):
         # Mock the YOLO instance and its export method
         mock_yolo_instance = MagicMock()
+        mock_yolo_instance.export.return_value = "/tmp/fake_export_path"
         mock_yolo.return_value = mock_yolo_instance
         
         _load_yolo_model()
         
         # Verify it tried to create the directory
-        # Since we use original Path in the test, we need to be careful.
-        # But expected_parent is a real Path from tmp_path.
-        # However, calling .exists() on it will call the MOCKED version!
-        # So it should return True because of side_effect_3.
         assert expected_parent.exists()
         
         # Verify export was called
         mock_yolo_instance.export.assert_called_once_with(format="openvino", half=False)
+        
+        # Verify shutil.move was called with the correct arguments
+        mock_move.assert_called_once_with("/tmp/fake_export_path", str(expected_path))

@@ -1300,12 +1300,15 @@ def _load_yolo_model() -> Any:
         print(f"[worker] Exporting {model_name} to OpenVINO format...")
         yolo = YOLO(model_name)  # type: ignore[misc]
         try:
-            yolo.export(format="openvino", half=False)
+            # The export() method returns the path to the exported model directory.
+            exported_model_path = yolo.export(format="openvino", half=False)
+            # Move the exported model to our custom cache directory.
+            shutil.move(str(exported_model_path), str(ov_model_dir))
             print("[worker] OpenVINO model exported successfully")
         except Exception as e:
             print(f"[worker] WARNING: OpenVINO export failed: {e}")
             print(f"[worker] Loading YOLO model: {model_name} (PyTorch backend)")
-            return YOLO(model_name)  # type: ignore[misc]
+            return yolo
 
     # Load OpenVINO model
     device = "GPU" if backend == "openvino-gpu" else "CPU"
