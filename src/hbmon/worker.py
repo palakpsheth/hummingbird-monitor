@@ -1284,8 +1284,17 @@ def _load_yolo_model() -> Any:
     # Export model to OpenVINO format if needed
     ov_suffix = "_openvino_model"
     model_base = model_name.replace(".pt", "")
-    yolo_config_dir = Path(os.getenv("YOLO_CONFIG_DIR", "/data/yolo"))
-    ov_model_dir = yolo_config_dir / f"{model_base}{ov_suffix}"
+    
+    # Try to use the centralized OpenVINO cache directory
+    ov_cache_dir = os.getenv("OPENVINO_CACHE_DIR")
+    if ov_cache_dir:
+        ov_model_dir = Path(ov_cache_dir) / "yolo" / f"{model_base}{ov_suffix}"
+    else:
+        yolo_config_dir = Path(os.getenv("YOLO_CONFIG_DIR", "/data/yolo"))
+        ov_model_dir = yolo_config_dir / f"{model_base}{ov_suffix}"
+    
+    # Ensure parent directory exists for export
+    ov_model_dir.parent.mkdir(parents=True, exist_ok=True)
 
     if not ov_model_dir.exists():
         print(f"[worker] Exporting {model_name} to OpenVINO format...")

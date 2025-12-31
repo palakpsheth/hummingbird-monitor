@@ -30,16 +30,55 @@ def is_openvino_available() -> bool:
     return _OPENVINO_AVAILABLE
 
 
+# Global Core instance to be reused across the application
+_CORE: Core | None = None
+
+
+def get_core() -> Core:
+    """
+    Get a configured OpenVINO Core instance.
+    
+    Initializes a shared Core instance if it doesn't exist, and configures
+    it with the model cache directory.
+    """
+    global _CORE
+    if not _OPENVINO_AVAILABLE:
+        raise RuntimeError("OpenVINO is not installed.")
+    
+    if _CORE is None:
+        import os
+        from pathlib import Path
+        _CORE = Core()
+        
+        # Enable model caching for faster subsequent compilations
+        cache_dir = os.getenv("OPENVINO_CACHE_DIR")
+        if not cache_dir:
+            data_dir = os.getenv("HBMON_DATA_DIR", "/data")
+            cache_dir = str(Path(data_dir) / "openvino_cache")
+        
+        # Ensure the base cache directory exists
+        Path(cache_dir).mkdir(parents=True, exist_ok=True)
+        
+        # OpenVINO's CACHE_DIR property enables binary model caching
+        try:
+            _CORE.set_property({"CACHE_DIR": cache_dir})
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to set OpenVINO CACHE_DIR: {e}")
+            
+    return _CORE
+
+
 def get_available_openvino_devices() -> list[str]:
     """
     Return list of available OpenVINO devices.
 
     Returns an empty list if OpenVINO is not installed.
     """
-    if not _OPENVINO_AVAILABLE or Core is None:
+    if not _OPENVINO_AVAILABLE:
         return []
     try:
-        core = Core()
+        core = get_core()
         return list(core.available_devices)
     except Exception:  # pragma: no cover
         return []
@@ -206,7 +245,6 @@ def load_openvino_clip(
         raise RuntimeError("OpenVINO is not installed. Cannot load CLIP model.")
     
     try:
-        from openvino import Core  # type: ignore
         from pathlib import Path
         import logging
         
@@ -225,7 +263,7 @@ def load_openvino_clip(
         logger.info(f"Loading cached OpenVINO CLIP model from {Path(xml_path).parent}...")
         
         # Load and compile models
-        core = Core()
+        core = get_core()
         image_model = core.read_model(image_xml)
         text_model = core.read_model(text_xml)
         

@@ -422,8 +422,8 @@ class ClipModel:
         
         # Compile for target device
         logger.info(f"Compiling OpenVINO models for {ov_device}...")
-        from openvino import Core  # type: ignore
-        core = Core()
+        from hbmon.openvino_utils import get_core
+        core = get_core()
         self._ov_image_model = core.compile_model(image_model_ov, ov_device)
         self._ov_text_model = core.compile_model(text_model_ov, ov_device)
         
