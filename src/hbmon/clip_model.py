@@ -408,7 +408,7 @@ class ClipModel:
         # Image input: batch_size=1, channels=3, height=224, width=224 (typical CLIP input)
         example_image = torch.randn(1, 3, 224, 224)
         # Text input: batch_size=1, sequence_length=77 (CLIP's max text length)
-        example_text = torch.randint(0, getattr(tokenizer, 'vocab_size', 49408), (1, 77))
+        example_text = torch.randint(0, tokenizer.vocab_size, (1, 77))
         
         # Convert to OpenVINO
         logger.info("Converting CLIP model to OpenVINO IR (this may take 30-60 seconds)...")
