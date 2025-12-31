@@ -18,11 +18,13 @@
         <button type="button" data-zoom-out aria-label="Zoom out">−</button>
         <button type="button" data-zoom-in aria-label="Zoom in">+</button>
         <button type="button" data-zoom-reset aria-label="Reset zoom">Reset</button>
+        {% if annotated_snapshot_path or clip_snapshot_path or roi_snapshot_path %}
+        <button type="button" data-snapshot-view="raw" aria-label="Show raw snapshot">Raw</button>
         {% if annotated_snapshot_path %}
         <button type="button" data-snapshot-view="annotated" aria-label="Show annotated snapshot">
           Annotated
         </button>
-        <button type="button" data-snapshot-view="raw" aria-label="Show raw snapshot">Raw</button>
+        {% endif %}
         {% if roi_snapshot_path %}
         <button type="button" data-snapshot-view="roi" aria-label="Show ROI crop snapshot">ROI</button>
         {% endif %}
@@ -30,20 +32,13 @@
         <button type="button" data-snapshot-view="clip" aria-label="Show CLIP snapshot"
           title="CLIP crop used for species classification">CLIP</button>
         {% endif %}
-        {% elif clip_snapshot_path %}
-        <button type="button" data-snapshot-view="raw" aria-label="Show raw snapshot">Raw</button>
-        {% if roi_snapshot_path %}
-        <button type="button" data-snapshot-view="roi" aria-label="Show ROI crop snapshot">ROI</button>
-        {% endif %}
-        <button type="button" data-snapshot-view="clip" aria-label="Show CLIP snapshot"
-          title="CLIP crop used for species classification">CLIP</button>
         {% endif %}
       </div>
       {% if annotated_snapshot_path %}
       <img class="bigimg" data-zoom-target id="snapshot-img" src="/media/{{ annotated_snapshot_path }}"
         alt="snapshot (annotated)" data-default-view="annotated" data-annotated="/media/{{ annotated_snapshot_path }}"
-        data-raw="/media/{{ o.snapshot_path }}" {% if clip_snapshot_path %}data-clip="/media/{{ clip_snapshot_path }}"
-        {% endif %} />
+        data-raw="/media/{{ o.snapshot_path }}" {% if roi_snapshot_path %}data-roi="/media/{{ roi_snapshot_path }}" {%
+        endif %} {% if clip_snapshot_path %}data-clip="/media/{{ clip_snapshot_path }}" {% endif %} />
       {% else %}
       <img class="bigimg" data-zoom-target id="snapshot-img" src="/media/{{ o.snapshot_path }}" alt="snapshot (raw)"
         data-default-view="raw" data-raw="/media/{{ o.snapshot_path }}" {% if roi_snapshot_path
@@ -51,7 +46,7 @@
         %}data-clip="/media/{{ clip_snapshot_path }}" {% endif %} />
       {% endif %}
     </div>
-    {% if annotated_snapshot_path or clip_snapshot_path %}
+    {% if annotated_snapshot_path or clip_snapshot_path or roi_snapshot_path %}
     <script>
       (function () {
         var img = document.getElementById('snapshot-img');

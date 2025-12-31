@@ -1847,10 +1847,10 @@ def test_export_observation_includes_roi(tmp_path, monkeypatch):
     # Inspect tarball
     with tarfile.open(fileobj=io.BytesIO(r.content), mode="r:gz") as tf:
         names = tf.getnames()
-        # Should contain roi.jpg
-        assert any(n.endswith("/roi.jpg") for n in names)
+        # Should contain snapshot_roi.jpg
+        assert any(n.endswith("/snapshot_roi.jpg") for n in names)
         
         # Verify content matches
-        roi_member = next(n for n in names if n.endswith("/roi.jpg"))
+        roi_member = next(n for n in names if n.endswith("/snapshot_roi.jpg"))
         f = tf.extractfile(roi_member)
         assert f.read() == b"roi"
