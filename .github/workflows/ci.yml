@@ -150,8 +150,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - docker-build
+          - docker-build-intel
+          - docker-build-cuda
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
 
-      - name: Docker build
-        run: docker build -t hbmon .
+      - name: Build ${{ matrix.target }}
+        run: |
+          # Copy env example to ensure variables are available
+          cp .env.example .env
+          make ${{ matrix.target }}
