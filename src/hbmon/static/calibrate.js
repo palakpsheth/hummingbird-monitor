@@ -55,21 +55,27 @@
     return img.getBoundingClientRect();
   }
 
+  function getRoiInputs() {
+    return {
+      x1: document.getElementById("x1"),
+      y1: document.getElementById("y1"),
+      x2: document.getElementById("x2"),
+      y2: document.getElementById("y2"),
+      label: document.getElementById("proposed-roi-label"),
+    };
+  }
+
   function setHiddenInputs(x1, y1, x2, y2) {
-    const elx1 = document.getElementById("x1");
-    const ely1 = document.getElementById("y1");
-    const elx2 = document.getElementById("x2");
-    const ely2 = document.getElementById("y2");
-    const label = document.getElementById("proposed-roi-label");
-    if (!elx1 || !ely1 || !elx2 || !ely2) return;
+    const inputs = getRoiInputs();
+    if (!inputs.x1 || !inputs.y1 || !inputs.x2 || !inputs.y2) return;
 
-    elx1.value = x1.toFixed(6);
-    ely1.value = y1.toFixed(6);
-    elx2.value = x2.toFixed(6);
-    ely2.value = y2.toFixed(6);
+    inputs.x1.value = x1.toFixed(6);
+    inputs.y1.value = y1.toFixed(6);
+    inputs.x2.value = x2.toFixed(6);
+    inputs.y2.value = y2.toFixed(6);
 
-    if (label) {
-      label.textContent = `New ROI: ${elx1.value}, ${ely1.value}, ${elx2.value}, ${ely2.value}`;
+    if (inputs.label) {
+      inputs.label.textContent = `New ROI: ${inputs.x1.value}, ${inputs.y1.value}, ${inputs.x2.value}, ${inputs.y2.value}`;
     }
   }
 
@@ -89,34 +95,26 @@
     proposedRect = null;
     hideBox(proposedRoiBox);
     // Clear hidden inputs by setting them to empty strings
-    const elx1 = document.getElementById("x1");
-    const ely1 = document.getElementById("y1");
-    const elx2 = document.getElementById("x2");
-    const ely2 = document.getElementById("y2");
-    const label = document.getElementById("proposed-roi-label");
-    if (elx1 && ely1 && elx2 && ely2) {
-      elx1.value = "";
-      ely1.value = "";
-      elx2.value = "";
-      ely2.value = "";
+    const inputs = getRoiInputs();
+    if (inputs.x1 && inputs.y1 && inputs.x2 && inputs.y2) {
+      inputs.x1.value = "";
+      inputs.y1.value = "";
+      inputs.x2.value = "";
+      inputs.y2.value = "";
     }
-    if (label) {
-      label.textContent = "";
+    if (inputs.label) {
+      inputs.label.textContent = "";
     }
   }
 
   function readRoiFromDom() {
-    const elx1 = document.getElementById("x1");
-    const ely1 = document.getElementById("y1");
-    const elx2 = document.getElementById("x2");
-    const ely2 = document.getElementById("y2");
+    const inputs = getRoiInputs();
+    if (!inputs.x1 || !inputs.y1 || !inputs.x2 || !inputs.y2) return null;
 
-    if (!elx1 || !ely1 || !elx2 || !ely2) return null;
-
-    const x1 = parseFloat(elx1.value);
-    const y1 = parseFloat(ely1.value);
-    const x2 = parseFloat(elx2.value);
-    const y2 = parseFloat(ely2.value);
+    const x1 = parseFloat(inputs.x1.value);
+    const y1 = parseFloat(inputs.y1.value);
+    const x2 = parseFloat(inputs.x2.value);
+    const y2 = parseFloat(inputs.y2.value);
 
     if (
       !isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) &&

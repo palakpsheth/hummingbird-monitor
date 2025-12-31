@@ -1854,3 +1854,8 @@ def test_export_observation_includes_roi(tmp_path, monkeypatch):
         roi_member = next(n for n in names if n.endswith("/roi.jpg"))
         f = tf.extractfile(roi_member)
         assert f.read() == b"roi"
+
+        # Verify metadata
+        metadata_member = next(n for n in names if n.endswith("/metadata.json"))
+        metadata = json.loads(tf.extractfile(metadata_member).read().decode("utf-8"))
+        assert metadata["original_observation"]["extra"]["snapshots"]["roi_path"] == "roi.jpg"
