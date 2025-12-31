@@ -484,7 +484,7 @@ Then inside the worker container:
 To build CUDA-enabled images, use the Makefile targets (or pass the build arg yourself):
 
 ```bash
-make docker-build-gpu
+make docker-build-cuda
 make docker-up-cuda
 ```
 

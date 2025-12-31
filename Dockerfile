@@ -29,8 +29,8 @@ RUN mkdir -p /tmp/ffmpeg && \
 ARG INSTALL_OPENVINO=0
 RUN if [ "$INSTALL_OPENVINO" = "1" ]; then \
     wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy client" \
-    > /etc/apt/sources.list.d/intel-gpu-jammy.list \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/debian bookworm client" \
+    > /etc/apt/sources.list.d/intel-gpu-bookworm.list \
     # Pin Intel packages to prefer the Intel repository over Debian's
     && echo "Package: intel-* level-zero libigc* intel-igc-*\nPin: origin repositories.intel.com\nPin-Priority: 1000" > /etc/apt/preferences.d/intel-gpu-pin \
     && apt-get update \

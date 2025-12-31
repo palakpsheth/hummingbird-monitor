@@ -15,7 +15,7 @@ PYTEST_INTEGRATION_ARGS ?= -m "integration"
 PYTORCH_INDEX_URL ?= https://download.pytorch.org/whl/cpu
 PYTORCH_GPU_INDEX_URL ?= https://download.pytorch.org/whl/cu121
 
-.PHONY: help venv sync sync-gpu lint test test-unit test-integration pre-commit check-gpu docker-build docker-up docker-build-gpu docker-up-gpu docker-build-openvino docker-up-openvino docker-down docker-ps clean-db clean-media clean-data
+.PHONY: help venv sync sync-gpu lint test test-unit test-integration pre-commit check-gpu docker-build docker-up docker-build-cuda docker-up-cuda docker-build-intel docker-up-intel docker-down docker-ps clean-db clean-media clean-data
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
