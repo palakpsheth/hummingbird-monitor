@@ -192,8 +192,6 @@ services:
     # Intel GPU (OpenVINO) device mapping - required for HBMON_INFERENCE_BACKEND=openvino-gpu
     devices:
       - /dev/dri:/dev/dri
-    group_add:
-      - render
     environment:
       - TZ=America/Los_Angeles
 
