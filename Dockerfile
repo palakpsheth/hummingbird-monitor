@@ -1,4 +1,6 @@
-FROM python:3.12-slim
+
+# Pin to bookworm for stability
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -22,11 +24,13 @@ RUN if [ "$INSTALL_OPENVINO" = "1" ]; then \
         wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg \
         && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy client" \
            > /etc/apt/sources.list.d/intel-gpu-jammy.list \
+        # Pin Intel packages to prefer the Intel repository over Debian's
+        && echo "Package: *\nPin: origin repositories.intel.com\nPin-Priority: 1000" > /etc/apt/preferences.d/intel-gpu-pin \
         && apt-get update \
         && apt-get install -y --no-install-recommends \
-           intel-opencl-icd \
            intel-level-zero-gpu \
            level-zero \
+           intel-opencl-icd \
         && rm -rf /var/lib/apt/lists/*; \
     fi
 
