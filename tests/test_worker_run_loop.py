@@ -55,7 +55,7 @@ class _DummyYOLO:
     def __init__(self, model_name: str):
         self.model_name = model_name
 
-    def predict(self, frame, *, conf, iou, classes, verbose=False):
+    def predict(self, frame, *, conf, iou, classes, verbose=False, **kwargs):
         return [_DummyResult()]
 
 
@@ -200,7 +200,7 @@ class _RejectYOLO:
     def __init__(self, model_name: str):
         self.model_name = model_name
 
-    def predict(self, frame, *, conf, iou, classes, verbose=False):
+    def predict(self, frame, *, conf, iou, classes, verbose=False, **kwargs):
         return [_RejectResult()]
 
 

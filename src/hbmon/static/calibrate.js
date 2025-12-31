@@ -32,6 +32,25 @@
     return Math.max(0, Math.min(1, v));
   }
 
+  function snapToStride32(normVal, totalPx) {
+    if (!totalPx || totalPx <= 0) return normVal;
+    // Calculate raw pixels
+    const rawPx = Math.abs(normVal * totalPx);
+    // Round up to nearest 32
+    // Math.ceil(0) is 0, so we handle that naturally
+    let snappedPx = Math.ceil(rawPx / 32) * 32;
+
+    // Optional: if user is trying to make it very small but non-zero,
+    // ensure at least 32px? The Math.ceil handles anything > 0 to become 32.
+    // However, if rawPx was 0 (start point), snappedPx is 0.
+
+    // Constraint: don't exceed image dimension
+    if (snappedPx > totalPx) {
+      snappedPx = Math.floor(totalPx / 32) * 32;
+    }
+    return snappedPx / totalPx;
+  }
+
   function imgRect() {
     return img.getBoundingClientRect();
   }
@@ -146,10 +165,38 @@
     const x = clamp01((e.clientX - b.left) / b.width);
     const y = clamp01((e.clientY - b.top) / b.height);
 
-    const x1 = Math.min(start.x, x);
-    const y1 = Math.min(start.y, y);
-    const x2 = Math.max(start.x, x);
-    const y2 = Math.max(start.y, y);
+    const nw = img.naturalWidth || 1000;
+    const nh = img.naturalHeight || 1000;
+
+    let x1, x2, y1, y2;
+
+    // Calculate width relative to start x
+    const rawW = Math.abs(x - start.x);
+    const snappedW = snapToStride32(rawW, nw);
+
+    if (x < start.x) {
+      // Dragging left
+      x2 = start.x;
+      x1 = Math.max(0, x2 - snappedW);
+    } else {
+      // Dragging right
+      x1 = start.x;
+      x2 = Math.min(1, x1 + snappedW);
+    }
+
+    // Calculate height relative to start y
+    const rawH = Math.abs(y - start.y);
+    const snappedH = snapToStride32(rawH, nh);
+
+    if (y < start.y) {
+      // Dragging up
+      y2 = start.y;
+      y1 = Math.max(0, y2 - snappedH);
+    } else {
+      // Dragging down
+      y1 = start.y;
+      y2 = Math.min(1, y1 + snappedH);
+    }
 
     proposedRect = {
       x: x1,
@@ -233,19 +280,40 @@
       const y = clamp01((e.clientY - b.top) / b.height);
 
       let { x1, y1, x2, y2 } = resizeState;
+      const nw = img.naturalWidth || 1000;
+      const nh = img.naturalHeight || 1000;
 
-      // Adjust the relevant boundary, preventing crossover
-      // (min/max checks ensure we don't invert the box)
-      const minSize = 0.005; // minimum size constraint
-
+      // Determine which edge is moving and snap the resulting dimension
       if (resizeState.edge === "n") {
-        y1 = Math.min(y, y2 - minSize);
+        // Changing top edge (y1). Fixed bottom is y2.
+        // New height = y2 - y
+        let newH = y2 - y;
+        if (newH < 0) newH = 0; // handled by abs in snap but logic here implies direction
+        // Actually, if user drags below y2, we might invert? 
+        // Original code prevented invert with minSize.
+        // Let's use snap logic on the height.
+
+        let snappedH = snapToStride32(newH, nh);
+        // y1 should be y2 - snappedH
+        y1 = Math.max(0, y2 - snappedH);
+
       } else if (resizeState.edge === "s") {
-        y2 = Math.max(y, y1 + minSize);
+        // Changing bottom edge (y2). Fixed top is y1.
+        let newH = y - y1;
+        let snappedH = snapToStride32(newH, nh);
+        y2 = Math.min(1, y1 + snappedH);
+
       } else if (resizeState.edge === "w") {
-        x1 = Math.min(x, x2 - minSize);
+        // Changing left edge (x1). Fixed right is x2.
+        let newW = x2 - x;
+        let snappedW = snapToStride32(newW, nw);
+        x1 = Math.max(0, x2 - snappedW);
+
       } else if (resizeState.edge === "e") {
-        x2 = Math.max(x, x1 + minSize);
+        // Changing right edge (x2). Fixed left is x1.
+        let newW = x - x1;
+        let snappedW = snapToStride32(newW, nw);
+        x2 = Math.min(1, x1 + snappedW);
       }
 
       // Update global proposedRect

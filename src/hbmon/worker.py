@@ -1414,7 +1414,28 @@ async def run_worker() -> None:
         # YOLO Detect
         try:
              yolo_verbose = (os.getenv("HBMON_DEBUG_VERBOSE") == "1")
-             results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=[bird_class_id], verbose=yolo_verbose)
+             
+             # Resolve inference image size
+             # Default to 1088,1920 if not set (matches typical 1080p RTSP)
+             imgsz_env = os.getenv("HBMON_YOLO_IMGSZ", "1088,1920").strip()
+             
+             if imgsz_env.lower() == "auto":
+                 # Snap height/width to nearest stride 32 based on the actual input frame
+                 h, w = roi_frame.shape[:2]
+                 target_h = int(np.ceil(h / 32) * 32)
+                 target_w = int(np.ceil(w / 32) * 32)
+                 predict_imgsz = [target_h, target_w]
+             else:
+                 # Parse H,W directly
+                 try:
+                     parts = imgsz_env.split(",")
+                     predict_imgsz = [int(p) for p in parts if p.strip()]
+                     # If only one number provided, YOLO treats as square [sz, sz]
+                 except ValueError:
+                     # Fallback if parse fails
+                     predict_imgsz = [1088, 1920]
+
+             results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=[bird_class_id], imgsz=predict_imgsz, verbose=yolo_verbose)
         except Exception:
              await asyncio.sleep(0.5)
              continue
