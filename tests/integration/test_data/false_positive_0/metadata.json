@@ -1,0 +1,24 @@
+{
+    "description": "False positive test case: Nighttime snapshot (empty) with a daytime background reference frame (containing a bird).",
+    "expected": {
+        "detection": false,
+        "human_verified": true
+    },
+    "source": {
+        "camera": "user_upload",
+        "timestamp_utc": "2025-12-31T04:17:04Z",
+        "location": "unknown"
+    },
+    "sensitivity_tests": [
+        {
+            "name": "default",
+            "params": {
+                "detect_conf": 0.35,
+                "detect_iou": 0.45,
+                "min_box_area": 600,
+                "bg_subtraction_enabled": true
+            },
+            "expected_detection": false
+        }
+    ]
+}

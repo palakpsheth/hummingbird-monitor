@@ -39,7 +39,7 @@
     <div class="gallery">
       {% for o in observations %}
         <div class="thumb">
-          <a href="/observations/{{ o.id }}"><img src="/media/{{ o.display_snapshot_path }}" /></a>
+          <a href="/observations/{{ o.id }}"><img src="/media/{{ o.display_snapshot_path }}" loading="lazy" alt="Observation {{ o.id }}" /></a>
           <div class="meta">
             <div>
               <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>

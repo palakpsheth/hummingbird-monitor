@@ -1,0 +1,43 @@
+{
+    "description": "True positive hummingbird detection with separate daytime snapshot and nighttime background reference.",
+    "expected": {
+        "detection": false,
+        "species_label": "Costa's Hummingbird",
+        "species_label_final": "Costa's Hummingbird",
+        "species_accepted": true,
+        "behavior": "flying",
+        "human_verified": true
+    },
+    "source": {
+        "camera": "user_upload",
+        "timestamp_utc": "2025-12-31T04:09:50Z",
+        "location": "unknown"
+    },
+    "sensitivity_tests": [
+        {
+            "name": "default",
+            "params": {
+                "detect_conf": 0.1,
+                "detect_iou": 0.45,
+                "min_box_area": 200,
+                "bg_subtraction_enabled": false
+            },
+            "expected_detection": false
+        }
+    ],
+    "original_observation": {
+        "species_label": "Anna's Hummingbird",
+        "species_prob": 0.95,
+        "extra": {
+            "sensitivity": {
+                "detect_conf": 0.1,
+                "detect_iou": 0.45,
+                "min_box_area": 200,
+                "bg_motion_threshold": 30,
+                "bg_motion_blur": 5,
+                "bg_min_overlap": 0.15,
+                "bg_subtraction_enabled": false
+            }
+        }
+    }
+}

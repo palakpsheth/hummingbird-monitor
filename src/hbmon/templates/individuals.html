@@ -1,89 +1,117 @@
 {% extends "base.html" %}
 {% block content %}
-  <div class="page-header">
-    <h1 class="page-title">Individuals</h1>
-    <div class="muted page-meta">
-      Current time:
-      <span data-current-time="true" data-timezone="{{ tz_value }}">--</span>
-      · TZ: <span>{{ tz_label }}</span>
-      · Version: <span>{{ app_version }}</span>
-      · Commit: <span>{{ git_commit }}</span>
-    </div>
+<div class="page-header">
+  <h1 class="page-title">Individuals</h1>
+  <div class="muted page-meta">
+    Current time:
+    <span data-current-time="true" data-timezone="{{ tz_value }}">--</span>
+    · TZ: <span>{{ tz_label }}</span>
+    · Version: <span>{{ app_version }}</span>
+    · Commit: <span>{{ git_commit }}</span>
+  </div>
+</div>
+
+<div class="card">
+  <form class="inline" method="get" action="/individuals">
+    <label>Sort:</label>
+    <select name="sort">
+      <option value="visits" {% if sort=="visits" %}selected{% endif %}>Most visits</option>
+      <option value="recent" {% if sort=="recent" %}selected{% endif %}>Most recent</option>
+      <option value="id" {% if sort=="id" %}selected{% endif %}>ID</option>
+    </select>
+
+    <label style="margin-left:8px;">Per page:</label>
+    <select name="page_size">
+      {% for n in limit_options %}
+      <option value="{{ n }}" {% if individuals_page_size==n %}selected{% endif %}>{{ n }}</option>
+      {% endfor %}
+    </select>
+    <input type="hidden" name="page" value="1" />
+
+    <button type="submit">Apply</button>
+
+    <span class="muted" style="margin-left:auto;">
+      Total: {{ count_shown }}{% if count_total is not none %} / {{ count_total }}{% endif %}
+    </span>
+  </form>
+</div>
+
+{% set redirect_target = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
+<form class="bulk-actions" method="post" action="/individuals/bulk_delete" data-bulk-delete data-table-id="individuals"
+  onsubmit="return confirm('Delete selected individuals? Observations will be unassigned.');">
+  <input type="hidden" name="redirect_to" value="{{ redirect_target }}" />
+  {% if csrf_token %}
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  {% endif %}
+  <div class="bulk-actions__bar">
+    <button type="submit" data-bulk-delete-button disabled>
+      Delete selected (<span data-bulk-count>0</span>)
+    </button>
   </div>
 
-  <div class="card">
-    <form class="inline" method="get" action="/individuals">
-      <label>Sort:</label>
-      <select name="sort">
-        <option value="visits" {% if sort == "visits" %}selected{% endif %}>Most visits</option>
-        <option value="recent" {% if sort == "recent" %}selected{% endif %}>Most recent</option>
-        <option value="id" {% if sort == "id" %}selected{% endif %}>ID</option>
-      </select>
-
-      <label style="margin-left:8px;">Per page:</label>
-      <select name="page_size">
-        {% for n in limit_options %}
-          <option value="{{ n }}" {% if individuals_page_size == n %}selected{% endif %}>{{ n }}</option>
-        {% endfor %}
-      </select>
-      <input type="hidden" name="page" value="1" />
-
-      <button type="submit">Apply</button>
-
-      <span class="muted" style="margin-left:auto;">
-        Total shown: {{ count_shown }}{% if count_total is not none %} / {{ count_total }}{% endif %}
-      </span>
-    </form>
-  </div>
-
-  <div class="card">
-    <div class="table individuals-table">
-      <div class="row head">
-        <div>ID</div><div>Snapshot</div><div>Name</div><div>Visits</div><div>Last seen ({{ timezone_label }})</div>
-      </div>
-
-      {% for ind in individuals %}
+  <div class="card table-scroll">
+    <table class="observations-table sortable" data-table-id="individuals" data-sortable-table>
+      <thead>
+        <tr>
+          <th class="obs-select-cell"><input type="checkbox" data-select-all aria-label="Select all" /></th>
+          <th class="sortable" data-sort-type="number" data-col-key="id">ID</th>
+          <th>Snapshot</th>
+          <th class="sortable" data-sort-type="text" data-col-key="name">Name</th>
+          <th class="sortable" data-sort-type="number" data-col-key="visits">Visits</th>
+          <th class="sortable" data-sort-type="text" data-col-key="last_seen">Last seen ({{ timezone_label }})</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ind in individuals %}
         {% set hue = (ind.id * 47) % 360 %}
         {% set proto_obs = ind.prototype_observation if ind.prototype_observation is defined else none %}
-        <div class="row">
-          <div>{{ ind.id }}</div>
-          <div>
+        <tr data-sort-row>
+          <td class="obs-select-cell">
+            <input type="checkbox" name="ind_ids" value="{{ ind.id }}" data-select-row />
+          </td>
+          <td data-sort-value="{{ ind.id }}">{{ ind.id }}</td>
+          <td class="obs-thumb-cell">
             {% if proto_obs %}
-              <a href="/observations/{{ proto_obs.id }}">
-                <img
-                  src="/media/{{ proto_obs.display_snapshot_path }}"
-                  alt="Prototype snapshot for individual {{ ind.id }}"
-                  loading="lazy"
-                  class="ind-thumb"
-                  width="72"
-                  height="54"
-                />
-              </a>
+            <a href="/observations/{{ proto_obs.id }}">
+              <img src="/media/{{ proto_obs.display_snapshot_path }}" alt="Prototype for {{ ind.id }}" loading="lazy"
+                class="ind-thumb" width="72" />
+            </a>
             {% else %}
-              <span class="muted">—</span>
+            <span class="muted">—</span>
             {% endif %}
-          </div>
-          <div>
+          </td>
+          <td data-sort-value="{{ ind.name }}">
             <a href="/individuals/{{ ind.id }}">
               <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ ind.name }}</span>
             </a>
-          </div>
-          <div>{{ ind.visit_count }}</div>
-          <div><span data-utc-ts="{{ ind.last_seen_utc or '' }}">{{ ind.last_seen_utc or "" }}</span></div>
-        </div>
-      {% endfor %}
-    </div>
+          </td>
+          <td data-sort-value="{{ ind.visit_count }}">{{ ind.visit_count }}</td>
+          <td data-sort-value="{{ ind.last_seen_utc or '' }}">
+            <span data-utc-ts="{{ ind.last_seen_utc or '' }}">{{ ind.last_seen_utc or "" }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
+</form>
 
-  {% if individuals_total_pages > 1 %}
-    <div class="inline" style="margin-top: 16px; gap: 8px; flex-wrap: wrap;">
-      <form method="get" action="/individuals" class="inline" style="gap: 8px;">
-        <input type="hidden" name="sort" value="{{ sort }}" />
-        <input type="hidden" name="page_size" value="{{ individuals_page_size }}" />
-        <button type="submit" name="page" value="{{ individuals_page - 1 }}" {% if individuals_page <= 1 %}disabled{% endif %}>← Previous</button>
-        <div class="muted">Page {{ individuals_page }} / {{ individuals_total_pages }} ({{ count_total }} total)</div>
-        <button type="submit" name="page" value="{{ individuals_page + 1 }}" {% if individuals_page >= individuals_total_pages %}disabled{% endif %}>Next →</button>
-      </form>
-    </div>
-  {% endif %}
+{% if individuals_total_pages > 1 %}
+<div class="inline" style="margin-top: 16px; gap: 8px; flex-wrap: wrap;">
+  <form method="get" action="/individuals" class="inline" style="gap: 8px;">
+    <input type="hidden" name="sort" value="{{ sort }}" />
+    <input type="hidden" name="page_size" value="{{ individuals_page_size }}" />
+    <button type="submit" name="page" value="{{ individuals_page - 1 }}" {% if individuals_page <=1 %}disabled{% endif
+      %}>← Previous</button>
+    <div class="muted">Page {{ individuals_page }} / {{ individuals_total_pages }} ({{ count_total }} total)</div>
+    <button type="submit" name="page" value="{{ individuals_page + 1 }}" {% if individuals_page>=
+      individuals_total_pages %}disabled{% endif %}>Next →</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/table_sort.js"></script>
+<script src="/static/observations_bulk.js"></script>
 {% endblock %}

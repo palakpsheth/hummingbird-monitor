@@ -10,6 +10,7 @@ import tarfile
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import numpy as np
 import pytest
 from sqlalchemy import select
 
@@ -1569,3 +1570,245 @@ def test_dashboard_contains_live_camera_feed_section(tmp_path, monkeypatch):
     assert "live-feed-pause" in r.text
     assert "data-snapshot-src" in r.text
     assert "/api/stream.mjpeg" in r.text
+
+def test_bulk_delete_observations_empty(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.post("/observations/bulk_delete", data={"obs_ids": []}, follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/observations"
+
+def test_bulk_delete_individuals_empty(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.post("/individuals/bulk_delete", data={"ind_ids": []}, follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/individuals"
+
+def test_candidates_filtering(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    from hbmon.models import Candidate
+    with session_scope() as db:
+        c1 = Candidate(ts=utcnow(), snapshot_path="c1.jpg")
+        c1.set_extra({"reason": "motion_low", "review": {"label": "false_negative"}, "species": "Hummingbird"})
+        db.add(c1)
+        db.commit()
+
+    # Filter by reason
+    r = client.get("/candidates?reason=motion_low")
+    assert r.status_code == 200
+    assert "c1.jpg" in r.text
+
+    # Filter by label
+    r = client.get("/candidates?label=false_negative")
+    assert r.status_code == 200
+    assert "c1.jpg" in r.text
+
+    # Filter by non-matching reason
+    r = client.get("/candidates?reason=other")
+    assert r.status_code == 200
+    assert "c1.jpg" not in r.text
+
+def test_redirect_sanitization(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    # Test bulk delete with malicious redirect
+    r = client.post("/observations/bulk_delete", data={"obs_ids": [], "redirect_to": "http://evil.com"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/observations"
+
+def test_individual_rename(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    with session_scope() as db:
+        ind = Individual(name="Old Name")
+        db.add(ind)
+        db.commit()
+        ind_id = ind.id
+    
+    r = client.post(f"/individuals/{ind_id}/rename", data={"name": "New Name"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == f"/individuals/{ind_id}"
+    
+    with session_scope() as db:
+        ind = db.get(Individual, ind_id)
+        assert ind.name == "New Name"
+
+def test_individual_rename_not_found(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.post("/individuals/999/rename", data={"name": "New Name"})
+    assert r.status_code == 404
+
+def test_individual_delete(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    with session_scope() as db:
+        ind = Individual(name="To Delete")
+        db.add(ind)
+        db.commit()
+        ind_id = ind.id
+    
+    r = client.post(f"/individuals/{ind_id}/delete", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/individuals"
+    
+    with session_scope() as db:
+        assert db.get(Individual, ind_id) is None
+
+def test_individual_refresh_embedding_no_embs(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    with session_scope() as db:
+        ind = Individual(name="No Embs")
+        db.add(ind)
+        db.commit()
+        ind_id = ind.id
+    
+    r = client.post(f"/individuals/{ind_id}/refresh_embedding", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == f"/individuals/{ind_id}"
+
+def test_api_roi_get_set(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    # GET default
+    r = client.get("/api/roi")
+    assert r.status_code == 200
+    assert r.json() == {"x1": 0.0, "y1": 0.0, "x2": 1.0, "y2": 1.0}
+    
+    # POST new ROI
+    r = client.post("/api/roi", data={"x1": 0.1, "y1": 0.1, "x2": 0.9, "y2": 0.9}, follow_redirects=False)
+    assert r.status_code == 303
+    
+    # GET updated
+    r = client.get("/api/roi")
+    assert r.json() == {"x1": 0.1, "y1": 0.1, "x2": 0.9, "y2": 0.9}
+
+def test_api_background_info(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/api/background")
+    assert r.status_code == 200
+    data = r.json()
+    assert "configured" in data
+    assert "exists" in data
+
+def test_api_background_clear(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.post("/api/background/clear", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/background"
+
+def test_api_health_extended(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/api/health")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert "version" in data
+    assert "db_ok" in data
+
+def test_api_video_info_not_found(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/api/video_info/999")
+    assert r.status_code == 404
+
+def test_observation_delete_recomputes_stats(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    with session_scope() as db:
+        ind = Individual(name="Test Ind")
+        db.add(ind)
+        db.commit()
+        ind_id = ind.id
+        
+        obs1 = Observation(
+            ts=utcnow(),
+            species_label="Anna",
+            snapshot_path="s1.jpg",
+            video_path="v1.mp4",
+            individual_id=ind_id
+        )
+        obs2 = Observation(
+            ts=utcnow(),
+            species_label="Anna",
+            snapshot_path="s2.jpg",
+            video_path="v2.mp4",
+            individual_id=ind_id
+        )
+        db.add_all([obs1, obs2])
+        db.commit()
+        obs1_id = obs1.id
+        
+        # Verify initial stats
+        db.refresh(ind)
+        # _recompute_individual_stats might not have run yet if not triggered, 
+        # but worker usually does it. Here we manually trigger via delete.
+    
+    # Delete one observation
+    r = client.post("/observations/bulk_delete", data={"obs_ids": [obs1_id]}, follow_redirects=False)
+    assert r.status_code == 303
+    
+    with session_scope() as db:
+        ind = db.get(Individual, ind_id)
+        # Total was 2, now should be 1
+        assert ind.visit_count == 1
+
+def test_individual_refresh_embedding_with_embs(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    with session_scope() as db:
+        ind = Individual(name="With Embs")
+        db.add(ind)
+        db.commit()
+        ind_id = ind.id
+        
+        obs = Observation(ts=utcnow(), species_label="Anna", snapshot_path="s.jpg", video_path="v.mp4", individual_id=ind_id)
+        db.add(obs)
+        db.commit()
+        
+        emb = Embedding(observation_id=obs.id, individual_id=ind_id)
+        emb.set_vec(np.zeros(512))
+        db.add(emb)
+        db.commit()
+        
+    r = client.post(f"/individuals/{ind_id}/refresh_embedding", follow_redirects=False)
+    assert r.status_code == 303
+    
+    with session_scope() as db:
+        ind = db.get(Individual, ind_id)
+        assert ind.prototype_blob is not None
+
+def test_config_save_complete(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    data = {
+        "detect_conf": "0.55",
+        "detect_iou": "0.45",
+        "min_box_area": "500",
+        "cooldown_seconds": "10.0",
+        "min_species_prob": "0.8",
+        "match_threshold": "0.7",
+        "ema_alpha": "0.5",
+        "timezone": "UTC",
+        "bg_subtraction_enabled": "on",
+        "bg_motion_threshold": "30",
+        "bg_motion_blur": "5",
+        "bg_min_overlap": "0.15"
+    }
+    r = client.post("/config", data=data, follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/config?saved=1"
+
+def test_config_save_invalid_tz(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    data = {
+        "detect_conf": "0.55",
+        "detect_iou": "0.45",
+        "min_box_area": "500",
+        "timezone": "Invalid/Timezone"
+    }
+    r = client.post("/config", data=data)
+    assert r.status_code == 400
+    assert "Timezone must be a valid IANA name" in r.text
+
+def test_api_roi_post(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.post("/api/roi", data={"x1": "0.2", "y1": "0.2", "x2": "0.8", "y2": "0.8"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/calibrate"
+
+def test_api_background_upload_invalid(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    # Empty upload
+    r = client.post("/api/background/upload", data={})
+    assert r.status_code == 400

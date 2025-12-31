@@ -58,7 +58,6 @@ from hbmon.config import (
     ensure_dirs,
     env_bool,
     env_int,
-    env_str,
     load_settings,
     media_dir,
 )
@@ -126,6 +125,24 @@ class CandidateMediaPaths:
     clip_rel: str
     mask_rel: str
     mask_overlay_rel: str
+
+
+@dataclass
+class CandidateItem:
+    """Item sent from producer to consumer queue."""
+    frame: np.ndarray
+    det_full: Det
+    det: Det | None = None
+    timestamp: float = 0.0
+    motion_mask: np.ndarray | None = None
+    background_img: np.ndarray | None = None
+    settings_snapshot: dict[str, Any] | None = None
+    roi_stats: dict[str, Any] | None = None
+    bbox_stats: dict[str, Any] | None = None
+    bg_active: bool = False
+    s: Settings | None = None
+    is_rejected: bool = False
+    rejected_reason: str | None = None
 
 
 def _build_observation_media_paths(stamp: str, observation_uuid: str | None = None) -> ObservationMediaPaths:
@@ -494,6 +511,13 @@ def _write_jpeg(path: Path, frame_bgr: np.ndarray) -> None:
     if not ok:
         raise RuntimeError("cv2.imencode failed for jpeg")
     path.write_bytes(buf.tobytes())
+
+
+async def _write_jpeg_async(path: Path, frame_bgr: np.ndarray) -> None:
+    """
+    Async wrapper for _write_jpeg to enable parallel I/O operations.
+    """
+    await asyncio.to_thread(_write_jpeg, path, frame_bgr)
 
 
 def _write_png(path: Path, image: np.ndarray) -> None:
@@ -952,6 +976,250 @@ async def _match_or_create_individual(
     return int(ind.id), 0.0
 
 
+async def _prepare_crop_and_clip(
+    frame: np.ndarray,
+    det: Det,
+    crop_padding: float,
+    snap_clip_path: Path,
+    clip: ClipModel | None,
+) -> tuple[np.ndarray, tuple[str | None, float], np.ndarray | None]:
+    """
+    Crop the detection and run CLIP inference for species and embedding.
+    """
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = _bbox_with_padding(det, (h, w), pad_frac=crop_padding)
+    crop = frame[y1:y2, x1:x2].copy()
+    await _write_jpeg_async(snap_clip_path, crop)
+
+    if clip is None:
+        return crop, (None, 0.0), None
+
+    results = await asyncio.gather(
+        asyncio.to_thread(clip.predict_species_label_prob, crop),
+        asyncio.to_thread(clip.encode_embedding, crop)
+    )
+    (species_label, species_prob), emb = results
+    return crop, (species_label, float(species_prob)), emb
+
+
+async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_root: Path, sem: asyncio.Semaphore) -> None:
+    """
+    Background task to process a single bird candidate.
+    """
+    try:
+        frame = item.frame
+        det_full = item.det_full
+        motion_mask = item.motion_mask
+        background_img = item.background_img
+        s = item.s
+        if s is None:
+            return
+
+        save_masks = env_bool("HBMON_BG_SAVE_MASKS", True)
+        save_mask_overlay = env_bool("HBMON_BG_SAVE_MASK_OVERLAY", True)
+        mask_format = os.getenv("HBMON_BG_MASK_FORMAT", "png")
+        mask_downscale_max = int(os.getenv("HBMON_BG_MASK_DOWNSCALE_MAX", "0"))
+
+        if item.is_rejected:
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            candidate_paths = _build_candidate_media_paths(stamp, mask_ext=mask_format)
+            snap_path = media_root / candidate_paths.snapshot_rel
+            snap_annotated_path = media_root / candidate_paths.snapshot_annotated_rel
+            mask_path = media_root / candidate_paths.mask_rel
+            mask_overlay_path = media_root / candidate_paths.mask_overlay_rel
+            
+            _safe_mkdir(snap_path.parent)
+            _safe_mkdir(mask_path.parent)
+
+            annotated_frame = _draw_bbox(frame, det_full, show_confidence=True)
+            await asyncio.gather(
+                _write_jpeg_async(snap_path, frame),
+                _write_jpeg_async(snap_annotated_path, annotated_frame)
+            )
+
+            mask_rel = None
+            mask_overlay_rel = None
+            if save_masks and motion_mask is not None:
+                overlay_dest = mask_overlay_path if save_mask_overlay else None
+                await asyncio.to_thread(
+                    _save_motion_mask_images,
+                    motion_mask=motion_mask,
+                    roi_frame=frame,
+                    mask_path=mask_path,
+                    overlay_path=overlay_dest,
+                    downscale_max=mask_downscale_max,
+                )
+                mask_rel = candidate_paths.mask_rel
+                mask_overlay_rel = candidate_paths.mask_overlay_rel if save_mask_overlay else None
+
+            candidate_extra = {
+                "reason": item.rejected_reason or "motion_rejected",
+                "bg": {"active": item.bg_active},
+                "motion": item.roi_stats or {},
+                "detection": {
+                    "confidence": float(det_full.conf),
+                    "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
+                    "bbox_area": int(det_full.area),
+                }
+            }
+            if item.bbox_stats:
+                candidate_extra["motion"].update(item.bbox_stats)
+
+            async with async_session_scope() as db:
+                candidate = Candidate(
+                    ts=utcnow(),
+                    camera_name=s.camera_name,
+                    bbox_x1=int(det_full.x1),
+                    bbox_y1=int(det_full.y1),
+                    bbox_x2=int(det_full.x2),
+                    bbox_y2=int(det_full.y2),
+                    snapshot_path=candidate_paths.snapshot_rel,
+                    annotated_snapshot_path=candidate_paths.snapshot_annotated_rel,
+                    mask_path=mask_rel,
+                    mask_overlay_path=mask_overlay_rel,
+                    extra_json=None
+                )
+                candidate.set_extra(candidate_extra)
+                db.add(candidate)
+            return
+
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        media_paths = _build_observation_media_paths(stamp)
+        snap_id = media_paths.observation_uuid
+        
+        snap_path = media_root / media_paths.snapshot_rel
+        snap_annotated_path = media_root / media_paths.snapshot_annotated_rel
+        snap_clip_path = media_root / media_paths.snapshot_clip_rel
+        snap_background_path = media_root / media_paths.snapshot_background_rel
+        clip_path = media_root / media_paths.clip_rel
+
+        _safe_mkdir(snap_path.parent)
+        _safe_mkdir(clip_path.parent)
+
+        annotated_frame = _draw_bbox(frame, det_full, show_confidence=True)
+        await asyncio.gather(
+            _write_jpeg_async(snap_path, frame),
+            _write_jpeg_async(snap_annotated_path, annotated_frame)
+        )
+
+        clip_rel = ""
+        try:
+            recorded_path = await asyncio.to_thread(
+                _record_clip_from_rtsp,
+                s.rtsp_url,
+                clip_path,
+                float(s.clip_seconds),
+                max_fps=20.0
+            )
+            clip_rel = str(recorded_path.relative_to(media_root))
+        except Exception as e:
+            print(f"[worker] clip record failed: {e}")
+
+        if background_img is not None:
+            await _write_jpeg_async(snap_background_path, background_img)
+
+        mask_rel = None
+        mask_overlay_rel = None
+        if save_masks and motion_mask is not None:
+            rel_m, rel_o = _build_mask_paths(stamp, snap_id, mask_ext=mask_format)
+            await asyncio.to_thread(
+                _save_motion_mask_images,
+                motion_mask=motion_mask,
+                roi_frame=frame,
+                mask_path=media_root / rel_m,
+                overlay_path=(media_root / rel_o) if save_mask_overlay else None,
+                downscale_max=mask_downscale_max
+            )
+            mask_rel = rel_m
+            mask_overlay_rel = rel_o if save_mask_overlay else None
+
+        crop, (raw_species_label, raw_species_prob), emb = await _prepare_crop_and_clip(
+            frame, det_full, float(s.crop_padding), snap_clip_path, clip
+        )
+        species_label = raw_species_label
+        species_prob = float(raw_species_prob)
+        if species_prob < float(s.min_species_prob):
+            species_label = "Hummingbird (unknown species)"
+
+        async with async_session_scope() as db:
+            individual_id, match_score = await _match_or_create_individual(
+                db, emb, species_label=species_label,
+                match_threshold=float(s.match_threshold),
+                ema_alpha=float(s.ema_alpha)
+            )
+
+            snapshots_data = {
+                "annotated_path": media_paths.snapshot_annotated_rel,
+                "clip_path": media_paths.snapshot_clip_rel,
+                "background_path": media_paths.snapshot_background_rel if background_img is not None else ""
+            }
+            
+            extra_data = _build_observation_extra_data(
+                observation_uuid=snap_id,
+                sensitivity=item.settings_snapshot or {},
+                detection={
+                    "box_confidence": float(det_full.conf),
+                    "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
+                    "bbox_area": int(det_full.area)
+                },
+                identification={
+                    "individual_id": individual_id,
+                    "match_score": float(match_score),
+                    "species_label": raw_species_label,
+                    "species_prob": species_prob,
+                    "species_label_final": species_label
+                },
+                snapshots=snapshots_data
+            )
+            if item.roi_stats or item.bbox_stats:
+                extra_data["motion"] = {**(item.roi_stats or {}), **(item.bbox_stats or {})}
+            
+            obs = Observation(
+                ts=utcnow(), camera_name=s.camera_name,
+                species_label=species_label, species_prob=species_prob,
+                individual_id=individual_id, match_score=match_score,
+                bbox_x1=int(det_full.x1), bbox_y1=int(det_full.y1),
+                bbox_x2=int(det_full.x2), bbox_y2=int(det_full.y2),
+                snapshot_path=media_paths.snapshot_rel,
+                video_path=clip_rel or "clips/none.mp4",
+                extra_json=None
+            )
+            obs.set_extra(extra_data)
+            db.add(obs)
+            await db.flush()
+            if emb is not None:
+                e = Embedding(observation_id=int(obs.id), individual_id=individual_id)
+                e.set_vec(emb)
+                db.add(e)
+            
+            print(f"[worker] Saved observation {obs.id} (ind={individual_id})")
+            
+            if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+                 print(f"[worker] [DEBUG] Processing details: individual={individual_id}, species={species_label}({species_prob:.2f}), match_score={match_score:.2f}")
+
+    except Exception as e:
+        print(f"[worker] task failed: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        sem.release()
+
+
+async def processing_dispatcher(queue: asyncio.Queue, clip: ClipModel) -> None:
+    """
+    Continuously pulls items from the queue and dispatches them to be processed.
+    """
+    max_tasks = int(os.getenv("HBMON_WORKER_MAX_CONCURRENT_TASKS", "4"))
+    sem = asyncio.Semaphore(max_tasks)
+    media_root = media_dir()
+    print(f"[worker] Dispatcher started (max_tasks={max_tasks})")
+    while True:
+        item = await queue.get()
+        await sem.acquire()
+        asyncio.create_task(process_candidate_task(item, clip, media_root, sem))
+        queue.task_done()
+
+
 async def run_worker() -> None:
     """
     Main loop for the hummingbird monitoring worker.  Requires OpenCV,
@@ -978,7 +1246,6 @@ async def run_worker() -> None:
     yolo = YOLO(yolo_model_name)  # type: ignore[misc]
 
     # Resolve the class id for 'bird' from the model's names mapping when possible.
-    # This keeps things robust if you later use custom-trained weights with different class ordering.
     bird_class_id: int | None = None
     try:
         names = getattr(yolo, 'names', None)
@@ -1001,7 +1268,11 @@ async def run_worker() -> None:
     else:
         print(f'[worker] Resolved bird_class_id={bird_class_id} from model names')
 
+    # Start dispatcher
+    queue: asyncio.Queue = asyncio.Queue()
     clip = ClipModel(device=os.getenv("HBMON_DEVICE", "cpu"))
+    asyncio.create_task(processing_dispatcher(queue, clip))
+
     env = os.getenv("HBMON_SPECIES_LIST", "").strip()
     if env:
         import re
@@ -1013,74 +1284,52 @@ async def run_worker() -> None:
     background_img: np.ndarray | None = _load_background_image()
     last_background_check = time.time()
 
-    def _parse_env_bool(value: str) -> bool:
-        return value.strip().lower() in ("1", "true", "yes", "y", "on")
-
     bg_env_overrides: dict[str, object] = {}
     env_bg_enabled = os.getenv("HBMON_BG_SUBTRACTION")
     if env_bg_enabled is not None and env_bg_enabled.strip():
-        bg_env_overrides["bg_subtraction_enabled"] = _parse_env_bool(env_bg_enabled)
+        bg_env_overrides["bg_subtraction_enabled"] = (env_bg_enabled.strip().lower() in ("1", "true", "yes", "y", "on"))
 
     env_bg_threshold = os.getenv("HBMON_BG_MOTION_THRESHOLD")
     if env_bg_threshold is not None and env_bg_threshold.strip():
         try:
             bg_env_overrides["bg_motion_threshold"] = int(env_bg_threshold)
         except ValueError:
-            print(f"[worker] Invalid HBMON_BG_MOTION_THRESHOLD={env_bg_threshold!r}; ignoring.")
+            pass
 
     env_bg_blur = os.getenv("HBMON_BG_MOTION_BLUR")
     if env_bg_blur is not None and env_bg_blur.strip():
         try:
             bg_env_overrides["bg_motion_blur"] = int(env_bg_blur)
         except ValueError:
-            print(f"[worker] Invalid HBMON_BG_MOTION_BLUR={env_bg_blur!r}; ignoring.")
+            pass
 
     env_bg_overlap = os.getenv("HBMON_BG_MIN_OVERLAP")
     if env_bg_overlap is not None and env_bg_overlap.strip():
         try:
             bg_env_overrides["bg_min_overlap"] = float(env_bg_overlap)
         except ValueError:
-            print(f"[worker] Invalid HBMON_BG_MIN_OVERLAP={env_bg_overlap!r}; ignoring.")
+            pass
 
-    cap: 'cv2.VideoCapture | None' = None  # type: ignore[name-defined]
+    cap: cv2.VideoCapture | None = None  # type: ignore
     last_settings_load = 0.0
     settings: Settings | None = None
-    last_bg_settings: tuple[bool, int, int, float] | None = None
 
     last_trigger = 0.0
+    last_debug_log = 0.0
     last_logged_candidate_ts = 0.0
     candidate_log_times: deque[float] = deque()
-
-    def _can_log_candidate(now: float, cooldown_seconds: float, max_per_minute: int | None) -> bool:
-        nonlocal last_logged_candidate_ts, candidate_log_times
-        if now - last_logged_candidate_ts < cooldown_seconds:
-            return False
-        if max_per_minute and max_per_minute > 0:
-            while candidate_log_times and (now - candidate_log_times[0]) > 60.0:
-                candidate_log_times.popleft()
-            if len(candidate_log_times) >= max_per_minute:
-                return False
-        return True
 
     def get_settings() -> Settings:
         nonlocal last_settings_load, settings
         now = time.time()
         if settings is None or (now - last_settings_load) > 3.0:
             settings = load_settings(apply_env_overrides=False)
-
-            # Always honor operational env overrides for RTSP URL and camera name,
-            # even when user-tunable settings (thresholds, ROI) come from config.json.
             env_rtsp = os.getenv("HBMON_RTSP_URL")
             if env_rtsp:
-                if settings.rtsp_url != env_rtsp:
-                    print(f"[worker] Overriding rtsp_url from env: {env_rtsp}")
                 settings.rtsp_url = env_rtsp
-
             env_camera = os.getenv("HBMON_CAMERA_NAME")
             if env_camera:
-                if getattr(settings, "camera_name", None) != env_camera:
-                    print(f"[worker] Overriding camera_name from env: {env_camera}")
-                settings.camera_name = env_camera  # type: ignore[attr-defined]
+                settings.camera_name = env_camera  # type: ignore
 
             if bg_env_overrides:
                 if "bg_subtraction_enabled" in bg_env_overrides:
@@ -1094,530 +1343,184 @@ async def run_worker() -> None:
             last_settings_load = now
         return settings
 
+    consecutive_failures = 0
+    print("[worker] Producer loop started.")
     while True:
         s = get_settings()
         if not s.rtsp_url:
-            print("[worker] HBMON_RTSP_URL not set. Sleeping...")
             await asyncio.sleep(2.0)
             continue
 
-        # Ensure capture
         if cap is None or not cap.isOpened():
             print(f"[worker] Opening RTSP: {s.rtsp_url}")
             cap = cv2.VideoCapture(s.rtsp_url)
-            # Small buffer helps reduce lag
             try:
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
             except Exception:
                 pass
-
-            # Give it a moment
             await asyncio.sleep(0.5)
 
         ok, frame = cap.read()
         if not ok or frame is None:
-            print("[worker] Frame read failed; reconnecting in 1s...")
-            try:
-                cap.release()
-            except Exception:
-                pass
+            consecutive_failures += 1
+            print(f"[worker] Frame read failed. Reconnecting... (failure {consecutive_failures})")
+            if cap:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
             cap = None
-            await asyncio.sleep(1.0)
+            # Use a shorter, increasing delay for read failures
+            await asyncio.sleep(min(0.2 * consecutive_failures, 2.0))
             continue
+ 
+        consecutive_failures = 0
 
-        # --- Debug: prove we are receiving frames even if YOLO never triggers ---
+        # ROI & Background
+        roi_frame = frame
+        xoff, yoff = 0, 0
+        if s.roi:
+            roi_frame, (xoff, yoff) = _apply_roi(frame, s)
+
+        # Debug Logging
         debug_every = float(os.getenv("HBMON_DEBUG_EVERY_SECONDS", "10"))
-        debug_save = os.getenv("HBMON_DEBUG_SAVE_FRAMES", "0") == "1"
-
-        if not hasattr(run_worker, "_last_debug"):
-            run_worker._last_debug = 0.0  # type: ignore[attr-defined]
-
+        debug_save = env_bool("HBMON_DEBUG_SAVE_FRAMES", False)
         now_dbg = time.time()
-        if now_dbg - run_worker._last_debug > debug_every:  # type: ignore[attr-defined]
-            run_worker._last_debug = now_dbg  # type: ignore[attr-defined]
-            print(f"[worker] alive frame_shape={frame.shape} rtsp={s.rtsp_url}")
 
-            if debug_save:
-                p = media_dir() / "debug_latest.jpg"
-                _write_jpeg(p, frame)
-                print(f"[worker] wrote debug frame {p}")
+        if (now_dbg - last_debug_log) > debug_every:
+             print(f"[worker] alive q_size={queue.qsize()} rtsp={s.rtsp_url}")
+             if debug_save:
+                 await _write_jpeg_async(media_dir() / "debug_latest.jpg", frame)
+             last_debug_log = now_dbg
 
-        # Throttle overall loop (CPU friendly)
-        if s.fps_limit and s.fps_limit > 0:
-            await asyncio.sleep(max(0.0, 1.0 / float(s.fps_limit)))
+        motion_mask = None
+        bg_active = False
+        if s.bg_subtraction_enabled and background_img is not None:
+             bg_roi, _ = _apply_roi(background_img, s)
+             motion_mask = _compute_motion_mask(roi_frame, bg_roi, threshold=int(s.bg_motion_threshold), blur_size=int(s.bg_motion_blur))
+             bg_active = True
 
-        # Periodically check for background image updates (every 30 seconds)
-        now_bg = time.time()
-        if now_bg - last_background_check > 30.0:
-            last_background_check = now_bg
-            new_bg = _load_background_image()
-            if new_bg is not None and background_img is None:
-                print("[worker] Background image now available, enabling motion filtering")
-                background_img = new_bg
-            elif new_bg is None and background_img is not None:
-                print("[worker] Background image removed, disabling motion filtering")
-                background_img = None
-            elif new_bg is not None:
-                background_img = new_bg
-
-        bg_enabled, bg_motion_threshold, bg_motion_blur, bg_min_overlap = _sanitize_bg_params(
-            enabled=bool(s.bg_subtraction_enabled),
-            threshold=int(s.bg_motion_threshold),
-            blur=int(s.bg_motion_blur),
-            min_overlap=float(s.bg_min_overlap),
-        )
-        bg_settings = (bg_enabled, bg_motion_threshold, bg_motion_blur, bg_min_overlap)
-        if bg_settings != last_bg_settings:
-            if background_img is not None and bg_enabled:
-                print(f"[worker] Background subtraction enabled: threshold={bg_motion_threshold}, "
-                      f"blur={bg_motion_blur}, min_overlap={bg_min_overlap}")
-            elif not bg_enabled:
-                print("[worker] Background subtraction disabled via config/env.")
-            last_bg_settings = bg_settings
-
-        log_rejected = env_bool("HBMON_BG_LOG_REJECTED", False)
-        rejected_cooldown = float(env_int("HBMON_BG_REJECTED_COOLDOWN_SECONDS", 3))
-        rejected_save_clip = env_bool("HBMON_BG_REJECTED_SAVE_CLIP", False)
-        rejected_max_per_minute = env_int("HBMON_BG_REJECTED_MAX_PER_MINUTE", 0)
-        save_masks = env_bool("HBMON_BG_SAVE_MASKS", True)
-        save_mask_overlay = env_bool("HBMON_BG_SAVE_MASK_OVERLAY", True)
-        mask_format = env_str("HBMON_BG_MASK_FORMAT", "png").lower()
-        if mask_format not in {"png"}:
-            mask_format = "png"
-        mask_downscale_max = env_int("HBMON_BG_MASK_DOWNSCALE_MAX", 0)
-
-        roi_frame, (xoff, yoff) = _apply_roi(frame, s)
-
-        # Compute motion mask for background subtraction (if enabled and background available)
-        motion_mask: np.ndarray | None = None
-        if bg_enabled and background_img is not None:
-            try:
-                # Apply same ROI to background image
-                bg_roi, _ = _apply_roi(background_img, s)
-                motion_mask = _compute_motion_mask(
-                    roi_frame,
-                    bg_roi,
-                    threshold=bg_motion_threshold,
-                    blur_size=bg_motion_blur,
-                )
-            except Exception as e:
-                if os.getenv("HBMON_DEBUG_BG", "0") == "1":
-                    print(f"[worker] Motion mask error: {e}")
-                motion_mask = None
-
-        # YOLO detect birds
+        # YOLO Detect
         try:
-            imgsz = os.getenv("HBMON_YOLO_IMGSZ", "1088,1920")
-            imgsz = imgsz.split(",")
-            imgsz = list(map(int, imgsz))
-            if not len(imgsz) == 2:
-                imgsz = [1920, 1080]
-            results = yolo.predict(
-                roi_frame,
-                conf=float(s.detect_conf),
-                iou=float(s.detect_iou),
-                classes=[bird_class_id],
-                imgsz=imgsz,
-                verbose=False,
-            )
-        except Exception as e:
-            print(f"[worker] YOLO error: {e}")
-            await asyncio.sleep(0.5)
-            continue
-
-        if os.getenv("HBMON_DEBUG_YOLO", "0") == "1":
-            r0 = results[0]
-            n = 0 if r0.boxes is None else len(r0.boxes)
-            print(f"[worker] yolo boxes={n}")
+             yolo_verbose = (os.getenv("HBMON_DEBUG_VERBOSE") == "1")
+             results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=[bird_class_id], verbose=yolo_verbose)
+        except Exception:
+             await asyncio.sleep(0.5)
+             continue
 
         detections = _collect_bird_detections(results, int(s.min_box_area), bird_class_id)
         if not detections:
             continue
 
-        kept_entries: list[tuple[Det, dict[str, float | int]]] = []
-        rejected_entries: list[tuple[Det, dict[str, float | int]]] = []
-        if motion_mask is not None:
-            for candidate_det in detections:
-                stats = _motion_overlap_stats(candidate_det, motion_mask)
-                if float(stats["bbox_overlap_ratio"]) >= float(bg_min_overlap):
-                    kept_entries.append((candidate_det, stats))
-                else:
-                    rejected_entries.append((candidate_det, stats))
-        else:
-            kept_entries = [(det, {}) for det in detections]
+        if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+             print(f"[worker] [DEBUG-YOLO] Found {len(detections)} bird detections.")
 
-        det_stats: dict[str, float | int] | None = None
+        # Check motion overlap
+        kept_entries = []
+        rejected_entries = []
+        if motion_mask is not None:
+            for d in detections:
+                stats = _motion_overlap_stats(d, motion_mask)
+                if float(stats["bbox_overlap_ratio"]) >= float(s.bg_min_overlap):
+                    kept_entries.append((d, stats))
+                else:
+                    rejected_entries.append((d, stats))
+        else:
+            kept_entries = [(d, {}) for d in detections]
+
+        det = None
+        det_stats = {}
         if kept_entries:
             det, det_stats = _select_best_detection(kept_entries)
-        else:
-            det = None
+        elif os.getenv("HBMON_DEBUG_BG") == "1" and rejected_entries:
+            # Optionally log why detections were rejected
+            for d, stats in rejected_entries:
+                print(f"[worker] [DEBUG-BG] REJECTED: p={d.conf:.2f} area={d.area} overlap={stats['bbox_overlap_ratio']:.2f} (min={s.bg_min_overlap})")
 
-        if det is None:
-            if log_rejected and rejected_entries:
-                now_reject = time.time()
-                max_per_minute = rejected_max_per_minute if rejected_max_per_minute > 0 else None
-                if _can_log_candidate(now_reject, rejected_cooldown, max_per_minute):
-                    best_rejected, rejected_stats = _select_best_detection(rejected_entries)
-                    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    candidate_paths = _build_candidate_media_paths(stamp, mask_ext=mask_format)
-                    media_root = media_dir()
-                    snapshot_path = media_root / candidate_paths.snapshot_rel
-                    snapshot_annotated_path = media_root / candidate_paths.snapshot_annotated_rel
-                    clip_path = media_root / candidate_paths.clip_rel
-                    mask_path = media_root / candidate_paths.mask_rel
-                    mask_overlay_path = media_root / candidate_paths.mask_overlay_rel
+        timestamp = time.time()
 
-                    det_full = Det(
-                        x1=best_rejected.x1 + xoff,
-                        y1=best_rejected.y1 + yoff,
-                        x2=best_rejected.x2 + xoff,
-                        y2=best_rejected.y2 + yoff,
-                        conf=best_rejected.conf,
-                    )
-
-                    try:
-                        _write_jpeg(snapshot_path, frame)
-                        annotated = _draw_bbox(frame, det_full, show_confidence=True)
-                        overlay_text = (
-                            f"motion_rejected overlap={rejected_stats['bbox_overlap_ratio']:.2f} "
-                            f"< min={bg_min_overlap:.2f} thr={bg_motion_threshold} blur={bg_motion_blur}"
-                        )
-                        annotated = _draw_text_lines(annotated, [overlay_text])
-                        _write_jpeg(snapshot_annotated_path, annotated)
-                    except Exception as e:
-                        print(f"[worker] candidate snapshot write failed: {e}")
-                        for path in (snapshot_path, snapshot_annotated_path):
-                            try:
-                                if path.exists():
-                                    path.unlink()
-                            except Exception as cleanup_err:
-                                print(f"[worker] candidate snapshot cleanup failed for {path}: {cleanup_err}")
-                        continue
-
-                    clip_rel = ""
-                    if rejected_save_clip:
-                        try:
-                            recorded_path = await asyncio.to_thread(
-                                _record_clip_from_rtsp,
-                                s.rtsp_url,
-                                clip_path,
-                                float(s.clip_seconds),
-                                max_fps=20.0,
-                            )
-                            clip_rel = str(recorded_path.relative_to(media_root))
-                        except Exception as e:
-                            print(f"[worker] candidate clip record failed: {e}")
-
-                    mask_rel = None
-                    mask_overlay_rel = None
-                    if save_masks and motion_mask is not None:
-                        try:
-                            overlay_dest = mask_overlay_path if save_mask_overlay else None
-                            _save_motion_mask_images(
-                                motion_mask=motion_mask,
-                                roi_frame=roi_frame,
-                                mask_path=mask_path,
-                                overlay_path=overlay_dest,
-                                downscale_max=mask_downscale_max,
-                            )
-                            mask_rel = candidate_paths.mask_rel
-                            if save_mask_overlay:
-                                mask_overlay_rel = candidate_paths.mask_overlay_rel
-                        except Exception as e:
-                            print(f"[worker] candidate mask save failed: {e}")
-
-                    roi_stats = _roi_motion_stats(motion_mask) if motion_mask is not None else {}
-                    candidate_extra = {
-                        "reason": "motion_rejected",
-                        "bg": {
-                            "active": True,
-                            "threshold": int(bg_motion_threshold),
-                            "blur": int(bg_motion_blur),
-                            "min_overlap": float(bg_min_overlap),
-                        },
-                        "motion": {
-                            **roi_stats,
-                            **rejected_stats,
-                        },
-                        "detection": {
-                            "confidence": float(best_rejected.conf),
-                            "bbox_xyxy": [
-                                int(best_rejected.x1),
-                                int(best_rejected.y1),
-                                int(best_rejected.x2),
-                                int(best_rejected.y2),
-                            ],
-                            "bbox_area": int(best_rejected.area),
-                            "roi_offset_xy": [int(xoff), int(yoff)],
-                        },
-                        "media": {
-                            "snapshot_raw_path": candidate_paths.snapshot_rel,
-                            "snapshot_annotated_path": candidate_paths.snapshot_annotated_rel,
-                            "mask_path": mask_rel,
-                            "mask_overlay_path": mask_overlay_rel,
-                        },
-                        "review": {"label": None, "labeled_at_utc": None},
-                    }
-
-                    async with async_session_scope() as db:
-                        candidate = Candidate(
-                            ts=utcnow(),
-                            camera_name=s.camera_name,
-                            bbox_x1=int(det_full.x1),
-                            bbox_y1=int(det_full.y1),
-                            bbox_x2=int(det_full.x2),
-                            bbox_y2=int(det_full.y2),
-                            snapshot_path=candidate_paths.snapshot_rel,
-                            annotated_snapshot_path=candidate_paths.snapshot_annotated_rel,
-                            mask_path=mask_rel,
-                            mask_overlay_path=mask_overlay_rel,
-                            clip_path=clip_rel or None,
-                            extra_json=None,
-                        )
-                        candidate.set_extra(candidate_extra)
-                        db.add(candidate)
-
-                    last_logged_candidate_ts = now_reject
-                    candidate_log_times.append(now_reject)
-            continue
-
-        # cooldown to avoid repeated triggers for the same visit
-        now = time.time()
-        if (now - last_trigger) < float(s.cooldown_seconds):
-            continue
-
-        # Translate ROI bbox to full-frame coords
-        det_full = Det(
-            x1=det.x1 + xoff,
-            y1=det.y1 + yoff,
-            x2=det.x2 + xoff,
-            y2=det.y2 + yoff,
-            conf=det.conf,
-        )
-
-        # Snapshot paths (relative under /media)
-        # We save two images: raw (original) and annotated (with bbox + confidence)
-        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        media_paths = _build_observation_media_paths(stamp)
-        snap_id = media_paths.observation_uuid
-        snap_rel = media_paths.snapshot_rel
-        snap_annotated_rel = media_paths.snapshot_annotated_rel
-        snap_clip_rel = media_paths.snapshot_clip_rel
-        snap_background_rel = media_paths.snapshot_background_rel
-        clip_rel = media_paths.clip_rel
-
-        media_root = media_dir()
-        snap_path = media_root / snap_rel
-        snap_annotated_path = media_root / snap_annotated_rel
-        snap_clip_path = media_root / snap_clip_rel
-        snap_background_path = media_root / snap_background_rel
-        clip_path = media_root / clip_rel
-
-        # Save both raw and annotated snapshots
-        try:
-            # Save raw image first
-            _write_jpeg(snap_path, frame)
-            # Save annotated image with bbox and confidence
-            annotated_frame = _draw_bbox(frame, det_full, show_confidence=True)
-            _write_jpeg(snap_annotated_path, annotated_frame)
-        except Exception as e:
-            print(f"[worker] snapshot write failed: {e}")
-            # Clean up any partially written snapshot files to avoid orphans
-            for path in (snap_path, snap_annotated_path):
-                try:
-                    if path.exists():
-                        path.unlink()
-                except Exception as cleanup_err:
-                    print(f"[worker] snapshot cleanup failed for {path}: {cleanup_err}")
-            continue
-
-        # Record clip (best effort)
-        try:
-            recorded_path = await asyncio.to_thread(
-                _record_clip_from_rtsp,
-                s.rtsp_url,
-                clip_path,
-                float(s.clip_seconds),
-                max_fps=20.0,
-            )
-            clip_rel = str(recorded_path.relative_to(media_root))
-        except Exception as e:
-            print(f"[worker] clip record failed: {e}")
-            # allow observation without clip (use snapshot only)
-            # keep video_path pointing to a non-existent file? better to keep empty placeholder
-            clip_rel = ""
-
-        # Crop around bbox for CLIP
-        h, w = frame.shape[:2]
-        x1, y1, x2, y2 = _bbox_with_padding(det_full, (h, w), pad_frac=float(s.crop_padding))
-        crop = frame[y1:y2, x1:x2].copy()
-        clip_snapshot_rel = ""
-        try:
-            _write_jpeg(snap_clip_path, crop)
-            clip_snapshot_rel = snap_clip_rel
-        except Exception as e:
-            print(f"[worker] clip snapshot write failed: {e}")
-
-        background_snapshot_rel = ""
-        if bg_enabled and background_img is not None:
-            try:
-                _write_jpeg(snap_background_path, background_img)
-                background_snapshot_rel = snap_background_rel
-            except Exception as e:
-                print(f"[worker] background snapshot write failed: {e}")
-
-        mask_rel: str | None = None
-        mask_overlay_rel: str | None = None
-        if save_masks and motion_mask is not None and bg_enabled and background_img is not None:
-            mask_rel_path, mask_overlay_rel_path = _build_mask_paths(stamp, snap_id, mask_ext=mask_format)
-            mask_path = media_root / mask_rel_path
-            overlay_dest = (media_root / mask_overlay_rel_path) if save_mask_overlay else None
-            try:
-                _save_motion_mask_images(
-                    motion_mask=motion_mask,
-                    roi_frame=roi_frame,
-                    mask_path=mask_path,
-                    overlay_path=overlay_dest,
-                    downscale_max=mask_downscale_max,
+        if det:
+            # Cooldown check
+            if (timestamp - last_trigger) >= float(s.cooldown_seconds):
+                # Accepted!
+                det_full = Det(x1=det.x1 + xoff, y1=det.y1 + yoff, x2=det.x2 + xoff, y2=det.y2 + yoff, conf=det.conf)
+                
+                # Snapshot settings
+                settings_snap = {
+                    "detect_conf": float(s.detect_conf),
+                    "bg_motion_threshold": int(s.bg_motion_threshold),
+                    "bg_motion_blur": int(s.bg_motion_blur),
+                    "bg_min_overlap": float(s.bg_min_overlap),
+                }
+                
+                item = CandidateItem(
+                    frame=frame.copy(),
+                    det_full=det_full,
+                    det=det,
+                    timestamp=timestamp,
+                    motion_mask=motion_mask.copy() if motion_mask is not None else None,
+                    background_img=background_img,
+                    settings_snapshot=settings_snap,
+                    roi_stats=_roi_motion_stats(motion_mask) if motion_mask is not None else {},
+                    bbox_stats=det_stats,
+                    bg_active=bg_active,
+                    s=s,
+                    is_rejected=False
                 )
-                mask_rel = mask_rel_path
-                if save_mask_overlay:
-                    mask_overlay_rel = mask_overlay_rel_path
-            except Exception as e:
-                print(f"[worker] motion mask save failed: {e}")
+                queue.put_nowait(item)
+                last_trigger = timestamp
+                
+                if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+                    print(f"[worker] [DEBUG] ACCEPTED: p={det.conf:.2f} area={det.area} pixels. Overlap: {det_stats.get('bbox_overlap_ratio', 0.0):.2f}")
+                else:
+                    print(f"[worker] Queued candidate (p={det.conf:.2f})")
 
-        # Species + embedding
-        try:
-            raw_species_label, raw_species_prob = clip.predict_species_label_prob(crop)
-            emb = clip.encode_embedding(crop)
-        except Exception as e:
-            print(f"[worker] CLIP error: {e}")
-            raw_species_label, raw_species_prob = "Hummingbird (unknown species)", 0.0
-            emb = None
+        # Rejected ?
+        log_rejected = env_bool("HBMON_BG_LOG_REJECTED", False)
+        if (not det) and log_rejected and rejected_entries:
+            # Check rejected cooldown
+             rejected_cooldown = float(env_int("HBMON_BG_REJECTED_COOLDOWN_SECONDS", 3))
+             max_per_minute = env_int("HBMON_BG_REJECTED_MAX_PER_MINUTE", 30)
+             
+             if (timestamp - last_logged_candidate_ts >= rejected_cooldown):
+                  # Also check max per minute
+                  while candidate_log_times and (timestamp - candidate_log_times[0]) > 60.0:
+                      candidate_log_times.popleft()
+                  
+                  if len(candidate_log_times) < max_per_minute:
+                      best_rej, rej_stats = _select_best_detection(rejected_entries)
+                      det_full_rej = Det(x1=best_rej.x1 + xoff, y1=best_rej.y1 + yoff, x2=best_rej.x2 + xoff, y2=best_rej.y2 + yoff, conf=best_rej.conf)
+                      
+                      item = CandidateItem(
+                          frame=frame.copy(),
+                          det_full=det_full_rej,
+                          timestamp=timestamp,
+                          motion_mask=motion_mask.copy() if motion_mask is not None else None,
+                          background_img=background_img,
+                          settings_snapshot={}, 
+                          roi_stats=_roi_motion_stats(motion_mask) if motion_mask is not None else {},
+                          bbox_stats=rej_stats,
+                          bg_active=bg_active,
+                          s=s,
+                          is_rejected=True,
+                          rejected_reason="motion_rejected"
+                      )
+                      queue.put_nowait(item)
+                      last_logged_candidate_ts = timestamp
+                      candidate_log_times.append(timestamp)
 
-        species_label = raw_species_label
-        species_prob = float(raw_species_prob)
-        if species_prob < float(s.min_species_prob):
-            species_label = "Hummingbird (unknown species)"
 
-        # Write DB
-        async with async_session_scope() as db:
-            individual_id = None
-            match_score = 0.0
-
-            if emb is not None:
-                individual_id, match_score = await _match_or_create_individual(
-                    db,
-                    emb,
-                    species_label=species_label,
-                    match_threshold=float(s.match_threshold),
-                    ema_alpha=float(s.ema_alpha),
-                )
-
-            bg_active = bool(bg_enabled and background_img is not None)
-            snapshots_data = {"annotated_path": snap_annotated_rel}
-            if clip_snapshot_rel:
-                snapshots_data["clip_path"] = clip_snapshot_rel
-            if background_snapshot_rel:
-                snapshots_data["background_path"] = background_snapshot_rel
-            motion_stats: dict[str, float | int] | None = None
-            if motion_mask is not None and bg_active:
-                roi_stats = _roi_motion_stats(motion_mask)
-                bbox_stats = det_stats if det_stats else _motion_overlap_stats(det, motion_mask)
-                motion_stats = {**roi_stats, **bbox_stats}
-
-            media_data: dict[str, Any] = {}
-            if mask_rel:
-                media_data["mask_path"] = mask_rel
-            if mask_overlay_rel:
-                media_data["mask_overlay_path"] = mask_overlay_rel
-            if background_snapshot_rel:
-                media_data["background_path"] = background_snapshot_rel
-
-            sensitivity_data = {
-                "detect_conf": float(s.detect_conf),
-                "detect_iou": float(s.detect_iou),
-                "min_box_area": int(s.min_box_area),
-                "cooldown_seconds": float(s.cooldown_seconds),
-                "min_species_prob": float(s.min_species_prob),
-                "match_threshold": float(s.match_threshold),
-                "ema_alpha": float(s.ema_alpha),
-                "crop_padding": float(s.crop_padding),
-                "bg_motion_threshold": int(bg_motion_threshold),
-                "bg_motion_blur": int(bg_motion_blur),
-                "bg_min_overlap": float(bg_min_overlap),
-                "bg_subtraction_enabled": bg_active,
-                "bg_subtraction_configured": bool(bg_enabled),
-                "background_image_available": bool(background_img is not None),
-            }
-            detection_data = {
-                "box_confidence": float(det_full.conf),
-                "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
-                "bbox_area": int(det_full.area),
-                "bbox_area_ratio": float(_bbox_area_ratio(det_full, (h, w))),
-                "bbox_area_ratio_frame": float(_bbox_area_ratio(det_full, (h, w))),
-                "bbox_area_ratio_roi": float(_bbox_area_ratio(det, roi_frame.shape[:2])),
-                "roi_offset_xy": [int(xoff), int(yoff)],
-                "background_subtraction_enabled": bg_active,
-                "nms_iou_threshold": float(s.detect_iou),
-            }
-            identification_data = {
-                "individual_id": individual_id,
-                "match_score": float(match_score),
-                "species_label": raw_species_label,
-                "species_prob": float(raw_species_prob),
-                "species_label_final": species_label,
-                "species_accepted": species_prob >= float(s.min_species_prob),
-            }
-            extra_data = _build_observation_extra_data(
-                observation_uuid=snap_id,
-                sensitivity=sensitivity_data,
-                detection=detection_data,
-                identification=identification_data,
-                snapshots=snapshots_data,
-            )
-            if motion_stats:
-                extra_data["motion"] = motion_stats
-            if media_data:
-                extra_data["media"] = media_data
-
-            obs = Observation(
-                ts=utcnow(),
-                camera_name=s.camera_name,
-                species_label=species_label,
-                species_prob=float(species_prob),
-                individual_id=individual_id,
-                match_score=float(match_score),
-                bbox_x1=int(det_full.x1),
-                bbox_y1=int(det_full.y1),
-                bbox_x2=int(det_full.x2),
-                bbox_y2=int(det_full.y2),
-                snapshot_path=snap_rel,
-                video_path=clip_rel if clip_rel else "clips/none.mp4",
-                extra_json=None,
-            )
-            obs.set_extra(extra_data)
-            db.add(obs)
-            await db.flush()  # get obs.id
-
-            if emb is not None:
-                e = Embedding(observation_id=int(obs.id), individual_id=individual_id)
-                e.set_vec(emb)
-                db.add(e)
-
-        last_trigger = time.time()
-
-        print(
-            f"[worker] {utcnow().isoformat(timespec='seconds')} "
-            f"species={species_label} p={species_prob:.2f} "
-            f"ind={individual_id} sim={match_score:.3f} "
-            f"bbox=({det_full.x1},{det_full.y1},{det_full.x2},{det_full.y2})"
-        )
-
+        # Update background logic (periodic check)
+        now_bg = time.time()
+        if now_bg - last_background_check > 30.0:
+             last_background_check = now_bg
+             new_bg = _load_background_image()
+             background_img = new_bg
+        
+        await asyncio.sleep(0.01)
 
 def main() -> None:
     asyncio.run(run_worker())
-
 
 if __name__ == "__main__":
     main()

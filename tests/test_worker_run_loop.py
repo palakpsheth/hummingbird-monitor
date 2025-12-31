@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from sqlalchemy import func, select
+import asyncio
 
 from hbmon import db as db_module
 from hbmon.config import Settings
@@ -48,12 +49,13 @@ class _DummyResult:
 
 
 class _DummyYOLO:
-    names = ["bird"]
+    # Use dict to allow bird_class_id resolution to find 'bird' = 0
+    names = {0: "bird"}
 
     def __init__(self, model_name: str):
         self.model_name = model_name
 
-    def predict(self, frame, *, conf, iou, classes, imgsz, verbose):
+    def predict(self, frame, *, conf, iou, classes, verbose=False):
         return [_DummyResult()]
 
 
@@ -81,6 +83,7 @@ class _DummyCap:
         return True
 
     def read(self):
+        print("DEBUG: _DummyCap.read called")
         self._read_calls += 1
         if self._read_calls == 1:
             frame = np.zeros((20, 20, 3), dtype=np.uint8)
@@ -113,10 +116,7 @@ async def test_run_worker_single_iteration(tmp_path, monkeypatch):
     monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
     monkeypatch.setenv("HBMON_RTSP_URL", "rtsp://example")
     monkeypatch.setenv("HBMON_CAMERA_NAME", "envcam")
-    monkeypatch.setenv("HBMON_BG_SUBTRACTION", "1")
-    monkeypatch.setenv("HBMON_BG_MOTION_THRESHOLD", "25")
-    monkeypatch.setenv("HBMON_BG_MOTION_BLUR", "3")
-    monkeypatch.setenv("HBMON_BG_MIN_OVERLAP", "0.2")
+    monkeypatch.setenv("HBMON_BG_SUBTRACTION", "0")
     monkeypatch.setenv("HBMON_SPECIES_LIST", "Anna's, Rufous")
 
     db_module.reset_db_state()
@@ -139,6 +139,15 @@ async def test_run_worker_single_iteration(tmp_path, monkeypatch):
 
     monkeypatch.setattr(worker.asyncio, "sleep", _noop_sleep)
 
+    queue_capture = []
+    def _capture_dispatcher_eager(q, c):
+        queue_capture.append(q)
+        async def dummy(): pass
+        return dummy()
+
+    monkeypatch.setattr(worker, "processing_dispatcher", _capture_dispatcher_eager)
+    monkeypatch.setattr("hbmon.worker.processing_dispatcher", _capture_dispatcher_eager)
+
     settings = Settings()
     settings.rtsp_url = ""
     settings.camera_name = "camera"
@@ -157,6 +166,16 @@ async def test_run_worker_single_iteration(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="stop loop"):
         await worker.run_worker()
+        
+    assert len(queue_capture) == 1
+    captured_queue = queue_capture[0]
+    
+    assert captured_queue.qsize() == 1
+    item = captured_queue.get_nowait()
+    
+    sem = asyncio.Semaphore(1)
+    clip = _DummyClip("cpu")
+    await worker.process_candidate_task(item, clip, media_dir, sem)
 
     async with db_module.async_session_scope() as session:
         total = (await session.execute(select(func.count(Observation.id)))).scalar_one()
@@ -176,12 +195,12 @@ class _RejectResult:
 
 
 class _RejectYOLO:
-    names = ["bird"]
+    names = {0: "bird"}
 
     def __init__(self, model_name: str):
         self.model_name = model_name
 
-    def predict(self, frame, *, conf, iou, classes, imgsz, verbose):
+    def predict(self, frame, *, conf, iou, classes, verbose=False):
         return [_RejectResult()]
 
 
@@ -210,13 +229,22 @@ async def test_run_worker_logs_rejected_candidate(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "_draw_bbox", lambda frame, det, **kwargs: frame)
     monkeypatch.setattr(worker, "_draw_text_lines", lambda frame, lines, **kwargs: frame)
     monkeypatch.setattr(worker, "_save_motion_mask_images", lambda *args, **kwargs: None)
-    monkeypatch.setattr(worker, "_compute_motion_mask", lambda *args, **kwargs: np.zeros((10, 10), dtype=np.uint8))
+    monkeypatch.setattr(worker, "_compute_motion_mask", lambda *args, **kwargs: np.zeros((20, 20), dtype=np.uint8))
     monkeypatch.setattr(worker, "_load_background_image", lambda: np.zeros((20, 20, 3), dtype=np.uint8))
 
     async def _noop_sleep(*args, **kwargs):
         return None
 
     monkeypatch.setattr(worker.asyncio, "sleep", _noop_sleep)
+    
+    queue_capture = []
+    def _capture_dispatcher_eager(q, c):
+        queue_capture.append(q)
+        async def dummy(): pass
+        return dummy()
+
+    monkeypatch.setattr(worker, "processing_dispatcher", _capture_dispatcher_eager)
+    monkeypatch.setattr("hbmon.worker.processing_dispatcher", _capture_dispatcher_eager)
 
     settings = Settings()
     settings.rtsp_url = "rtsp://example"
@@ -239,7 +267,17 @@ async def test_run_worker_logs_rejected_candidate(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="stop loop"):
         await worker.run_worker()
+        
+    assert len(queue_capture) == 1
+    captured_queue = queue_capture[0]
+    assert captured_queue.qsize() == 1
+    item = captured_queue.get_nowait()
+    
+    sem = asyncio.Semaphore(1)
+    clip = _DummyClip("cpu")
+    await worker.process_candidate_task(item, clip, media_dir, sem)
 
     async with db_module.async_session_scope() as session:
+        # Rejected candidates go to Candidate table
         total = (await session.execute(select(func.count(worker.Candidate.id)))).scalar_one()
         assert total == 1

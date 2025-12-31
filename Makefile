@@ -42,6 +42,7 @@ test-integration: ## Run integration/UI tests with coverage (marker: integration
 	$(PYTEST) $(PYTEST_INTEGRATION_ARGS) -vvv --cov=hbmon --cov-report=term
 
 pre-commit: ## Run all pre-commit hooks
+	$(UV_RUN) pre-commit install
 	$(UV_RUN) pre-commit run --all-files
 
 docker-build: ## Build docker images
