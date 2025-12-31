@@ -63,6 +63,7 @@ from hbmon.config import (
 )
 from hbmon.db import async_session_scope, init_async_db
 from hbmon.models import Candidate, Embedding, Individual, Observation
+from hbmon.yolo_utils import resolve_predict_imgsz
 
 # ---------------------------------------------------------------------------
 # Optional heavy dependencies
@@ -1414,7 +1415,12 @@ async def run_worker() -> None:
         # YOLO Detect
         try:
              yolo_verbose = (os.getenv("HBMON_DEBUG_VERBOSE") == "1")
-             results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=[bird_class_id], verbose=yolo_verbose)
+             
+             # Resolve inference image size using shared utility
+             imgsz_env = os.getenv("HBMON_YOLO_IMGSZ", "1088,1920").strip()
+             predict_imgsz = resolve_predict_imgsz(imgsz_env, roi_frame.shape)
+
+             results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=[bird_class_id], imgsz=predict_imgsz, verbose=yolo_verbose)
         except Exception:
              await asyncio.sleep(0.5)
              continue

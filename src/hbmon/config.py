@@ -224,6 +224,11 @@ def background_dir() -> Path:
     return data_dir() / "background"
 
 
+def yolo_config_dir() -> Path:
+    """Directory for YOLO configuration and settings."""
+    return Path(env_str("YOLO_CONFIG_DIR", str(data_dir() / "yolo"))).expanduser().resolve()
+
+
 def background_image_path() -> Path:
     """Full path to the persisted background image file."""
     return background_dir() / "background.jpg"
@@ -260,6 +265,7 @@ def ensure_dirs() -> None:
     _ensure_dir(snapshots_dir())
     _ensure_dir(clips_dir())
     _ensure_dir(background_dir())
+    _ensure_dir(yolo_config_dir())
 
 
 # ----------------------------

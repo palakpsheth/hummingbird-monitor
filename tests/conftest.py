@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from hbmon import db
 
 
 # Path to the integration test data directory
@@ -61,3 +62,12 @@ def isolate_test_dirs(tmp_path, monkeypatch):
 
     monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
     monkeypatch.setenv("HBMON_MEDIA_DIR", str(media_dir))
+
+
+@pytest.fixture(autouse=True)
+def cleanup_db_engines():
+    """
+    Reset DB engines after each test to prevent leaking async loops/connections.
+    """
+    yield
+    db.reset_db_state()

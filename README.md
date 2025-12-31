@@ -243,7 +243,7 @@ Run `make help` to list all available targets.
 
 ### Calibrate ROI (biggest accuracy + performance win)
 1. Open **Calibrate ROI** (uses a live snapshot from the RTSP feed when available).
-2. Drag a tight rectangle around the feeder/perch region.
+2. Drag a tight rectangle around the feeder/perch region. The selection will automatically snap to the nearest 32-pixel stride (required by YOLO).
 3. Save.
 
 If the live feed is unavailable, the calibration page falls back to the most recent observation snapshot. If there
@@ -381,6 +381,7 @@ continue to override them when set.
   - Interval (seconds) between debug snapshots when saving frames
 - `HBMON_YOLO_IMGSZ` (default 1088,1920)
   - Override the YOLO inference image size (larger values increase detail and CPU/GPU cost)
+  - Set to "auto" to automatically snap dimensions to the nearest stride of 32 based on the ROI or frame size.
 
 ### MJPEG live stream tuning
 The MJPEG endpoint (`/api/stream.mjpeg`) supports bandwidth/CPU tuning via environment variables:

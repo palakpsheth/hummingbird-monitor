@@ -32,25 +32,50 @@
     return Math.max(0, Math.min(1, v));
   }
 
+  function snapToStride32(normVal, totalPx) {
+    if (!totalPx || totalPx <= 0) return normVal;
+    // Calculate raw pixels
+    const rawPx = Math.abs(normVal * totalPx);
+    // Round up to nearest 32
+    // Math.ceil(0) is 0, so we handle that naturally
+    let snappedPx = Math.ceil(rawPx / 32) * 32;
+
+    // Optional: if user is trying to make it very small but non-zero,
+    // ensure at least 32px? The Math.ceil handles anything > 0 to become 32.
+    // However, if rawPx was 0 (start point), snappedPx is 0.
+
+    // Constraint: don't exceed image dimension
+    if (snappedPx > totalPx) {
+      snappedPx = Math.floor(totalPx / 32) * 32;
+    }
+    return snappedPx / totalPx;
+  }
+
   function imgRect() {
     return img.getBoundingClientRect();
   }
 
+  function getRoiInputs() {
+    return {
+      x1: document.getElementById("x1"),
+      y1: document.getElementById("y1"),
+      x2: document.getElementById("x2"),
+      y2: document.getElementById("y2"),
+      label: document.getElementById("proposed-roi-label"),
+    };
+  }
+
   function setHiddenInputs(x1, y1, x2, y2) {
-    const elx1 = document.getElementById("x1");
-    const ely1 = document.getElementById("y1");
-    const elx2 = document.getElementById("x2");
-    const ely2 = document.getElementById("y2");
-    const label = document.getElementById("proposed-roi-label");
-    if (!elx1 || !ely1 || !elx2 || !ely2) return;
+    const inputs = getRoiInputs();
+    if (!inputs.x1 || !inputs.y1 || !inputs.x2 || !inputs.y2) return;
 
-    elx1.value = x1.toFixed(6);
-    ely1.value = y1.toFixed(6);
-    elx2.value = x2.toFixed(6);
-    ely2.value = y2.toFixed(6);
+    inputs.x1.value = x1.toFixed(6);
+    inputs.y1.value = y1.toFixed(6);
+    inputs.x2.value = x2.toFixed(6);
+    inputs.y2.value = y2.toFixed(6);
 
-    if (label) {
-      label.textContent = `New ROI: ${elx1.value}, ${ely1.value}, ${elx2.value}, ${ely2.value}`;
+    if (inputs.label) {
+      inputs.label.textContent = `New ROI: ${inputs.x1.value}, ${inputs.y1.value}, ${inputs.x2.value}, ${inputs.y2.value}`;
     }
   }
 
@@ -70,34 +95,26 @@
     proposedRect = null;
     hideBox(proposedRoiBox);
     // Clear hidden inputs by setting them to empty strings
-    const elx1 = document.getElementById("x1");
-    const ely1 = document.getElementById("y1");
-    const elx2 = document.getElementById("x2");
-    const ely2 = document.getElementById("y2");
-    const label = document.getElementById("proposed-roi-label");
-    if (elx1 && ely1 && elx2 && ely2) {
-      elx1.value = "";
-      ely1.value = "";
-      elx2.value = "";
-      ely2.value = "";
+    const inputs = getRoiInputs();
+    if (inputs.x1 && inputs.y1 && inputs.x2 && inputs.y2) {
+      inputs.x1.value = "";
+      inputs.y1.value = "";
+      inputs.x2.value = "";
+      inputs.y2.value = "";
     }
-    if (label) {
-      label.textContent = "";
+    if (inputs.label) {
+      inputs.label.textContent = "";
     }
   }
 
-  function readRoiFromDom() {
-    const elx1 = document.getElementById("x1");
-    const ely1 = document.getElementById("y1");
-    const elx2 = document.getElementById("x2");
-    const ely2 = document.getElementById("y2");
+  function getCurrentRoiCoords() {
+    const inputs = getRoiInputs();
+    if (!inputs.x1 || !inputs.y1 || !inputs.x2 || !inputs.y2) return null;
 
-    if (!elx1 || !ely1 || !elx2 || !ely2) return null;
-
-    const x1 = parseFloat(elx1.value);
-    const y1 = parseFloat(ely1.value);
-    const x2 = parseFloat(elx2.value);
-    const y2 = parseFloat(ely2.value);
+    const x1 = parseFloat(inputs.x1.value);
+    const y1 = parseFloat(inputs.y1.value);
+    const x2 = parseFloat(inputs.x2.value);
+    const y2 = parseFloat(inputs.y2.value);
 
     if (
       !isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) &&
@@ -115,7 +132,7 @@
 
   // Draw current ROI on page load (red dashed box)
   function drawCurrentRoi() {
-    const r = readRoiFromDom();
+    const r = getCurrentRoiCoords();
     if (r) {
       drawBox(currentRoiBox, r);
     }
@@ -154,10 +171,38 @@
     const x = clamp01((e.clientX - b.left) / b.width);
     const y = clamp01((e.clientY - b.top) / b.height);
 
-    const x1 = Math.min(start.x, x);
-    const y1 = Math.min(start.y, y);
-    const x2 = Math.max(start.x, x);
-    const y2 = Math.max(start.y, y);
+    const nw = img.naturalWidth || 1000;
+    const nh = img.naturalHeight || 1000;
+
+    let x1, x2, y1, y2;
+
+    // Calculate width relative to start x
+    const rawW = Math.abs(x - start.x);
+    const snappedW = snapToStride32(rawW, nw);
+
+    if (x < start.x) {
+      // Dragging left
+      x2 = start.x;
+      x1 = Math.max(0, x2 - snappedW);
+    } else {
+      // Dragging right
+      x1 = start.x;
+      x2 = Math.min(1, x1 + snappedW);
+    }
+
+    // Calculate height relative to start y
+    const rawH = Math.abs(y - start.y);
+    const snappedH = snapToStride32(rawH, nh);
+
+    if (y < start.y) {
+      // Dragging up
+      y2 = start.y;
+      y1 = Math.max(0, y2 - snappedH);
+    } else {
+      // Dragging down
+      y1 = start.y;
+      y2 = Math.min(1, y1 + snappedH);
+    }
 
     proposedRect = {
       x: x1,
@@ -241,19 +286,35 @@
       const y = clamp01((e.clientY - b.top) / b.height);
 
       let { x1, y1, x2, y2 } = resizeState;
+      const nw = img.naturalWidth || 1000;
+      const nh = img.naturalHeight || 1000;
 
-      // Adjust the relevant boundary, preventing crossover
-      // (min/max checks ensure we don't invert the box)
-      const minSize = 0.005; // minimum size constraint
-
+      // Determine which edge is moving and snap the resulting dimension
       if (resizeState.edge === "n") {
-        y1 = Math.min(y, y2 - minSize);
+        // Changing top edge (y1). Fixed bottom is y2.
+        // New height = y2 - y
+        let newH = y2 - y;
+        if (newH < 0) newH = 0;
+        let snappedH = snapToStride32(newH, nh);
+        y1 = Math.max(0, y2 - snappedH);
+
       } else if (resizeState.edge === "s") {
-        y2 = Math.max(y, y1 + minSize);
+        // Changing bottom edge (y2). Fixed top is y1.
+        let newH = y - y1;
+        let snappedH = snapToStride32(newH, nh);
+        y2 = Math.min(1, y1 + snappedH);
+
       } else if (resizeState.edge === "w") {
-        x1 = Math.min(x, x2 - minSize);
+        // Changing left edge (x1). Fixed right is x2.
+        let newW = x2 - x;
+        let snappedW = snapToStride32(newW, nw);
+        x1 = Math.max(0, x2 - snappedW);
+
       } else if (resizeState.edge === "e") {
-        x2 = Math.max(x, x1 + minSize);
+        // Changing right edge (x2). Fixed left is x1.
+        let newW = x - x1;
+        let snappedW = snapToStride32(newW, nw);
+        x2 = Math.min(1, x1 + snappedW);
       }
 
       // Update global proposedRect
@@ -283,7 +344,7 @@
 
   // Initialize proposed ROI from current ROI (if any) so it can be tweaked immediately
   function initProposedRoi() {
-    const r = readRoiFromDom();
+    const r = getCurrentRoiCoords();
     if (r) {
       proposedRect = r;
       drawBox(proposedRoiBox, proposedRect);

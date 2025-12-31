@@ -2266,12 +2266,10 @@ def make_app() -> Any:
         if background_rel or roi_rel:
             snapshots = extra_copy.get("snapshots")
             snapshots_data = dict(snapshots) if isinstance(snapshots, dict) else {}
-            
             if background_rel:
                 snapshots_data["background_path"] = "background.jpg"
             if roi_rel:
-                snapshots_data["roi_path"] = "snapshot_roi.jpg"
-            
+                snapshots_data["roi_path"] = "roi.jpg"
             extra_copy["snapshots"] = snapshots_data
         if media_paths:
             media_copy = dict(media_paths)
@@ -2371,7 +2369,7 @@ def make_app() -> Any:
                 if background_path and background_path.exists():
                     tf.add(background_path, arcname=f"{safe_case}/background.jpg")
                 if roi_path and roi_path.exists():
-                    tf.add(roi_path, arcname=f"{safe_case}/snapshot_roi.jpg")
+                    tf.add(roi_path, arcname=f"{safe_case}/roi.jpg")
                 if mask_path and mask_path.exists():
                     tf.add(mask_path, arcname=f"{safe_case}/mask.png")
                 if mask_overlay_path and mask_overlay_path.exists():
