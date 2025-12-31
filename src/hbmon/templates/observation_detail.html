@@ -34,17 +34,13 @@
         {% endif %}
         {% endif %}
       </div>
-      {% if annotated_snapshot_path %}
-      <img class="bigimg" data-zoom-target id="snapshot-img" src="/media/{{ annotated_snapshot_path }}"
-        alt="snapshot (annotated)" data-default-view="annotated" data-annotated="/media/{{ annotated_snapshot_path }}"
-        data-raw="/media/{{ o.snapshot_path }}" {% if roi_snapshot_path %}data-roi="/media/{{ roi_snapshot_path }}" {%
-        endif %} {% if clip_snapshot_path %}data-clip="/media/{{ clip_snapshot_path }}" {% endif %} />
-      {% else %}
-      <img class="bigimg" data-zoom-target id="snapshot-img" src="/media/{{ o.snapshot_path }}" alt="snapshot (raw)"
-        data-default-view="raw" data-raw="/media/{{ o.snapshot_path }}" {% if roi_snapshot_path
+      {% set default_view = 'annotated' if annotated_snapshot_path else 'raw' %}
+      {% set default_src = '/media/' ~ (annotated_snapshot_path or o.snapshot_path) %}
+      <img class="bigimg" data-zoom-target id="snapshot-img" src="{{ default_src }}" alt="snapshot ({{ default_view }})"
+        data-default-view="{{ default_view }}" data-raw="/media/{{ o.snapshot_path }}" {% if annotated_snapshot_path
+        %}data-annotated="/media/{{ annotated_snapshot_path }}" {% endif %} {% if roi_snapshot_path
         %}data-roi="/media/{{ roi_snapshot_path }}" {% endif %} {% if clip_snapshot_path
         %}data-clip="/media/{{ clip_snapshot_path }}" {% endif %} />
-      {% endif %}
     </div>
     {% if annotated_snapshot_path or clip_snapshot_path or roi_snapshot_path %}
     <script>
