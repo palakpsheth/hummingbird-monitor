@@ -28,9 +28,12 @@ RUN mkdir -p /tmp/ffmpeg && \
 # Only installed if INSTALL_OPENVINO=1 is passed as build argument
 ARG INSTALL_OPENVINO=0
 RUN if [ "$INSTALL_OPENVINO" = "1" ]; then \
+    # Note: We use the Ubuntu Jammy repository as Intel does not provide a dedicated 
+    # Debian Bookworm repository for these packages. The packages are largely 
+    # self-contained and compatible with the Debian Bookworm base.
     wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/debian bookworm client" \
-    > /etc/apt/sources.list.d/intel-gpu-bookworm.list \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy client" \
+    > /etc/apt/sources.list.d/intel-gpu-jammy.list \
     # Pin Intel packages to prefer the Intel repository over Debian's
     && echo "Package: intel-* level-zero libigc* intel-igc-*\nPin: origin repositories.intel.com\nPin-Priority: 1000" > /etc/apt/preferences.d/intel-gpu-pin \
     && apt-get update \
