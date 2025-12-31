@@ -176,12 +176,20 @@ def choose_individual(
     )
 
 
-def update_prototype_ema(prototype: np.ndarray, emb: np.ndarray, *, alpha: float = EMA_ALPHA) -> np.ndarray:
+def update_prototype_ema(
+    prototype: np.ndarray | None,
+    emb: np.ndarray,
+    *,
+    alpha: float = EMA_ALPHA,
+) -> np.ndarray:
     """
     Exponential moving average update on normalized vectors.
 
     prototype <- normalize((1-alpha)*prototype + alpha*emb)
     """
+    if prototype is None:
+        return l2_normalize(emb)
+
     prototype = prototype.astype(np.float32, copy=False)
     emb = emb.astype(np.float32, copy=False)
     out = (1.0 - alpha) * prototype + alpha * emb
