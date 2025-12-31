@@ -117,20 +117,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Free disk space (helps ENOSPC on container scans)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          swap-storage: true
+#      - name: Free disk space (helps ENOSPC on container scans)
+#        uses: jlumbroso/free-disk-space@main
+#        with:
+#          tool-cache: true
+#          android: true
+#          dotnet: true
+#          haskell: true
+#          large-packages: true
+#          swap-storage: true
 
-      - name: Show disk usage (before)
-        run: |
-          df -h
-          docker system df || true
+#      - name: Show disk usage (before)
+#        run: |
+#          df -h
+#          docker system df || true
 
       - name: Build image (hbmon)
         run: |
@@ -184,8 +184,8 @@ jobs:
         if: steps.snyk_docker.outcome == 'failure'
         run: exit 1
 
-      - name: Show disk usage (after)
-        if: always()
-        run: |
-          df -h
-          docker system df || true
+#      - name: Show disk usage (after)
+#        if: always()
+#        run: |
+#          df -h
+#          docker system df || true
