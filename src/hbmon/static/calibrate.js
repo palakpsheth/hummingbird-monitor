@@ -92,17 +92,17 @@
     const ely1 = document.getElementById("y1");
     const elx2 = document.getElementById("x2");
     const ely2 = document.getElementById("y2");
-    
+
     if (!elx1 || !ely1 || !elx2 || !ely2) return;
-    
+
     const x1 = parseFloat(elx1.value);
     const y1 = parseFloat(ely1.value);
     const x2 = parseFloat(elx2.value);
     const y2 = parseFloat(ely2.value);
-    
+
     // Only draw if we have valid ROI coordinates with non-zero area
-    if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) && 
-        x2 > x1 && y2 > y1) {
+    if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) &&
+      x2 > x1 && y2 > y1) {
       const r = {
         x: x1,
         y: y1,
@@ -136,7 +136,7 @@
 
     try {
       img.setPointerCapture(e.pointerId);
-    } catch (_) {}
+    } catch (_) { }
   });
 
   img.addEventListener("pointermove", (e) => {
@@ -167,7 +167,7 @@
     // Keep proposedRect and the green box visible
     try {
       img.releasePointerCapture(e.pointerId);
-    } catch (_) {}
+    } catch (_) { }
   });
 
   if (refreshBtn) {
@@ -194,6 +194,116 @@
     });
   }
 
-  // Draw current ROI on page load
+  // ---------------------------------------------------------
+  // Resize Handles Logic
+  // ---------------------------------------------------------
+  let resizeState = null;
+
+  const handles = proposedRoiBox.querySelectorAll(".resize-handle");
+  handles.forEach((h) => {
+    h.addEventListener("pointerdown", (e) => {
+      if (!proposedRect) return;
+      e.preventDefault();
+      // Stop propagation so we don't trigger a new box draw on the underlying image
+      e.stopPropagation();
+
+      const edge = h.dataset.edge;
+      resizeState = {
+        edge,
+        // Snapshot current known coords
+        x1: proposedRect.x,
+        y1: proposedRect.y,
+        x2: proposedRect.x + proposedRect.w,
+        y2: proposedRect.y + proposedRect.h,
+      };
+
+      h.classList.add("active");
+      try {
+        h.setPointerCapture(e.pointerId);
+      } catch (_) { }
+    });
+
+    h.addEventListener("pointermove", (e) => {
+      if (!resizeState) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const b = imgRect();
+      const x = clamp01((e.clientX - b.left) / b.width);
+      const y = clamp01((e.clientY - b.top) / b.height);
+
+      let { x1, y1, x2, y2 } = resizeState;
+
+      // Adjust the relevant boundary, preventing crossover
+      // (min/max checks ensure we don't invert the box)
+      const minSize = 0.005; // minimum size constraint
+
+      if (resizeState.edge === "n") {
+        y1 = Math.min(y, y2 - minSize);
+      } else if (resizeState.edge === "s") {
+        y2 = Math.max(y, y1 + minSize);
+      } else if (resizeState.edge === "w") {
+        x1 = Math.min(x, x2 - minSize);
+      } else if (resizeState.edge === "e") {
+        x2 = Math.max(x, x1 + minSize);
+      }
+
+      // Update global proposedRect
+      proposedRect = {
+        x: x1,
+        y: y1,
+        w: x2 - x1,
+        h: y2 - y1,
+      };
+
+      drawBox(proposedRoiBox, proposedRect);
+      setHiddenInputs(x1, y1, x2, y2);
+    });
+
+    h.addEventListener("pointerup", (e) => {
+      if (!resizeState) return;
+
+      const hEl = e.target;
+      hEl.classList.remove("active");
+      try {
+        hEl.releasePointerCapture(e.pointerId);
+      } catch (_) { }
+
+      resizeState = null;
+    });
+  });
+
+  // Initialize proposed ROI from current ROI (if any) so it can be tweaked immediately
+  function initProposedRoi() {
+    const elx1 = document.getElementById("x1");
+    const ely1 = document.getElementById("y1");
+    const elx2 = document.getElementById("x2");
+    const ely2 = document.getElementById("y2");
+
+    if (!elx1 || !ely1 || !elx2 || !ely2) return;
+
+    const x1 = parseFloat(elx1.value);
+    const y1 = parseFloat(ely1.value);
+    const x2 = parseFloat(elx2.value);
+    const y2 = parseFloat(ely2.value);
+
+    // Only init if we have valid coordinates
+    if (
+      !isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) &&
+      x2 > x1 && y2 > y1
+    ) {
+      proposedRect = {
+        x: x1,
+        y: y1,
+        w: x2 - x1,
+        h: y2 - y1,
+      };
+      drawBox(proposedRoiBox, proposedRect);
+    }
+  }
+
+  // Draw current ROI on page load (red dashed box)
   drawCurrentRoi();
+  // Also populate the green editable box
+  initProposedRoi();
 })();

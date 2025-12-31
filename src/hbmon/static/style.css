@@ -763,6 +763,42 @@ a:hover { text-decoration: underline; }
   display: none;
 }
 
+.resize-handle {
+  position: absolute;
+  z-index: 3;
+  background: rgba(68, 255, 68, 0.4);
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+#proposed-roi-box:hover .resize-handle,
+.resize-handle.active {
+  opacity: 1;
+}
+
+.resize-handle:hover {
+  background: rgba(68, 255, 68, 0.8);
+}
+
+.resize-handle.n, .resize-handle.s {
+  height: 12px;
+  left: 0;
+  right: 0;
+  cursor: ns-resize;
+}
+.resize-handle.n { top: -6px; }
+.resize-handle.s { bottom: -6px; }
+
+.resize-handle.e, .resize-handle.w {
+  width: 12px;
+  top: 0;
+  bottom: 0;
+  cursor: ew-resize;
+}
+.resize-handle.e { right: -6px; }
+.resize-handle.w { left: -6px; }
+
 /* ───────────────────────── Heatmap (CSS-only levels) ─────────────────────────
  * Server renders .heat.level-0..level-5
  */

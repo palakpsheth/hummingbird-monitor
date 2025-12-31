@@ -1,518 +1,502 @@
 {% extends "base.html" %}
 {% block content %}
-  <div class="page-header">
-    <h1 class="page-title">Observation #{{ o.id }}</h1>
-    <div class="muted page-meta">
-      Current time:
-      <span data-current-time="true" data-timezone="{{ tz_value }}">--</span>
-      · TZ: <span>{{ tz_label }}</span>
-      · Version: <span>{{ app_version }}</span>
-      · Commit: <span>{{ git_commit }}</span>
-    </div>
+<div class="page-header">
+  <h1 class="page-title">Observation #{{ o.id }}</h1>
+  <div class="muted page-meta">
+    Current time:
+    <span data-current-time="true" data-timezone="{{ tz_value }}">--</span>
+    · TZ: <span>{{ tz_label }}</span>
+    · Version: <span>{{ app_version }}</span>
+    · Commit: <span>{{ git_commit }}</span>
   </div>
+</div>
 
-  <div class="grid2">
-    <div class="card">
-      <div class="zoom-frame" data-zoom-container>
-        <div class="zoom-controls">
-          <button type="button" data-zoom-out aria-label="Zoom out">−</button>
-          <button type="button" data-zoom-in aria-label="Zoom in">+</button>
-          <button type="button" data-zoom-reset aria-label="Reset zoom">Reset</button>
-          {% if annotated_snapshot_path %}
-          <button type="button" data-snapshot-view="annotated" aria-label="Show annotated snapshot">
-            Annotated
-          </button>
-          <button type="button" data-snapshot-view="raw" aria-label="Show raw snapshot">Raw</button>
-          {% if clip_snapshot_path %}
-          <button
-            type="button"
-            data-snapshot-view="clip"
-            aria-label="Show CLIP snapshot"
-            title="CLIP crop used for species classification"
-          >CLIP</button>
-          {% endif %}
-          {% elif clip_snapshot_path %}
-          <button type="button" data-snapshot-view="raw" aria-label="Show raw snapshot">Raw</button>
-          <button
-            type="button"
-            data-snapshot-view="clip"
-            aria-label="Show CLIP snapshot"
-            title="CLIP crop used for species classification"
-          >CLIP</button>
-          {% endif %}
-        </div>
+<div class="grid2">
+  <div class="card">
+    <div class="zoom-frame" data-zoom-container>
+      <div class="zoom-controls">
+        <button type="button" data-zoom-out aria-label="Zoom out">−</button>
+        <button type="button" data-zoom-in aria-label="Zoom in">+</button>
+        <button type="button" data-zoom-reset aria-label="Reset zoom">Reset</button>
         {% if annotated_snapshot_path %}
-        <img
-          class="bigimg"
-          data-zoom-target
-          id="snapshot-img"
-          src="/media/{{ annotated_snapshot_path }}"
-          alt="snapshot (annotated)"
-          data-default-view="annotated"
-          data-annotated="/media/{{ annotated_snapshot_path }}"
-          data-raw="/media/{{ o.snapshot_path }}"
-          {% if clip_snapshot_path %}data-clip="/media/{{ clip_snapshot_path }}"{% endif %}
-        />
-        {% else %}
-        <img
-          class="bigimg"
-          data-zoom-target
-          id="snapshot-img"
-          src="/media/{{ o.snapshot_path }}"
-          alt="snapshot (raw)"
-          data-default-view="raw"
-          data-raw="/media/{{ o.snapshot_path }}"
-          {% if clip_snapshot_path %}data-clip="/media/{{ clip_snapshot_path }}"{% endif %}
-        />
+        <button type="button" data-snapshot-view="annotated" aria-label="Show annotated snapshot">
+          Annotated
+        </button>
+        <button type="button" data-snapshot-view="raw" aria-label="Show raw snapshot">Raw</button>
+        {% if roi_snapshot_path %}
+        <button type="button" data-snapshot-view="roi" aria-label="Show ROI crop snapshot">ROI</button>
+        {% endif %}
+        {% if clip_snapshot_path %}
+        <button type="button" data-snapshot-view="clip" aria-label="Show CLIP snapshot"
+          title="CLIP crop used for species classification">CLIP</button>
+        {% endif %}
+        {% elif clip_snapshot_path %}
+        <button type="button" data-snapshot-view="raw" aria-label="Show raw snapshot">Raw</button>
+        {% if roi_snapshot_path %}
+        <button type="button" data-snapshot-view="roi" aria-label="Show ROI crop snapshot">ROI</button>
+        {% endif %}
+        <button type="button" data-snapshot-view="clip" aria-label="Show CLIP snapshot"
+          title="CLIP crop used for species classification">CLIP</button>
         {% endif %}
       </div>
-      {% if annotated_snapshot_path or clip_snapshot_path %}
-      <script>
-        (function() {
-          var img = document.getElementById('snapshot-img');
-          if (!img) {
-            return;
-          }
-          var buttons = document.querySelectorAll('[data-snapshot-view]');
-          if (!buttons.length) {
-            return;
-          }
-          var setView = function(view) {
-            var path = img.dataset[view];
-            if (!path) {
-              return;
-            }
-            img.src = path;
-            img.alt = 'snapshot (' + view + ')';
-            buttons.forEach(function(button) {
-              button.classList.toggle('active', button.dataset.snapshotView === view);
-            });
-          };
-          buttons.forEach(function(button) {
-            button.addEventListener('click', function() {
-              setView(button.dataset.snapshotView);
-            });
-          });
-          setView(img.dataset.defaultView || (img.dataset.annotated ? 'annotated' : 'raw'));
-        })();
-      </script>
-      {% endif %}
-
-      <div class="stack" style="margin-top:12px;">
-        <div class="muted">
-          Human label:
-          {% if o.review_label %}
-            {% set review_display = "Unknown" if o.review_label == "unknown" else o.review_label.replace("_", " ") %}
-            <span class="badge">{{ review_display }}</span>
-          {% else %}
-            not set
-          {% endif %}
-        </div>
-        <div style="display:grid; gap:10px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
-          {% for lab in allowed_review_labels %}
-            <form method="post" action="/observations/{{ o.id }}/label">
-              <input type="hidden" name="label" value="{{ lab }}" />
-              {% if csrf_token %}
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-              {% endif %}
-              {% set label_display = "Unknown" if lab == "unknown" else lab.replace("_", " ") %}
-              <button type="submit">Mark {{ label_display }}</button>
-            </form>
-          {% endfor %}
-          <form method="post" action="/observations/{{ o.id }}/label">
-            <input type="hidden" name="label" value="" />
-            {% if csrf_token %}
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-            {% endif %}
-            <button type="submit">Clear label</button>
-          </form>
-        </div>
-        <form method="post" action="/observations/{{ o.id }}/delete" onsubmit="return confirm('Delete this observation?');">
-          {% if csrf_token %}
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-          {% endif %}
-          <button type="submit">Delete this observation</button>
-        </form>
-      </div>
-
-      <div class="meta2" style="margin-top:12px;">
-        <div class="inline" style="gap: 8px; flex-wrap: wrap;">
-          <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
-          <span class="muted">p={{ "%.3f"|format(o.species_prob) }}</span>
-          {% set hue = ((o.individual_id or 0) * 47) % 360 %}
-          <span class="inline" style="align-items:center; gap:6px;">
-            <span class="muted">Ind:</span>
-            <a href="/individuals/{{ o.individual_id }}">
-              <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
-            </a>
-            <span class="muted">match={{ "%.3f"|format(o.match_score) }}</span>
-          </span>
-        </div>
-
-        <div style="margin-top:8px;">
-          Timestamp ({{ timezone_label }}): <span class="muted" data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span>
-        </div>
-
-        <div class="inline" style="margin-top:10px;">
-          <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Open video in new tab</a>
-          <span class="muted">·</span>
-          <a href="/observations">Back to observations</a>
-        </div>
-        <form
-          id="export-integration-test-form"
-          method="post"
-          action="/observations/{{ o.id }}/export_integration_test"
-          style="margin-top:12px;"
-        >
-          {% if csrf_token %}
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-          {% endif %}
-          <button type="button" id="export-integration-test-button">Export as Integration Test</button>
-          <div
-            id="export-integration-test-fields"
-            style="display:none; margin-top:10px; padding:12px; border:1px solid #ddd; border-radius:8px;"
-          >
-            <div class="stack" style="gap:8px;">
-              <label class="stack">
-                <span class="muted">Test case folder name</span>
-                <input type="text" name="case_name" required />
-              </label>
-              <label class="stack">
-                <span class="muted">Description</span>
-                <input type="text" name="description" required />
-              </label>
-              <label class="stack">
-                <span class="muted">Behavior label</span>
-                <input type="text" name="behavior" required />
-              </label>
-              <label class="stack">
-                <span class="muted">Location</span>
-                <input type="text" name="location" />
-              </label>
-              <label class="stack">
-                <span class="muted">Human verified</span>
-                <select name="human_verified" required>
-                  <option value="false">false</option>
-                  <option value="true">true</option>
-                </select>
-              </label>
-              <div class="inline" style="gap:8px;">
-                <button type="submit">Export bundle</button>
-                <button type="button" id="export-integration-test-cancel">Cancel</button>
-              </div>
-            </div>
-          </div>
-        </form>
-      </div>
-
-      {% if mask_path or mask_overlay_path %}
-        <div style="margin-top:16px;">
-          <h3 style="margin-top:0;">Motion masks</h3>
-          <div class="grid2">
-            {% if mask_path %}
-            <div>
-              <div class="muted" style="margin-bottom:6px;">Mask</div>
-              <img class="bigimg" src="/media/{{ mask_path }}" alt="motion mask" />
-            </div>
-            {% endif %}
-            {% if mask_overlay_path %}
-            <div>
-              <div class="muted" style="margin-bottom:6px;">Overlay</div>
-              <img class="bigimg" src="/media/{{ mask_overlay_path }}" alt="motion mask overlay" />
-            </div>
-            {% endif %}
-          </div>
-        </div>
-      {% endif %}
-
-      {% if video_info and video_info.exists %}
-        <div style="margin-top:16px;">
-          <h3 style="margin-top:0;">Video Clip</h3>
-          <div id="video-error" style="display:none; padding:12px; background:#fee; border:1px solid #c00; border-radius:8px; margin-bottom:8px;">
-            <strong>⚠️ Video playback error:</strong> <span id="video-error-msg"></span>
-            <div class="muted" style="margin-top:8px;">
-              The video file may use a codec your browser doesn't support (e.g., mp4v/MPEG-4 Part 2).
-              Try downloading and playing with VLC, or check the <a href="/api/video_info/{{ o.id }}" target="_blank">video diagnostics</a>.
-            </div>
-          </div>
-          <video id="clip-player" controls preload="metadata" style="width:100%; max-width:100%; height:auto; border-radius:8px; background:#000;">
-            <source src="/media/{{ o.video_path }}" type="video/mp4">
-            Your browser does not support the video tag.
-          </video>
-          <div id="video-dimensions" class="muted" style="margin-top:8px;">
-            File: {{ video_info.size_kb }} KB
-            {% if video_info.suffix %} · Format: {{ video_info.suffix }}{% endif %}
-            · <a href="/media/{{ o.video_path }}" download>Download video</a>
-          </div>
-          <script>
-            (function() {
-              var video = document.getElementById('clip-player');
-              var errorDiv = document.getElementById('video-error');
-              var errorMsg = document.getElementById('video-error-msg');
-              var dimsDiv = document.getElementById('video-dimensions');
-              
-              video.addEventListener('error', function(e) {
-                var msg = 'Unknown error';
-                if (video.error) {
-                  switch(video.error.code) {
-                    case 1: msg = 'MEDIA_ERR_ABORTED: Playback aborted'; break;
-                    case 2: msg = 'MEDIA_ERR_NETWORK: Network error'; break;
-                    case 3: msg = 'MEDIA_ERR_DECODE: Decoding error (unsupported codec)'; break;
-                    case 4: msg = 'MEDIA_ERR_SRC_NOT_SUPPORTED: Format not supported'; break;
-                  }
-                }
-                errorMsg.textContent = msg;
-                errorDiv.style.display = 'block';
-              });
-              
-              // Show video dimensions once metadata is loaded
-              video.addEventListener('loadedmetadata', function() {
-                var dimsText = ' · Resolution: ' + video.videoWidth + '×' + video.videoHeight;
-                if (video.duration) {
-                  dimsText += ' · Duration: ' + video.duration.toFixed(1) + 's';
-                }
-                // Use textContent append via a text node for safety
-                dimsDiv.appendChild(document.createTextNode(dimsText));
-              });
-            })();
-          </script>
-        </div>
-      {% elif video_info and not video_info.exists %}
-        <div style="margin-top:16px;">
-          <div class="muted">⚠️ Video file not found: /media/{{ o.video_path }}</div>
-        </div>
+      {% if annotated_snapshot_path %}
+      <img class="bigimg" data-zoom-target id="snapshot-img" src="/media/{{ annotated_snapshot_path }}"
+        alt="snapshot (annotated)" data-default-view="annotated" data-annotated="/media/{{ annotated_snapshot_path }}"
+        data-raw="/media/{{ o.snapshot_path }}" {% if clip_snapshot_path %}data-clip="/media/{{ clip_snapshot_path }}"
+        {% endif %} />
+      {% else %}
+      <img class="bigimg" data-zoom-target id="snapshot-img" src="/media/{{ o.snapshot_path }}" alt="snapshot (raw)"
+        data-default-view="raw" data-raw="/media/{{ o.snapshot_path }}" {% if roi_snapshot_path
+        %}data-roi="/media/{{ roi_snapshot_path }}" {% endif %} {% if clip_snapshot_path
+        %}data-clip="/media/{{ clip_snapshot_path }}" {% endif %} />
       {% endif %}
     </div>
-
+    {% if annotated_snapshot_path or clip_snapshot_path %}
     <script>
-      (function() {
-        var form = document.getElementById('export-integration-test-form');
-        var button = document.getElementById('export-integration-test-button');
-        if (!form || !button) {
+      (function () {
+        var img = document.getElementById('snapshot-img');
+        if (!img) {
           return;
         }
-        var fields = document.getElementById('export-integration-test-fields');
-        var cancelButton = document.getElementById('export-integration-test-cancel');
-        if (!fields || !cancelButton) {
+        var buttons = document.querySelectorAll('[data-snapshot-view]');
+        if (!buttons.length) {
           return;
         }
-        var caseNameInput = form.querySelector('input[name="case_name"]');
-        var descriptionInput = form.querySelector('input[name="description"]');
-        var behaviorInput = form.querySelector('input[name="behavior"]');
-        var locationInput = form.querySelector('input[name="location"]');
-        var humanVerifiedSelect = form.querySelector('select[name="human_verified"]');
-        var showForm = function(defaultLocation) {
-          if (caseNameInput && !caseNameInput.value) {
-            caseNameInput.value = 'observation_{{ o.id }}';
+        var setView = function (view) {
+          var path = img.dataset[view];
+          if (!path) {
+            return;
           }
-          if (descriptionInput && !descriptionInput.value) {
-            descriptionInput.value = 'Observation {{ o.id }} integration test';
-          }
-          if (behaviorInput && !behaviorInput.value) {
-            behaviorInput.value = 'unknown';
-          }
-          if (locationInput && !locationInput.value) {
-            locationInput.value = defaultLocation || '';
-          }
-          if (humanVerifiedSelect && !humanVerifiedSelect.value) {
-            humanVerifiedSelect.value = 'false';
-          }
-          fields.style.display = 'block';
-          button.style.display = 'none';
+          img.src = path;
+          img.alt = 'snapshot (' + view + ')';
+          buttons.forEach(function (button) {
+            button.classList.toggle('active', button.dataset.snapshotView === view);
+          });
         };
-
-        button.addEventListener('click', function() {
-          var timezone = '';
-          try {
-            timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-          } catch (err) {
-            timezone = '';
-          }
-          if (navigator.geolocation && navigator.geolocation.getCurrentPosition) {
-            navigator.geolocation.getCurrentPosition(
-              function(pos) {
-                var coords = pos.coords;
-                var loc = coords ? coords.latitude.toFixed(4) + ', ' + coords.longitude.toFixed(4) : timezone;
-                showForm(loc || timezone);
-              },
-              function() {
-                showForm(timezone);
-              },
-              { timeout: 3000 }
-            );
-          } else {
-            showForm(timezone);
-          }
+        buttons.forEach(function (button) {
+          button.addEventListener('click', function () {
+            setView(button.dataset.snapshotView);
+          });
         });
+        setView(img.dataset.defaultView || (img.dataset.annotated ? 'annotated' : 'raw'));
+      })();
+    </script>
+    {% endif %}
 
-        cancelButton.addEventListener('click', function() {
-          fields.style.display = 'none';
-          button.style.display = 'inline-block';
+    <div class="stack" style="margin-top:12px;">
+      <div class="muted">
+        Human label:
+        {% if o.review_label %}
+        {% set review_display = "Unknown" if o.review_label == "unknown" else o.review_label.replace("_", " ") %}
+        <span class="badge">{{ review_display }}</span>
+        {% else %}
+        not set
+        {% endif %}
+      </div>
+      <div style="display:grid; gap:10px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
+        {% for lab in allowed_review_labels %}
+        <form method="post" action="/observations/{{ o.id }}/label">
+          <input type="hidden" name="label" value="{{ lab }}" />
+          {% if csrf_token %}
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          {% endif %}
+          {% set label_display = "Unknown" if lab == "unknown" else lab.replace("_", " ") %}
+          <button type="submit">Mark {{ label_display }}</button>
+        </form>
+        {% endfor %}
+        <form method="post" action="/observations/{{ o.id }}/label">
+          <input type="hidden" name="label" value="" />
+          {% if csrf_token %}
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          {% endif %}
+          <button type="submit">Clear label</button>
+        </form>
+      </div>
+      <form method="post" action="/observations/{{ o.id }}/delete"
+        onsubmit="return confirm('Delete this observation?');">
+        {% if csrf_token %}
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        {% endif %}
+        <button type="submit">Delete this observation</button>
+      </form>
+    </div>
+
+    <div class="meta2" style="margin-top:12px;">
+      <div class="inline" style="gap: 8px; flex-wrap: wrap;">
+        <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
+        <span class="muted">p={{ "%.3f"|format(o.species_prob) }}</span>
+        {% set hue = ((o.individual_id or 0) * 47) % 360 %}
+        <span class="inline" style="align-items:center; gap:6px;">
+          <span class="muted">Ind:</span>
+          <a href="/individuals/{{ o.individual_id }}">
+            <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
+          </a>
+          <span class="muted">match={{ "%.3f"|format(o.match_score) }}</span>
+        </span>
+      </div>
+
+      <div style="margin-top:8px;">
+        Timestamp ({{ timezone_label }}): <span class="muted" data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span>
+      </div>
+
+      <div class="inline" style="margin-top:10px;">
+        <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Open video in new tab</a>
+        <span class="muted">·</span>
+        <a href="/observations">Back to observations</a>
+      </div>
+      <form id="export-integration-test-form" method="post" action="/observations/{{ o.id }}/export_integration_test"
+        style="margin-top:12px;">
+        {% if csrf_token %}
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        {% endif %}
+        <button type="button" id="export-integration-test-button">Export as Integration Test</button>
+        <div id="export-integration-test-fields"
+          style="display:none; margin-top:10px; padding:12px; border:1px solid #ddd; border-radius:8px;">
+          <div class="stack" style="gap:8px;">
+            <label class="stack">
+              <span class="muted">Test case folder name</span>
+              <input type="text" name="case_name" required />
+            </label>
+            <label class="stack">
+              <span class="muted">Description</span>
+              <input type="text" name="description" required />
+            </label>
+            <label class="stack">
+              <span class="muted">Behavior label</span>
+              <input type="text" name="behavior" required />
+            </label>
+            <label class="stack">
+              <span class="muted">Location</span>
+              <input type="text" name="location" />
+            </label>
+            <label class="stack">
+              <span class="muted">Human verified</span>
+              <select name="human_verified" required>
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+            </label>
+            <div class="inline" style="gap:8px;">
+              <button type="submit">Export bundle</button>
+              <button type="button" id="export-integration-test-cancel">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    {% if mask_path or mask_overlay_path %}
+    <div style="margin-top:16px;">
+      <h3 style="margin-top:0;">Motion masks</h3>
+      <div class="grid2">
+        {% if mask_path %}
+        <div>
+          <div class="muted" style="margin-bottom:6px;">Mask</div>
+          <img class="bigimg" src="/media/{{ mask_path }}" alt="motion mask" />
+        </div>
+        {% endif %}
+        {% if mask_overlay_path %}
+        <div>
+          <div class="muted" style="margin-bottom:6px;">Overlay</div>
+          <img class="bigimg" src="/media/{{ mask_overlay_path }}" alt="motion mask overlay" />
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if video_info and video_info.exists %}
+    <div style="margin-top:16px;">
+      <h3 style="margin-top:0;">Video Clip</h3>
+      <div id="video-error"
+        style="display:none; padding:12px; background:#fee; border:1px solid #c00; border-radius:8px; margin-bottom:8px;">
+        <strong>⚠️ Video playback error:</strong> <span id="video-error-msg"></span>
+        <div class="muted" style="margin-top:8px;">
+          The video file may use a codec your browser doesn't support (e.g., mp4v/MPEG-4 Part 2).
+          Try downloading and playing with VLC, or check the <a href="/api/video_info/{{ o.id }}" target="_blank">video
+            diagnostics</a>.
+        </div>
+      </div>
+      <video id="clip-player" controls preload="metadata"
+        style="width:100%; max-width:100%; height:auto; border-radius:8px; background:#000;">
+        <source src="/media/{{ o.video_path }}" type="video/mp4">
+        Your browser does not support the video tag.
+      </video>
+      <div id="video-dimensions" class="muted" style="margin-top:8px;">
+        File: {{ video_info.size_kb }} KB
+        {% if video_info.suffix %} · Format: {{ video_info.suffix }}{% endif %}
+        · <a href="/media/{{ o.video_path }}" download>Download video</a>
+      </div>
+      <script>
+        (function () {
+          var video = document.getElementById('clip-player');
+          var errorDiv = document.getElementById('video-error');
+          var errorMsg = document.getElementById('video-error-msg');
+          var dimsDiv = document.getElementById('video-dimensions');
+
+          video.addEventListener('error', function (e) {
+            var msg = 'Unknown error';
+            if (video.error) {
+              switch (video.error.code) {
+                case 1: msg = 'MEDIA_ERR_ABORTED: Playback aborted'; break;
+                case 2: msg = 'MEDIA_ERR_NETWORK: Network error'; break;
+                case 3: msg = 'MEDIA_ERR_DECODE: Decoding error (unsupported codec)'; break;
+                case 4: msg = 'MEDIA_ERR_SRC_NOT_SUPPORTED: Format not supported'; break;
+              }
+            }
+            errorMsg.textContent = msg;
+            errorDiv.style.display = 'block';
+          });
+
+          // Show video dimensions once metadata is loaded
+          video.addEventListener('loadedmetadata', function () {
+            var dimsText = ' · Resolution: ' + video.videoWidth + '×' + video.videoHeight;
+            if (video.duration) {
+              dimsText += ' · Duration: ' + video.duration.toFixed(1) + 's';
+            }
+            // Use textContent append via a text node for safety
+            dimsDiv.appendChild(document.createTextNode(dimsText));
+          });
+        })();
+      </script>
+    </div>
+    {% elif video_info and not video_info.exists %}
+    <div style="margin-top:16px;">
+      <div class="muted">⚠️ Video file not found: /media/{{ o.video_path }}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <script>
+    (function () {
+      var form = document.getElementById('export-integration-test-form');
+      var button = document.getElementById('export-integration-test-button');
+      if (!form || !button) {
+        return;
+      }
+      var fields = document.getElementById('export-integration-test-fields');
+      var cancelButton = document.getElementById('export-integration-test-cancel');
+      if (!fields || !cancelButton) {
+        return;
+      }
+      var caseNameInput = form.querySelector('input[name="case_name"]');
+      var descriptionInput = form.querySelector('input[name="description"]');
+      var behaviorInput = form.querySelector('input[name="behavior"]');
+      var locationInput = form.querySelector('input[name="location"]');
+      var humanVerifiedSelect = form.querySelector('select[name="human_verified"]');
+      var showForm = function (defaultLocation) {
+        if (caseNameInput && !caseNameInput.value) {
+          caseNameInput.value = 'observation_{{ o.id }}';
+        }
+        if (descriptionInput && !descriptionInput.value) {
+          descriptionInput.value = 'Observation {{ o.id }} integration test';
+        }
+        if (behaviorInput && !behaviorInput.value) {
+          behaviorInput.value = 'unknown';
+        }
+        if (locationInput && !locationInput.value) {
+          locationInput.value = defaultLocation || '';
+        }
+        if (humanVerifiedSelect && !humanVerifiedSelect.value) {
+          humanVerifiedSelect.value = 'false';
+        }
+        fields.style.display = 'block';
+        button.style.display = 'none';
+      };
+
+      button.addEventListener('click', function () {
+        var timezone = '';
+        try {
+          timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        } catch (err) {
+          timezone = '';
+        }
+        if (navigator.geolocation && navigator.geolocation.getCurrentPosition) {
+          navigator.geolocation.getCurrentPosition(
+            function (pos) {
+              var coords = pos.coords;
+              var loc = coords ? coords.latitude.toFixed(4) + ', ' + coords.longitude.toFixed(4) : timezone;
+              showForm(loc || timezone);
+            },
+            function () {
+              showForm(timezone);
+            },
+            { timeout: 3000 }
+          );
+        } else {
+          showForm(timezone);
+        }
+      });
+
+      cancelButton.addEventListener('click', function () {
+        fields.style.display = 'none';
+        button.style.display = 'inline-block';
+      });
+    })();
+  </script>
+
+  <div class="card">
+    <h2 style="margin-top:0;">Details</h2>
+
+    <div class="stack">
+      <div class="muted">snapshot (raw): /media/{{ o.snapshot_path }}</div>
+      {% if annotated_snapshot_path %}
+      <div class="muted">snapshot (annotated): /media/{{ annotated_snapshot_path }}</div>
+      {% endif %}
+      {% if clip_snapshot_path %}
+      <div class="muted">snapshot (clip): /media/{{ clip_snapshot_path }}</div>
+      {% endif %}
+      {% if roi_snapshot_path %}
+      <div class="muted">snapshot (roi): /media/{{ roi_snapshot_path }}</div>
+      {% endif %}
+      {% if background_snapshot_path %}
+      <div class="muted">snapshot (background): /media/{{ background_snapshot_path }}</div>
+      {% endif %}
+      <div class="muted">video: /media/{{ o.video_path }}{% if video_info %} ({{ "exists" if video_info.exists else
+        "missing" }}){% endif %}</div>
+      <div class="muted">bbox: {{ o.bbox_str or "(none)" }}</div>
+      <div class="muted">camera: {{ o.camera_name or "(unknown)" }}</div>
+    </div>
+
+    {% if extra %}
+    {% if extra.sensitivity %}
+    <h3>Sensitivity parameters</h3>
+    <div class="stack">
+      {% for k, v in extra.sensitivity.items() %}
+      <div class="muted">{{ k }}: <strong>{{ v }}</strong></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if extra.detection %}
+    <h3>Detection metadata</h3>
+    <div class="stack">
+      {% if extra.detection.box_confidence is defined %}
+      <div class="muted">Detector confidence: {{ "%.3f"|format(extra.detection.box_confidence) }}</div>
+      {% endif %}
+      {% if extra.detection.bbox_xyxy is defined %}
+      <div class="muted">BBox (xyxy): {{ extra.detection.bbox_xyxy }}</div>
+      {% endif %}
+      {% if extra.detection.bbox_area is defined %}
+      <div class="muted">BBox area: {{ extra.detection.bbox_area }} px²</div>
+      {% endif %}
+      {% if extra.detection.bbox_area_ratio_frame is defined %}
+      <div class="muted">Frame area ratio: {{ "%.4f"|format(extra.detection.bbox_area_ratio_frame) }}</div>
+      {% elif extra.detection.bbox_area_ratio is defined %}
+      <div class="muted">Frame area ratio: {{ "%.4f"|format(extra.detection.bbox_area_ratio) }}</div>
+      {% endif %}
+      {% if extra.detection.bbox_area_ratio_roi is defined %}
+      <div class="muted">ROI area ratio: {{ "%.4f"|format(extra.detection.bbox_area_ratio_roi) }}</div>
+      {% endif %}
+      {% if extra.detection.roi_offset_xy is defined %}
+      <div class="muted">ROI offset: {{ extra.detection.roi_offset_xy }}</div>
+      {% endif %}
+      {% if extra.detection.nms_iou_threshold is defined %}
+      <div class="muted">NMS IoU threshold: {{ "%.3f"|format(extra.detection.nms_iou_threshold) }}</div>
+      {% endif %}
+      {% if extra.detection.background_subtraction_enabled is defined %}
+      <div class="muted">Background subtraction active: {{ "yes" if extra.detection.background_subtraction_enabled else
+        "no" }}</div>
+      {% endif %}
+      {% if extra.sensitivity is defined %}
+      {% if extra.sensitivity.bg_subtraction_configured is defined %}
+      <div class="muted">Background subtraction configured: {{ "yes" if extra.sensitivity.bg_subtraction_configured else
+        "no" }}</div>
+      {% endif %}
+      {% if extra.sensitivity.background_image_available is defined %}
+      <div class="muted">Background image available: {{ "yes" if extra.sensitivity.background_image_available else "no"
+        }}</div>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if extra.identification %}
+    <h3>Identification metadata</h3>
+    <div class="stack">
+      {% if extra.identification.species_label is defined %}
+      <div class="muted">Species matched to: {{ extra.identification.species_label }}</div>
+      {% endif %}
+      {% if extra.identification.species_prob is defined %}
+      <div class="muted">Species match probability: {{ "%.3f"|format(extra.identification.species_prob) }}</div>
+      {% endif %}
+      {% if extra.identification.species_label_final is defined %}
+      <div class="muted">Species label (final): {{ extra.identification.species_label_final }}</div>
+      {% endif %}
+      {% if extra.identification.species_accepted is defined %}
+      <div class="muted">Species accepted: {{ "yes" if extra.identification.species_accepted else "no" }}</div>
+      {% endif %}
+      {% if extra.identification.individual_id is defined %}
+      <div class="muted">Individual ID: {{ extra.identification.individual_id }}</div>
+      {% endif %}
+      {% if extra.identification.match_score is defined %}
+      <div class="muted">Individual match score: {{ "%.3f"|format(extra.identification.match_score) }}</div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if o.original_observation_pretty %}
+    <div class="inline" style="gap:6px; align-items:center;">
+      <h3 style="margin:0;">Raw metadata (original_observation)</h3>
+      <button type="button" class="icon-button" data-copy-target="raw-metadata" data-copy-label="Copy"
+        data-copied-label="Copied" aria-label="Copy original_observation JSON to clipboard"
+        title="Copy original_observation JSON to clipboard">📋</button>
+    </div>
+    <pre class="pre" id="raw-metadata">{{ o.original_observation_pretty }}</pre>
+    <script>
+      (function () {
+        var copyButton = document.querySelector('[data-copy-target="raw-metadata"]');
+        if (!copyButton) {
+          return;
+        }
+        var target = document.getElementById(copyButton.dataset.copyTarget);
+        if (!target) {
+          return;
+        }
+        var copyText = function (text) {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(text);
+          }
+          return new Promise(function (resolve, reject) {
+            try {
+              var textarea = document.createElement('textarea');
+              textarea.value = text;
+              textarea.style.position = 'fixed';
+              textarea.style.opacity = '0';
+              document.body.appendChild(textarea);
+              textarea.focus();
+              textarea.select();
+              var success = document.execCommand('copy');
+              document.body.removeChild(textarea);
+              if (success) {
+                resolve();
+              } else {
+                reject(new Error('Copy failed'));
+              }
+            } catch (err) {
+              reject(err);
+            }
+          });
+        };
+        var resetLabel = null;
+        copyButton.addEventListener('click', function () {
+          var text = target.textContent || '';
+          copyText(text).then(function () {
+            if (resetLabel) {
+              clearTimeout(resetLabel);
+            }
+            copyButton.textContent = copyButton.dataset.copiedLabel || 'Copied';
+            resetLabel = setTimeout(function () {
+              copyButton.textContent = '📋';
+            }, 1500);
+          });
         });
       })();
     </script>
-
-    <div class="card">
-      <h2 style="margin-top:0;">Details</h2>
-
-      <div class="stack">
-        <div class="muted">snapshot (raw): /media/{{ o.snapshot_path }}</div>
-        {% if annotated_snapshot_path %}
-        <div class="muted">snapshot (annotated): /media/{{ annotated_snapshot_path }}</div>
-        {% endif %}
-        {% if clip_snapshot_path %}
-        <div class="muted">snapshot (clip): /media/{{ clip_snapshot_path }}</div>
-        {% endif %}
-        {% if background_snapshot_path %}
-        <div class="muted">snapshot (background): /media/{{ background_snapshot_path }}</div>
-        {% endif %}
-        <div class="muted">video: /media/{{ o.video_path }}{% if video_info %} ({{ "exists" if video_info.exists else "missing" }}){% endif %}</div>
-        <div class="muted">bbox: {{ o.bbox_str or "(none)" }}</div>
-        <div class="muted">camera: {{ o.camera_name or "(unknown)" }}</div>
-      </div>
-
-      {% if extra %}
-        {% if extra.sensitivity %}
-          <h3>Sensitivity parameters</h3>
-          <div class="stack">
-            {% for k, v in extra.sensitivity.items() %}
-              <div class="muted">{{ k }}: <strong>{{ v }}</strong></div>
-            {% endfor %}
-          </div>
-        {% endif %}
-
-        {% if extra.detection %}
-          <h3>Detection metadata</h3>
-          <div class="stack">
-            {% if extra.detection.box_confidence is defined %}
-              <div class="muted">Detector confidence: {{ "%.3f"|format(extra.detection.box_confidence) }}</div>
-            {% endif %}
-            {% if extra.detection.bbox_xyxy is defined %}
-              <div class="muted">BBox (xyxy): {{ extra.detection.bbox_xyxy }}</div>
-            {% endif %}
-            {% if extra.detection.bbox_area is defined %}
-              <div class="muted">BBox area: {{ extra.detection.bbox_area }} px²</div>
-            {% endif %}
-            {% if extra.detection.bbox_area_ratio_frame is defined %}
-              <div class="muted">Frame area ratio: {{ "%.4f"|format(extra.detection.bbox_area_ratio_frame) }}</div>
-            {% elif extra.detection.bbox_area_ratio is defined %}
-              <div class="muted">Frame area ratio: {{ "%.4f"|format(extra.detection.bbox_area_ratio) }}</div>
-            {% endif %}
-            {% if extra.detection.bbox_area_ratio_roi is defined %}
-              <div class="muted">ROI area ratio: {{ "%.4f"|format(extra.detection.bbox_area_ratio_roi) }}</div>
-            {% endif %}
-            {% if extra.detection.roi_offset_xy is defined %}
-              <div class="muted">ROI offset: {{ extra.detection.roi_offset_xy }}</div>
-            {% endif %}
-            {% if extra.detection.nms_iou_threshold is defined %}
-              <div class="muted">NMS IoU threshold: {{ "%.3f"|format(extra.detection.nms_iou_threshold) }}</div>
-            {% endif %}
-            {% if extra.detection.background_subtraction_enabled is defined %}
-              <div class="muted">Background subtraction active: {{ "yes" if extra.detection.background_subtraction_enabled else "no" }}</div>
-            {% endif %}
-            {% if extra.sensitivity is defined %}
-              {% if extra.sensitivity.bg_subtraction_configured is defined %}
-                <div class="muted">Background subtraction configured: {{ "yes" if extra.sensitivity.bg_subtraction_configured else "no" }}</div>
-              {% endif %}
-              {% if extra.sensitivity.background_image_available is defined %}
-                <div class="muted">Background image available: {{ "yes" if extra.sensitivity.background_image_available else "no" }}</div>
-              {% endif %}
-            {% endif %}
-          </div>
-        {% endif %}
-
-        {% if extra.identification %}
-          <h3>Identification metadata</h3>
-          <div class="stack">
-            {% if extra.identification.species_label is defined %}
-              <div class="muted">Species matched to: {{ extra.identification.species_label }}</div>
-            {% endif %}
-            {% if extra.identification.species_prob is defined %}
-              <div class="muted">Species match probability: {{ "%.3f"|format(extra.identification.species_prob) }}</div>
-            {% endif %}
-            {% if extra.identification.species_label_final is defined %}
-              <div class="muted">Species label (final): {{ extra.identification.species_label_final }}</div>
-            {% endif %}
-            {% if extra.identification.species_accepted is defined %}
-              <div class="muted">Species accepted: {{ "yes" if extra.identification.species_accepted else "no" }}</div>
-            {% endif %}
-            {% if extra.identification.individual_id is defined %}
-              <div class="muted">Individual ID: {{ extra.identification.individual_id }}</div>
-            {% endif %}
-            {% if extra.identification.match_score is defined %}
-              <div class="muted">Individual match score: {{ "%.3f"|format(extra.identification.match_score) }}</div>
-            {% endif %}
-          </div>
-        {% endif %}
-
-        {% if o.original_observation_pretty %}
-          <div class="inline" style="gap:6px; align-items:center;">
-            <h3 style="margin:0;">Raw metadata (original_observation)</h3>
-            <button
-              type="button"
-              class="icon-button"
-              data-copy-target="raw-metadata"
-              data-copy-label="Copy"
-              data-copied-label="Copied"
-              aria-label="Copy original_observation JSON to clipboard"
-              title="Copy original_observation JSON to clipboard"
-            >📋</button>
-          </div>
-          <pre class="pre" id="raw-metadata">{{ o.original_observation_pretty }}</pre>
-          <script>
-            (function() {
-              var copyButton = document.querySelector('[data-copy-target="raw-metadata"]');
-              if (!copyButton) {
-                return;
-              }
-              var target = document.getElementById(copyButton.dataset.copyTarget);
-              if (!target) {
-                return;
-              }
-              var copyText = function(text) {
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                  return navigator.clipboard.writeText(text);
-                }
-                return new Promise(function(resolve, reject) {
-                  try {
-                    var textarea = document.createElement('textarea');
-                    textarea.value = text;
-                    textarea.style.position = 'fixed';
-                    textarea.style.opacity = '0';
-                    document.body.appendChild(textarea);
-                    textarea.focus();
-                    textarea.select();
-                    var success = document.execCommand('copy');
-                    document.body.removeChild(textarea);
-                    if (success) {
-                      resolve();
-                    } else {
-                      reject(new Error('Copy failed'));
-                    }
-                  } catch (err) {
-                    reject(err);
-                  }
-                });
-              };
-              var resetLabel = null;
-              copyButton.addEventListener('click', function() {
-                var text = target.textContent || '';
-                copyText(text).then(function() {
-                  if (resetLabel) {
-                    clearTimeout(resetLabel);
-                  }
-                  copyButton.textContent = copyButton.dataset.copiedLabel || 'Copied';
-                  resetLabel = setTimeout(function() {
-                    copyButton.textContent = '📋';
-                  }, 1500);
-                });
-              });
-            })();
-          </script>
-        {% endif %}
-      {% else %}
-        <p class="muted">No extra metadata captured for this observation.</p>
-      {% endif %}
-    </div>
+    {% endif %}
+    {% else %}
+    <p class="muted">No extra metadata captured for this observation.</p>
+    {% endif %}
   </div>
+</div>
 {% endblock %}

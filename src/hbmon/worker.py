@@ -111,6 +111,7 @@ class ObservationMediaPaths:
     snapshot_rel: str
     snapshot_annotated_rel: str
     snapshot_clip_rel: str
+    snapshot_roi_rel: str
     snapshot_background_rel: str
     clip_rel: str
 
@@ -154,6 +155,7 @@ def _build_observation_media_paths(stamp: str, observation_uuid: str | None = No
         snapshot_rel=f"snapshots/{stamp}/{obs_uuid}.jpg",
         snapshot_annotated_rel=f"snapshots/{stamp}/{obs_uuid}_annotated.jpg",
         snapshot_clip_rel=f"snapshots/{stamp}/{obs_uuid}_clip.jpg",
+        snapshot_roi_rel=f"snapshots/{stamp}/{obs_uuid}_roi.jpg",
         snapshot_background_rel=f"snapshots/{stamp}/{obs_uuid}_background.jpg",
         clip_rel=f"clips/{stamp}/{obs_uuid}.mp4",
     )
@@ -1097,10 +1099,18 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
         _safe_mkdir(clip_path.parent)
 
         annotated_frame = _draw_bbox(frame, det_full, show_confidence=True)
-        await asyncio.gather(
+        roi_save_tasks = [
             _write_jpeg_async(snap_path, frame),
             _write_jpeg_async(snap_annotated_path, annotated_frame)
-        )
+        ]
+        
+        # Save ROI snapshot if configured
+        roi_frame, _ = _apply_roi(frame, s)
+        has_roi = s.roi is not None
+        if has_roi:
+            roi_save_tasks.append(_write_jpeg_async(media_root / media_paths.snapshot_roi_rel, roi_frame))
+        
+        await asyncio.gather(*roi_save_tasks)
 
         clip_rel = ""
         try:
@@ -1151,6 +1161,7 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
             snapshots_data = {
                 "annotated_path": media_paths.snapshot_annotated_rel,
                 "clip_path": media_paths.snapshot_clip_rel,
+                "roi_path": media_paths.snapshot_roi_rel if has_roi else "",
                 "background_path": media_paths.snapshot_background_rel if background_img is not None else ""
             }
             
