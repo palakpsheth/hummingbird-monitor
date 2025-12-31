@@ -1,6 +1,5 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from pathlib import Path
 from hbmon.web import (
     _load_cv2,
     _get_db_dialect_name,
@@ -8,10 +7,7 @@ from hbmon.web import (
     _load_mjpeg_settings,
     _update_mjpeg_adaptive,
     MJPEGSettings,
-    _AsyncSessionAdapter,
-    make_app,
 )
-from hbmon.models import Individual, Observation
 import sys
 from fastapi import HTTPException
 

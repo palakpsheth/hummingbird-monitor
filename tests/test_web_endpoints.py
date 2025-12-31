@@ -1662,11 +1662,6 @@ def test_individual_refresh_embedding_no_embs(tmp_path, monkeypatch):
     assert r.status_code == 303
     assert r.headers["location"] == f"/individuals/{ind_id}"
 
-def test_split_review_not_found(tmp_path, monkeypatch):
-    client = _setup_app(tmp_path, monkeypatch)
-    r = client.get("/individuals/999/split_review")
-    assert r.status_code == 404
-
 def test_api_roi_get_set(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     # GET default

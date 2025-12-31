@@ -1,7 +1,5 @@
-import pytest
 import numpy as np
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from hbmon.worker import (
     Det,
     _sanitize_bg_params,
