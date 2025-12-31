@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from hbmon.config import background_image_path, ensure_dirs, load_settings, media_dir
 from hbmon.db import init_db, reset_db_state, session_scope
-from hbmon.models import Embedding, Individual, Observation, utcnow
+from hbmon.models import Candidate, Embedding, Individual, Observation, utcnow
 from hbmon.web import make_app
 
 _TEST_CLIENTS: list[TestClient] = []
@@ -1585,7 +1585,6 @@ def test_bulk_delete_individuals_empty(tmp_path, monkeypatch):
 
 def test_candidates_filtering(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
-    from hbmon.models import Candidate
     with session_scope() as db:
         c1 = Candidate(ts=utcnow(), snapshot_path="c1.jpg")
         c1.set_extra({"reason": "motion_low", "review": {"label": "false_negative"}, "species": "Hummingbird"})
@@ -1859,3 +1858,4 @@ def test_export_observation_includes_roi(tmp_path, monkeypatch):
         metadata_member = next(n for n in names if n.endswith("/metadata.json"))
         metadata = json.loads(tf.extractfile(metadata_member).read().decode("utf-8"))
         assert metadata["original_observation"]["extra"]["snapshots"]["roi_path"] == "roi.jpg"
+

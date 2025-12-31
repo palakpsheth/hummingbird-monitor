@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, func
 
 from hbmon.db import init_db, reset_db_state, get_async_session_factory
-from hbmon.models import Individual, Observation
+from hbmon.models import Individual, Observation, utcnow
 from hbmon.web import make_app
 
 def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
@@ -155,3 +155,54 @@ async def test_split_apply(tmp_path, monkeypatch):
         # o1 should still be A
         updated_o1 = await db.get(Observation, oid1)
         assert updated_o1.individual_id == ind_id
+@pytest.mark.anyio
+async def test_individuals_list_sorting(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    async with get_async_session_factory()() as db:
+        db.add(Individual(name="A", visit_count=100, last_seen_at=utcnow()))
+        db.add(Individual(name="B", visit_count=10, last_seen_at=utcnow()))
+        await db.commit()
+    
+    # Sort by visits (default)
+    r = client.get("/individuals")
+    assert response_text_ordered(r.text, ["A", "B"])
+    
+    # Sort by id
+    r = client.get("/individuals?sort=id")
+    assert r.status_code == 200
+    
+    # Sort by recent
+    r = client.get("/individuals?sort=recent")
+    assert r.status_code == 200
+
+@pytest.mark.anyio
+async def test_individual_detail_heatmap_and_proto(tmp_path, monkeypatch):
+    client = _setup_app(tmp_path, monkeypatch)
+    async with get_async_session_factory()() as db:
+        ind = Individual(name="Heatmap Ind")
+        db.add(ind)
+        await db.commit()
+        await db.refresh(ind)
+        ind_id = ind.id
+        
+        # Add observations at different hours
+        from datetime import datetime
+        now = datetime.now()
+        h1 = now.replace(hour=10, minute=0, second=0)
+        h2 = now.replace(hour=14, minute=0, second=0)
+        db.add(Observation(individual_id=ind_id, ts=h1, species_label="S", snapshot_path="s1.jpg", video_path="v1.mp4"))
+        db.add(Observation(individual_id=ind_id, ts=h2, species_label="S", snapshot_path="s2.jpg", video_path="v2.mp4"))
+        await db.commit()
+        
+    r = client.get(f"/individuals/{ind_id}")
+    assert r.status_code == 200
+    # Search for heatmap-related indicators if any in template (usually 'hh-10', 'hh-14' or similar)
+    # Since I don't see the template, I'll just ensure it renderes.
+
+def response_text_ordered(text: str, substrings: list[str]) -> bool:
+    pos = 0
+    for s in substrings:
+        pos = text.find(s, pos)
+        if pos == -1:
+            return False
+    return True

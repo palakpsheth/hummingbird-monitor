@@ -85,6 +85,18 @@ except Exception:  # pragma: no cover
     YOLO = None  # type: ignore
     _YOLO_AVAILABLE = False
 
+try:
+    from hbmon.openvino_utils import is_openvino_available, validate_openvino_gpu
+    _OPENVINO_UTILS_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _OPENVINO_UTILS_AVAILABLE = False
+
+    def is_openvino_available() -> bool:
+        return False
+
+    def validate_openvino_gpu() -> bool:
+        return False
+
 
 # Default COCO class id for 'bird'. We attempt to resolve this from the loaded model
 # class names at runtime, but fall back to this value (or HBMON_BIRD_CLASS_ID) if needed.
@@ -1232,6 +1244,73 @@ async def processing_dispatcher(queue: asyncio.Queue, clip: ClipModel) -> None:
         queue.task_done()
 
 
+def _load_yolo_model() -> Any:
+    """
+    Load YOLO model with optional OpenVINO backend for Intel GPU acceleration.
+
+    Environment variables:
+    - HBMON_YOLO_MODEL: Model name (default: yolo11n.pt)
+    - HBMON_INFERENCE_BACKEND: Unified backend for both YOLO and CLIP
+    - HBMON_YOLO_BACKEND: "pytorch" (default), "openvino-cpu", or "openvino-gpu"
+      (overrides HBMON_INFERENCE_BACKEND if set)
+
+    Returns:
+        Loaded YOLO model ready for inference.
+    """
+    if not _YOLO_AVAILABLE:
+        raise RuntimeError("ultralytics must be installed to load YOLO models")
+
+    model_name = os.getenv("HBMON_YOLO_MODEL", "yolo11n.pt")
+    # Priority: HBMON_YOLO_BACKEND > HBMON_INFERENCE_BACKEND > "pytorch"
+    backend = os.getenv("HBMON_YOLO_BACKEND") or os.getenv("HBMON_INFERENCE_BACKEND", "pytorch")
+    backend = backend.lower().strip()
+
+    # PyTorch backend (default)
+    if backend == "pytorch":
+        print(f"[worker] Loading YOLO model: {model_name} (PyTorch backend)")
+        return YOLO(model_name)  # type: ignore[misc]
+
+    # OpenVINO backends
+    if not is_openvino_available():
+        print("[worker] WARNING: OpenVINO not available, falling back to PyTorch")
+        print(f"[worker] Loading YOLO model: {model_name} (PyTorch backend)")
+        return YOLO(model_name)  # type: ignore[misc]
+
+    # Check GPU for openvino-gpu backend
+    if backend == "openvino-gpu" and not validate_openvino_gpu():
+        print("[worker] WARNING: OpenVINO GPU not available, falling back to openvino-cpu")
+        backend = "openvino-cpu"
+
+    # Export model to OpenVINO format if needed
+    ov_suffix = "_openvino_model"
+    model_base = model_name.replace(".pt", "")
+    yolo_config_dir = Path(os.getenv("YOLO_CONFIG_DIR", "/data/yolo"))
+    ov_model_dir = yolo_config_dir / f"{model_base}{ov_suffix}"
+
+    if not ov_model_dir.exists():
+        print(f"[worker] Exporting {model_name} to OpenVINO format...")
+        yolo = YOLO(model_name)  # type: ignore[misc]
+        try:
+            yolo.export(format="openvino", half=False)
+            print("[worker] OpenVINO model exported successfully")
+        except Exception as e:
+            print(f"[worker] WARNING: OpenVINO export failed: {e}")
+            print(f"[worker] Loading YOLO model: {model_name} (PyTorch backend)")
+            return YOLO(model_name)  # type: ignore[misc]
+
+    # Load OpenVINO model
+    device = "GPU" if backend == "openvino-gpu" else "CPU"
+    print(f"[worker] Loading YOLO model: {ov_model_dir} (OpenVINO {device} backend)")
+
+    try:
+        yolo = YOLO(str(ov_model_dir))  # type: ignore[misc]
+        return yolo
+    except Exception as e:
+        print(f"[worker] WARNING: Failed to load OpenVINO model: {e}")
+        print(f"[worker] Loading YOLO model: {model_name} (PyTorch backend)")
+        return YOLO(model_name)  # type: ignore[misc]
+
+
 async def run_worker() -> None:
     """
     Main loop for the hummingbird monitoring worker.  Requires OpenCV,
@@ -1253,9 +1332,8 @@ async def run_worker() -> None:
     ensure_dirs()
     await init_async_db()
 
-    # Load models once
-    yolo_model_name = os.getenv("HBMON_YOLO_MODEL", "yolo11n.pt")
-    yolo = YOLO(yolo_model_name)  # type: ignore[misc]
+    # Load YOLO model (supports PyTorch or OpenVINO backends via HBMON_YOLO_BACKEND)
+    yolo = _load_yolo_model()
 
     # Resolve the class id for 'bird' from the model's names mapping when possible.
     bird_class_id: int | None = None
@@ -1282,7 +1360,10 @@ async def run_worker() -> None:
 
     # Start dispatcher
     queue: asyncio.Queue = asyncio.Queue()
-    clip = ClipModel(device=os.getenv("HBMON_DEVICE", "cpu"))
+    # Initialize CLIP model with backend selection
+    # Priority: HBMON_DEVICE > HBMON_INFERENCE_BACKEND > "cpu"
+    clip_backend = os.getenv("HBMON_DEVICE") or os.getenv("HBMON_INFERENCE_BACKEND", "cpu")
+    clip = ClipModel(backend=clip_backend)
     asyncio.create_task(processing_dispatcher(queue, clip))
 
     env = os.getenv("HBMON_SPECIES_LIST", "").strip()

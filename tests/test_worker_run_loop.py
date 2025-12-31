@@ -60,8 +60,10 @@ class _DummyYOLO:
 
 
 class _DummyClip:
-    def __init__(self, device: str):
-        self.device = device
+    def __init__(self, device: str | None = None, backend: str | None = None):
+        # Accept both device and backend for backward compatibility
+        self.backend = backend or device or "cpu"
+        self.device = self.backend
         self.labels: list[str] | None = None
 
     def set_label_space(self, labels: list[str]) -> None:
@@ -174,7 +176,7 @@ async def test_run_worker_single_iteration(tmp_path, monkeypatch):
     item = captured_queue.get_nowait()
     
     sem = asyncio.Semaphore(1)
-    clip = _DummyClip("cpu")
+    clip = _DummyClip(device="cpu")
     await worker.process_candidate_task(item, clip, media_dir, sem)
 
     async with db_module.async_session_scope() as session:
@@ -274,7 +276,7 @@ async def test_run_worker_logs_rejected_candidate(tmp_path, monkeypatch):
     item = captured_queue.get_nowait()
     
     sem = asyncio.Semaphore(1)
-    clip = _DummyClip("cpu")
+    clip = _DummyClip(device="cpu")
     await worker.process_candidate_task(item, clip, media_dir, sem)
 
     async with db_module.async_session_scope() as session:

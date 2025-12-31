@@ -10,7 +10,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     wget \
+    gnupg \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Intel GPU compute runtime (required for OpenVINO GPU plugin)
+# This enables HBMON_YOLO_BACKEND=openvino-gpu on Intel Iris Xe / Arc GPUs
+RUN wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy client" \
+       > /etc/apt/sources.list.d/intel-gpu-jammy.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       intel-opencl-icd \
+       intel-level-zero-gpu \
+       level-zero \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --upgrade pip
 
 WORKDIR /app
