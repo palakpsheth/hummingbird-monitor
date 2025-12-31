@@ -94,7 +94,7 @@ imported in minimal environments without installing heavy dependencies.
 
 try:
     from fastapi import Depends, FastAPI, Form, HTTPException, Request  # type: ignore
-    from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse  # type: ignore
+    from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse, Response  # type: ignore
     from fastapi.staticfiles import StaticFiles  # type: ignore
     from fastapi.templating import Jinja2Templates  # type: ignore
     _FASTAPI_AVAILABLE = True
@@ -1651,11 +1651,21 @@ def make_app() -> Any:
         extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
         extra_column_defaults = _default_extra_column_visibility(extra_columns)
 
-        inds = (
-            await db.execute(
-                select(Individual).order_by(desc(Individual.visit_count)).limit(2000)
-            )
-        ).scalars().all()
+        # Cache individuals for dropdown - rarely changes and expensive to query
+        individuals_cache_key = "hbmon:individuals:dropdown"
+        cached_inds = await cache_get_json(individuals_cache_key)
+        if cached_inds:
+            inds_data = cached_inds
+        else:
+            inds = (
+                await db.execute(
+                    select(Individual.id, Individual.name, Individual.visit_count)
+                    .order_by(desc(Individual.visit_count))
+                    .limit(100)  # Reduced from 2000 - most users won't need more
+                )
+            ).all()
+            inds_data = [{"id": r[0], "name": r[1], "visit_count": r[2]} for r in inds]
+            await cache_set_json(individuals_cache_key, inds_data, ttl_seconds=60)  # Cache for 60 seconds
 
         return templates.TemplateResponse(
             request,
@@ -1665,7 +1675,7 @@ def make_app() -> Any:
                 "Observations",
                 settings=s,
                 observations=obs,
-                individuals=inds,
+                individuals=inds_data,
                 extra_columns=extra_columns,
                 extra_column_sort_types=extra_sort_types,
                 extra_column_labels=extra_labels,
@@ -2387,6 +2397,23 @@ def make_app() -> Any:
 
         for ind_id in individual_ids:
             await _recompute_individual_stats(db, int(ind_id))
+        await _commit_with_retry(db)
+
+        return RedirectResponse(url=redirect_path, status_code=303)
+
+    @app.post("/individuals/bulk_delete")
+    async def bulk_delete_individuals(
+        ind_ids: list[int] = Form([]),
+        redirect_to: str | None = Form(None),
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> RedirectResponse:
+        redirect_path = _sanitize_redirect_path(redirect_to, default="/individuals")
+        ids = [int(i) for i in ind_ids if int(i) > 0]
+        if not ids:
+            return RedirectResponse(url=redirect_path, status_code=303)
+
+        # Delete individuals (observations effectively become orphaned via ON DELETE SET NULL)
+        await db.execute(delete(Individual).where(Individual.id.in_(ids)))
         await _commit_with_retry(db)
 
         return RedirectResponse(url=redirect_path, status_code=303)
@@ -3287,12 +3314,64 @@ def make_app() -> Any:
         buf = await _run_blocking(_build_placeholder)
         return StreamingResponse(buf, media_type="image/jpeg")
 
+    @app.get("/api/snapshot.jpg")
+    async def snapshot_jpg() -> Any:
+        """
+        Fetch and serve a snapshot from the wyze-bridge HTTP snapshot endpoint.
+
+        This endpoint is optimized for polling-based refresh (every 1-2 seconds)
+        and avoids opening RTSP connections. Falls back to live_frame if HTTP
+        snapshot URL is not configured.
+
+        Returns the image with short caching headers to allow browser caching.
+        """
+        snapshot_url, timeout, retries = _get_snapshot_config()
+        if not snapshot_url:
+            # Fall back to live_frame behavior
+            s = load_settings()
+            jpeg_bytes = await _run_blocking(_get_live_snapshot_bytes_sync, s, 80)
+            return Response(
+                content=jpeg_bytes,
+                media_type="image/jpeg",
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
+
+        # Use fast HTTP snapshot with reduced retries for polling
+        try:
+            jpeg_bytes = await _run_blocking(_fetch_snapshot_http, snapshot_url, timeout, 2)
+        except HTTPException:
+            # If HTTP snapshot fails, try RTSP fallback
+            s = load_settings()
+            jpeg_bytes = await _run_blocking(_get_live_snapshot_bytes_sync, s, 80)
+
+        return Response(
+            content=jpeg_bytes,
+            media_type="image/jpeg",
+            headers={
+                # Allow browser to cache for 1 second - suitable for 2s refresh
+                "Cache-Control": "max-age=1, must-revalidate",
+            },
+        )
+
     @app.get("/api/live_frame.jpg")
     async def live_frame_jpg() -> Any:
         s = load_settings()
         # run blocking helper once in threadpool
         jpeg_bytes = await _run_blocking(_get_live_snapshot_bytes_sync, s, 100)
-        return StreamingResponse(io.BytesIO(jpeg_bytes), media_type="image/jpeg")
+        return Response(
+            content=jpeg_bytes,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
+
 
     @app.get("/api/stream.mjpeg")
     async def stream_mjpeg() -> Any:
