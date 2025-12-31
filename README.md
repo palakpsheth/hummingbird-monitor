@@ -373,8 +373,8 @@ continue to override them when set.
 5. When `HBMON_BG_LOG_REJECTED=1`, rejected detections are logged in the **Candidates** page for review/labeling
 
 ### Debugging and diagnostics
-- `HBMON_DEBUG_YOLO` (default "0")
-  - Set to "1" to enable extra YOLO detection logging
+- `HBMON_DEBUG_VERBOSE` (default "0")
+  - Set to "1" to enable verbose logging for YOLO, classification, species probability, and re-ID matching scores
 - `HBMON_DEBUG_SAVE_FRAMES` (default "0")
   - Set to "1" to write periodic debug frames to disk
 - `HBMON_DEBUG_EVERY_SECONDS` (default 10)

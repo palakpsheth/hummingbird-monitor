@@ -1189,6 +1189,9 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
                 db.add(e)
             
             print(f"[worker] Saved observation {obs.id} (ind={individual_id})")
+            
+            if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+                 print(f"[worker] [DEBUG] Processing details: individual={individual_id}, species={species_label}({species_prob:.2f}), match_score={match_score:.2f}")
 
     except Exception as e:
         print(f"[worker] task failed: {e}")
@@ -1308,6 +1311,7 @@ async def run_worker() -> None:
     settings: Settings | None = None
 
     last_trigger = 0.0
+    last_debug_log = 0.0
     last_logged_candidate_ts = 0.0
     candidate_log_times: deque[float] = deque()
 
@@ -1365,6 +1369,17 @@ async def run_worker() -> None:
         if s.roi:
             roi_frame, (xoff, yoff) = _apply_roi(frame, s)
 
+        # Debug Logging
+        debug_every = float(os.getenv("HBMON_DEBUG_EVERY_SECONDS", "10"))
+        debug_save = env_bool("HBMON_DEBUG_SAVE_FRAMES", False)
+        now_dbg = time.time()
+
+        if (now_dbg - last_debug_log) > debug_every:
+             print(f"[worker] alive q_size={queue.qsize()} rtsp={s.rtsp_url}")
+             if debug_save:
+                 _write_jpeg(media_dir() / "debug_latest.jpg", frame)
+             last_debug_log = now_dbg
+
         motion_mask = None
         bg_active = False
         if s.bg_subtraction_enabled and background_img is not None:
@@ -1374,7 +1389,8 @@ async def run_worker() -> None:
 
         # YOLO Detect
         try:
-             results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=[bird_class_id], verbose=False)
+             yolo_verbose = (os.getenv("HBMON_DEBUG_VERBOSE") == "1")
+             results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=[bird_class_id], verbose=yolo_verbose)
         except Exception:
              await asyncio.sleep(0.5)
              continue
@@ -1382,6 +1398,9 @@ async def run_worker() -> None:
         detections = _collect_bird_detections(results, int(s.min_box_area), bird_class_id)
         if not detections:
             continue
+
+        if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+             print(f"[worker] [DEBUG-YOLO] Found {len(detections)} bird detections.")
 
         # Check motion overlap
         kept_entries = []
@@ -1400,6 +1419,10 @@ async def run_worker() -> None:
         det_stats = {}
         if kept_entries:
             det, det_stats = _select_best_detection(kept_entries)
+        elif os.getenv("HBMON_DEBUG_BG") == "1" and rejected_entries:
+            # Optionally log why detections were rejected
+            for d, stats in rejected_entries:
+                print(f"[worker] [DEBUG-BG] REJECTED: p={d.conf:.2f} area={d.area} overlap={stats['bbox_overlap_ratio']:.2f} (min={s.bg_min_overlap})")
 
         timestamp = time.time()
 
@@ -1433,7 +1456,11 @@ async def run_worker() -> None:
                 )
                 queue.put_nowait(item)
                 last_trigger = timestamp
-                print(f"[worker] Queued candidate (p={det.conf:.2f})")
+                
+                if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+                    print(f"[worker] [DEBUG] ACCEPTED: p={det.conf:.2f} area={det.area} pixels. Overlap: {det_stats.get('bbox_overlap_ratio', 0.0):.2f}")
+                else:
+                    print(f"[worker] Queued candidate (p={det.conf:.2f})")
 
         # Rejected ?
         log_rejected = env_bool("HBMON_BG_LOG_REJECTED", False)
@@ -1469,15 +1496,6 @@ async def run_worker() -> None:
                       last_logged_candidate_ts = timestamp
                       candidate_log_times.append(timestamp)
 
-        # Debug Logging
-        debug_every = float(os.getenv("HBMON_DEBUG_EVERY_SECONDS", "10"))
-        debug_save = env_bool("HBMON_DEBUG_SAVE_FRAMES", False)
-        now_dbg = time.time()
-        
-        if (now_dbg - last_trigger) > debug_every:
-             print(f"[worker] alive q_size={queue.qsize()} rtsp={s.rtsp_url}")
-             if debug_save:
-                 _write_jpeg(media_dir() / "debug_latest.jpg", frame)
 
         # Update background logic (periodic check)
         now_bg = time.time()
