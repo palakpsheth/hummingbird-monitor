@@ -58,3 +58,34 @@ async def test_latest_observation_cache_validation(monkeypatch, tmp_path) -> Non
     assert data is not None
     assert data["id"] == obs_id
     assert data["ts_utc"] == expected_ts_utc
+@pytest.mark.anyio
+async def test_index_caching(monkeypatch, tmp_path) -> None:
+    _setup_db(monkeypatch, tmp_path)
+    from hbmon.web import make_app
+    from fastapi.testclient import TestClient
+    app = make_app()
+    client = TestClient(app)
+
+    # 1. First request (Miss)
+    r1 = client.get("/")
+    assert r1.status_code == 200
+    
+    # 2. Mock cache hit
+    async def _fake_cache_get_json(key: str):
+        if "index" in key:
+            return {
+                "top_inds_out": [[1, "Cached Bird", 5, "2024-01-01T12:00:00Z"]],
+                "recent": [],
+                "current_page": 1,
+                "clamped_page_size": 10,
+                "total_pages": 1,
+                "total_recent": 1,
+                "last_capture_utc": "2024-01-01T12:00:00Z"
+            }
+        return None
+    
+    monkeypatch.setattr("hbmon.web.cache_get_json", _fake_cache_get_json)
+    
+    r2 = client.get("/")
+    assert r2.status_code == 200
+    assert "Cached Bird" in r2.text

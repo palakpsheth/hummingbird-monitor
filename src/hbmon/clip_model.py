@@ -7,13 +7,14 @@ This module uses OpenCLIP (open-clip-torch) to:
   2) produce a stable, normalized embedding vector for re-identification / clustering
 
 Design notes:
-- Works on CPU by default (x64 mini PC friendly).
+- Supports multiple backends: PyTorch (CPU/CUDA) and OpenVINO (CPU/GPU)
 - Uses cosine similarity between image and per-class text embeddings.
 - Returns a probability distribution via softmax over class similarities.
 - Embeddings are L2-normalized float32 numpy arrays.
+- OpenVINO models are converted and cached on first initialization
 
 Environment variables (optional):
-- HBMON_DEVICE: "cpu" (default) or "cuda"
+- HBMON_DEVICE: "cpu" (default), "cuda", "openvino-cpu", or "openvino-gpu"
 - HBMON_CLIP_MODEL: e.g. "ViT-B-32" (default)
 - HBMON_CLIP_PRETRAINED: e.g. "openai" (default)
 - HBMON_CLIP_PROMPT_PREFIX: e.g. "a photo of " (default)
@@ -271,7 +272,8 @@ class ClipModel:
     def __init__(
         self,
         *,
-        device: str | None = None,
+        device: str | None = None,  # Kept for backward compatibility, maps to backend
+        backend: str | None = None,
         model_name: str | None = None,
         pretrained: str | None = None,
         prompt_prefix: str | None = None,
@@ -286,7 +288,8 @@ class ClipModel:
                 "open-clip-torch, torch and Pillow are required to instantiate ClipModel."
             )
 
-        self.device = device or _get_env("HBMON_DEVICE", "cpu")
+        # Backend selection: prefer explicit backend, fall back to device (for compatibility)
+        self.backend = backend or device or _get_env("HBMON_DEVICE", "cpu")
         self.model_name = model_name or _get_env("HBMON_CLIP_MODEL", "ViT-B-32")
         self.pretrained = pretrained or _get_env("HBMON_CLIP_PRETRAINED", "openai")
         self.prompt_prefix = prompt_prefix or _get_env("HBMON_CLIP_PROMPT_PREFIX", "a photo of ")
@@ -294,22 +297,150 @@ class ClipModel:
         self.labels = labels or list(DEFAULT_SPECIES)
         self.prompts = dict(prompts) if prompts is not None else dict(DEFAULT_PROMPTS)
 
+        # Determine if we're using OpenVINO
+        self.use_openvino = "openvino" in self.backend.lower()
+        
+        # Initialize models based on backend
+        if self.use_openvino:
+            self._init_openvino_backend()
+        else:
+            self._init_pytorch_backend()
+
+        # Prepare class text embeddings (cached per instance)
+        self._text_features = self._build_text_features(self.labels, self.prompts)
+    
+    def _init_pytorch_backend(self) -> None:
+        """Initialize PyTorch backend (CPU or CUDA)."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Map backend to PyTorch device
+        if self.backend == "cuda":
+            device = "cuda"
+        else:
+            device = "cpu"
+        
+        self.device = device
+        logger.info(f"Loading CLIP model: {self.model_name} ({self.pretrained}) - PyTorch {device.upper()} backend")
+        
         # Load model components (cached)
         try:
             self._model, self._preprocess, self._tokenizer = _load_openclip(
                 self.model_name, self.pretrained, self.device
             )
+            self._ov_image_model = None
+            self._ov_text_model = None
         except Exception as exc:  # pragma: no cover - exercised indirectly in tests
             raise RuntimeError(f"Failed to load CLIP model: {exc}") from exc
-
-        # Prepare class text embeddings (cached per instance)
-        self._text_features = self._build_text_features(self.labels, self.prompts)
+    
+    def _init_openvino_backend(self) -> None:
+        """Initialize OpenVINO backend (CPU or GPU) with model conversion if needed."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Import OpenVINO utilities
+        try:
+            from hbmon.openvino_utils import (
+                is_openvino_available,
+                load_openvino_clip,
+                select_clip_device,
+            )
+        except ImportError:  # pragma: no cover
+            logger.warning("OpenVINO not available, falling back to PyTorch CPU")
+            self.backend = "cpu"
+            self.use_openvino = False
+            self._init_pytorch_backend()
+            return
+        
+        if not is_openvino_available():  # pragma: no cover
+            logger.warning("OpenVINO not installed, falling back to PyTorch CPU")
+            self.backend = "cpu"
+            self.use_openvino = False
+            self._init_pytorch_backend()
+            return
+        
+        # Select OpenVINO device
+        ov_device = select_clip_device(self.backend)
+        logger.info(f"Loading CLIP model: {self.model_name} ({self.pretrained}) - OpenVINO {ov_device} backend")
+        
+        # Try to load cached OpenVINO model
+        try:
+            cached_models = load_openvino_clip(self.model_name, self.pretrained, ov_device)
+            if cached_models is not None:
+                self._ov_image_model, self._ov_text_model = cached_models
+                logger.info("Loaded cached OpenVINO CLIP model")
+            else:
+                # No cached model, need to convert
+                logger.info("No cached OpenVINO model found, converting from PyTorch...")
+                self._convert_and_cache_openvino(ov_device)
+        except Exception as exc:  # pragma: no cover
+            logger.error(f"Failed to load OpenVINO CLIP model: {exc}")
+            logger.warning("Falling back to PyTorch CPU")
+            self.backend = "cpu"
+            self.use_openvino = False
+            self._init_pytorch_backend()
+            return
+        
+        # Still need PyTorch components for preprocessing and tokenization
+        self.device = "cpu"  # Use CPU for PyTorch preprocessing
+        try:
+            self._model, self._preprocess, self._tokenizer = _load_openclip(
+                self.model_name, self.pretrained, self.device
+            )
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(f"Failed to load CLIP preprocessing components: {exc}") from exc
+    
+    def _convert_and_cache_openvino(self, ov_device: str) -> None:
+        """Convert PyTorch CLIP model to OpenVINO and cache it."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        from hbmon.openvino_utils import convert_clip_to_openvino
+        
+        # First load PyTorch model for conversion
+        logger.info("Loading PyTorch model for conversion...")
+        pytorch_model, preprocess, tokenizer = _load_openclip(
+            self.model_name, self.pretrained, "cpu"
+        )
+        
+        # Create example inputs for tracing
+        logger.info("Creating example inputs for model tracing...")
+        # Image input: batch_size=1, channels=3, height=224, width=224 (typical CLIP input)
+        example_image = torch.randn(1, 3, 224, 224)
+        # Text input: batch_size=1, sequence_length=77 (CLIP's max text length)
+        example_text = torch.randint(0, tokenizer.vocab_size, (1, 77))
+        
+        # Convert to OpenVINO
+        logger.info("Converting CLIP model to OpenVINO IR (this may take 30-60 seconds)...")
+        image_model_ov, text_model_ov = convert_clip_to_openvino(
+            pytorch_model,
+            self.model_name,
+            self.pretrained,
+            example_image,
+            example_text,
+        )
+        
+        # Compile for target device
+        logger.info(f"Compiling OpenVINO models for {ov_device}...")
+        from openvino import Core  # type: ignore
+        core = Core()
+        self._ov_image_model = core.compile_model(image_model_ov, ov_device)
+        self._ov_text_model = core.compile_model(text_model_ov, ov_device)
+        
+        logger.info("OpenVINO CLIP model conversion and caching complete")
 
     def _build_text_features(self, labels: list[str], prompts: Mapping[str, list[str]]) -> torch.Tensor:
         """
         Build a [num_labels, dim] tensor of normalized text features.
         For each label: average features over its prompt list.
         """
+        if self.use_openvino:
+            return self._build_text_features_openvino(labels, prompts)
+        else:
+            return self._build_text_features_pytorch(labels, prompts)
+    
+    def _build_text_features_pytorch(self, labels: list[str], prompts: Mapping[str, list[str]]) -> torch.Tensor:
+        """Build text features using PyTorch backend."""
         with torch.no_grad():
             feats: list[torch.Tensor] = []
 
@@ -334,11 +465,47 @@ class ClipModel:
             out = out.float()
             out = _l2_normalize_torch(out)
             return out
+    
+    def _build_text_features_openvino(self, labels: list[str], prompts: Mapping[str, list[str]]) -> torch.Tensor:
+        """Build text features using OpenVINO backend."""
+        import numpy as np
+        
+        feats: list[np.ndarray] = []
+
+        for lab in labels:
+            plist = prompts.get(lab, [lab])
+            # Apply optional prefix to prompts (helps CLIP)
+            full_prompts = [self.prompt_prefix + p for p in plist]
+
+            tokens = self._tokenizer(full_prompts)
+            
+            # Run OpenVINO inference
+            text_outputs = self._ov_text_model(tokens.numpy())[0]  # Get first output
+            text = torch.from_numpy(text_outputs).float()
+            text = _l2_normalize_torch(text)
+
+            # average prompt variants
+            text_mean = text.mean(dim=0, keepdim=True)
+            text_mean = _l2_normalize_torch(text_mean)
+
+            feats.append(text_mean.numpy())
+
+        # Convert back to torch tensor for consistency
+        out = torch.from_numpy(np.concatenate(feats, axis=0)).float()
+        out = _l2_normalize_torch(out)
+        return out
 
     def encode_embedding(self, image_bgr: np.ndarray, *, bbox_xyxy: tuple[int, int, int, int] | None = None) -> np.ndarray:
         """
         Return an L2-normalized float32 embedding vector for the (cropped) image.
         """
+        if self.use_openvino:
+            return self._encode_embedding_openvino(image_bgr, bbox_xyxy=bbox_xyxy)
+        else:
+            return self._encode_embedding_pytorch(image_bgr, bbox_xyxy=bbox_xyxy)
+    
+    def _encode_embedding_pytorch(self, image_bgr: np.ndarray, *, bbox_xyxy: tuple[int, int, int, int] | None = None) -> np.ndarray:
+        """Encode embedding using PyTorch backend."""
         img = crop_bgr(image_bgr, bbox_xyxy)
         pil = _ensure_rgb_pil(img)
         with torch.no_grad():
@@ -347,6 +514,19 @@ class ClipModel:
             img_feat = _l2_normalize_torch(img_feat).float()
             vec = img_feat[0].detach().cpu().numpy().astype(np.float32, copy=False)
         # Ensure unit norm in numpy space too
+        n = float(np.linalg.norm(vec) + 1e-12)
+        return (vec / n).astype(np.float32, copy=False)
+    
+    def _encode_embedding_openvino(self, image_bgr: np.ndarray, *, bbox_xyxy: tuple[int, int, int, int] | None = None) -> np.ndarray:
+        """Encode embedding using OpenVINO backend."""
+        img = crop_bgr(image_bgr, bbox_xyxy)
+        pil = _ensure_rgb_pil(img)
+        # Preprocess using PyTorch (lightweight operation)
+        inp = self._preprocess(pil).unsqueeze(0)
+        # Run OpenVINO inference
+        img_feat = self._ov_image_model(inp.numpy())[0]  # Get first output
+        vec = img_feat[0].astype(np.float32, copy=False)
+        # Ensure unit norm
         n = float(np.linalg.norm(vec) + 1e-12)
         return (vec / n).astype(np.float32, copy=False)
 
@@ -367,19 +547,11 @@ class ClipModel:
         if topk < 1:
             raise ValueError("topk must be >= 1")
 
-        img = crop_bgr(image_bgr, bbox_xyxy)
-        pil = _ensure_rgb_pil(img)
-
-        with torch.no_grad():
-            inp = self._preprocess(pil).unsqueeze(0).to(self.device)
-
-            image_feat = self._model.encode_image(inp)
-            image_feat = _l2_normalize_torch(image_feat).float()  # [1, D]
-
-            # cosine similarities to per-class text features
-            # text: [N, D], image: [1, D] => logits: [1, N]
-            logits_t = (image_feat @ self._text_features.T).squeeze(0)  # [N]
-            logits = logits_t.detach().cpu().numpy().astype(np.float64, copy=False)
+        # Get logits from appropriate backend
+        if self.use_openvino:
+            logits = self._predict_logits_openvino(image_bgr, bbox_xyxy)
+        else:
+            logits = self._predict_logits_pytorch(image_bgr, bbox_xyxy)
 
         probs = _softmax(logits)
         order = np.argsort(-probs)
@@ -397,6 +569,40 @@ class ClipModel:
         topk = min(topk, len(self.labels))
         preds = [make_pred(int(order[k])) for k in range(topk)]
         return preds
+    
+    def _predict_logits_pytorch(self, image_bgr: np.ndarray, bbox_xyxy: tuple[int, int, int, int] | None) -> np.ndarray:
+        """Predict logits using PyTorch backend."""
+        img = crop_bgr(image_bgr, bbox_xyxy)
+        pil = _ensure_rgb_pil(img)
+
+        with torch.no_grad():
+            inp = self._preprocess(pil).unsqueeze(0).to(self.device)
+            image_feat = self._model.encode_image(inp)
+            image_feat = _l2_normalize_torch(image_feat).float()  # [1, D]
+
+            # cosine similarities to per-class text features
+            # text: [N, D], image: [1, D] => logits: [1, N]
+            logits_t = (image_feat @ self._text_features.T).squeeze(0)  # [N]
+            logits = logits_t.detach().cpu().numpy().astype(np.float64, copy=False)
+        return logits
+    
+    def _predict_logits_openvino(self, image_bgr: np.ndarray, bbox_xyxy: tuple[int, int, int, int] | None) -> np.ndarray:
+        """Predict logits using OpenVINO backend."""
+        img = crop_bgr(image_bgr, bbox_xyxy)
+        pil = _ensure_rgb_pil(img)
+        
+        # Preprocess using PyTorch (lightweight operation)
+        inp = self._preprocess(pil).unsqueeze(0)
+        
+        # Run OpenVINO inference
+        img_feat = self._ov_image_model(inp.numpy())[0]  # Get first output
+        img_feat_torch = torch.from_numpy(img_feat).float()
+        img_feat_torch = _l2_normalize_torch(img_feat_torch)
+        
+        # cosine similarities to per-class text features
+        logits_t = (img_feat_torch @ self._text_features.T).squeeze(0)
+        logits = logits_t.numpy().astype(np.float64, copy=False)
+        return logits
 
     def predict_species_label_prob(
         self,
@@ -432,11 +638,9 @@ class ClipModel:
         Return raw cosine similarities for each label (no softmax).
         Useful for debugging which labels are close.
         """
-        img = crop_bgr(image_bgr, bbox_xyxy)
-        pil = _ensure_rgb_pil(img)
-        with torch.no_grad():
-            inp = self._preprocess(pil).unsqueeze(0).to(self.device)
-            image_feat = _l2_normalize_torch(self._model.encode_image(inp)).float()
-            logits_t = (image_feat @ self._text_features.T).squeeze(0)
-            logits = logits_t.detach().cpu().numpy().astype(np.float64, copy=False)
+        # Reuse the logits prediction methods
+        if self.use_openvino:
+            logits = self._predict_logits_openvino(image_bgr, bbox_xyxy)
+        else:
+            logits = self._predict_logits_pytorch(image_bgr, bbox_xyxy)
         return {self.labels[i]: float(logits[i]) for i in range(len(self.labels))}

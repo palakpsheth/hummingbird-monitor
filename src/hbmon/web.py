@@ -2447,7 +2447,7 @@ def make_app() -> Any:
         if sort == "id":
             q = q.order_by(Individual.id)
         elif sort == "recent":
-            q = q.order_by(desc(Individual.last_seen_at.nulls_last()))
+            q = q.order_by(Individual.last_seen_at.desc().nullslast())
         else:
             q = q.order_by(desc(Individual.visit_count))
 

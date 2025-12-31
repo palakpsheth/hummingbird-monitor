@@ -1,0 +1,11 @@
+# Snyk (https://snyk.io) policy file, patches or ignores known vulnerabilities.
+version: v1.25.0
+ignore:
+  SNYK-DEBIAN12-PAM-10378969:
+    - '*':
+        reason: 'Currently no fix available in Debian 12 Bookworm stable repositories.'
+        expires: '2026-01-31T23:59:59.999Z'
+  SNYK-DEBIAN12-ZLIB-6008963:
+    - '*':
+        reason: 'False positive; affects minizip which is not included in the zlib1g binary package on Debian Bookworm.'
+        expires: '2026-12-31T23:59:59.999Z'

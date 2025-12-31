@@ -26,16 +26,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@681c641aba71e4a1c380be3ab5e12ad51f415867
 
-      - name: Cache uv and venv
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
-        with:
-          path: |
-            .venv
-            ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            uv-${{ runner.os }}-${{ matrix.python-version }}-
-            uv-${{ runner.os }}-
 
       - name: Create venv
         run: uv venv
@@ -150,8 +140,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - docker-build
+          - docker-build-intel
+          - docker-build-cuda
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
 
-      - name: Docker build
-        run: docker build -t hbmon .
+      - name: Build ${{ matrix.target }}
+        run: |
+          # Copy env example to ensure variables are available
+          cp .env.example .env
+          make ${{ matrix.target }}

@@ -226,9 +226,9 @@ make test            # full pytest + coverage
 make test-unit       # unit tests + coverage (marker: not integration)
 make test-integration # integration/UI tests + coverage (marker: integration)
 make docker-build    # docker compose build
-make docker-up       # docker compose build + up -d
-make docker-build-gpu # docker compose build (CUDA-enabled PyTorch)
-make docker-up-gpu   # docker compose build + up -d (CUDA-enabled PyTorch)
+make docker-up       # docker compose build + up -d (CPU-only / OpenVINO CPU)
+make docker-up-cuda  # docker compose build + up -d (NVIDIA CUDA support)
+make docker-up-intel # docker compose build + up -d (Intel GPU support)
 make docker-down     # docker compose down
 make clean-db        # remove local database file only (defaults to ./data)
 make clean-media     # remove local media files (defaults to ./data/media)
@@ -420,6 +420,34 @@ nvidia-smi || true
 
 If `nvidia-smi` works, you likely can use GPU acceleration.
 
+### Quick GPU detection
+
+Not sure what GPU you have? Run the automated detection tool:
+
+```bash
+make check-gpu
+```
+
+This will:
+- Detect NVIDIA, Intel, and AMD GPUs
+- Check for required drivers and devices
+- Recommend the appropriate build command (`make docker-up`, `make docker-up-cuda`, or `make docker-up-intel`)
+
+Example output:
+```
+=== GPU Detection ===
+
+✓ Intel GPU detected:
+  00:02.0 VGA compatible controller: Intel Corporation Device a7a0 (rev 04)
+  /dev/dri/renderD128: available
+
+=== Recommended Build ===
+
+→ Use: make docker-up-intel
+  (Intel GPU with OpenVINO acceleration)
+  Set HBMON_INFERENCE_BACKEND=openvino-gpu in .env
+```
+
 ### 2) Install NVIDIA Container Toolkit (host)
 You need the NVIDIA runtime so Docker containers can see the GPU.
 
@@ -456,8 +484,8 @@ Then inside the worker container:
 To build CUDA-enabled images, use the Makefile targets (or pass the build arg yourself):
 
 ```bash
-make docker-build-gpu
-make docker-up-gpu
+make docker-build-cuda
+make docker-up-cuda
 ```
 
 These targets set `PYTORCH_INDEX_URL` to the CUDA wheel index (default: `cu121`). You can override
@@ -480,9 +508,88 @@ PY
 
 If CUDA is available, the worker can run CLIP and YOLO faster.
 
-### 5) Notes on non-NVIDIA GPUs
-- Intel iGPU: you can potentially use OpenVINO for some workloads, but it’s a separate effort.
-- AMD GPU: ROCm can work for PyTorch, but it’s platform-specific and often harder than NVIDIA on a mini PC.
+### Intel iGPU (Iris Xe / Arc) with OpenVINO
+
+Systems with Intel integrated or Arc graphics can accelerate YOLO inference via OpenVINO.
+
+#### 1) Check for Intel GPU
+```bash
+lspci | grep -i "vga.*intel"
+ls -la /dev/dri/renderD128
+```
+
+If you see an Intel VGA device and `/dev/dri/renderD128` exists, you can use OpenVINO GPU.
+
+#### 2) Enable OpenVINO in .env
+```bash
+# Simple: Use unified backend variable (recommended)
+HBMON_INFERENCE_BACKEND=openvino-gpu
+
+# Advanced: Set backends separately if needed
+# HBMON_YOLO_BACKEND=openvino-gpu
+# HBMON_DEVICE=openvino-cpu
+```
+
+Available backends:
+- `cpu` (default): Standard PyTorch CPU inference
+- `openvino-cpu`: OpenVINO on CPU (**1.5-2x faster than PyTorch**, always available)
+- `openvino-gpu`: OpenVINO on Intel GPU (fastest for Intel iGPU/Arc)
+- `cuda`: NVIDIA GPU with CUDA
+
+> **Important**: OpenVINO now accelerates **both YOLO and CLIP** models on Intel GPU!
+> 
+> **Simple Configuration** (recommended for most users):
+> ```bash
+> HBMON_INFERENCE_BACKEND=openvino-gpu
+> ```
+> 
+> **Advanced Configuration** (for different backends):
+> ```bash
+> HBMON_YOLO_BACKEND=openvino-gpu  # Override YOLO backend
+> HBMON_DEVICE=openvino-cpu        # Override CLIP backend
+> ```
+> 
+> **First Run**: Model conversion happens at worker startup and takes 30-60 seconds. 
+> Subsequent runs use cached models and start immediately.
+
+#### 3) Build Docker image with Intel GPU runtime (optional)
+
+**OpenVINO is always installed** in the Docker image for CPU inference (which is 1.5-2x faster than PyTorch). However, the **Intel GPU runtime** is optional to keep the default image smaller.
+
+To enable Intel GPU support, build with the `INSTALL_OPENVINO` build argument:
+
+```bash
+# Default build (OpenVINO CPU only, no GPU runtime)
+docker build -t hbmon .
+
+# Build with Intel GPU runtime support
+docker compose build --build-arg INSTALL_OPENVINO=1
+
+# Or use the Makefile target
+make docker-build-intel
+```
+
+Then start the containers:
+```bash
+docker compose up -d
+```
+
+The worker will automatically export your YOLO model to OpenVINO format on first run.
+
+#### 4) Verify GPU usage
+Check worker logs for OpenVINO messages:
+```bash
+docker compose logs hbmon-worker | grep -i openvino
+```
+
+You should see: `[worker] Loading YOLO model: ... (OpenVINO GPU backend)`
+
+#### 5) Fallback behavior
+If GPU is unavailable, the worker automatically falls back:
+- `openvino-gpu` → `openvino-cpu` → `pytorch`
+
+### Notes on AMD GPUs
+- AMD GPU: ROCm can work for PyTorch, but it's platform-specific and often harder than NVIDIA on a mini PC.
 
 ---
 
@@ -606,6 +713,50 @@ If video clips don't stream properly in Chrome/Firefox:
 ### UI looks stale after an update
 The web app now sends no-cache headers on every response to prevent stale browser assets. If you
 still see old content, clear the browser cache or do a hard reload.
+
+### Intel GPU / OpenVINO not working
+
+**Permission denied on /dev/dri**
+
+If the worker fails with permission errors accessing GPU:
+```bash
+# Check render group on host
+ls -la /dev/dri/renderD128
+# crw-rw----+ 1 root render 226, 128 ...
+
+# Add your user to render group (then log out/in)
+sudo usermod -aG render $USER
+
+# For Docker, ensure group_add is in docker-compose.yml:
+# group_add:
+#   - render
+```
+
+**GPU not detected in container**
+
+Verify GPU is passed through to container:
+```bash
+docker compose exec hbmon-worker ls -la /dev/dri/
+# Should show renderD128
+
+# Check OpenVINO sees GPU:
+docker compose exec hbmon-worker python -c "from openvino import Core; print(Core().available_devices)"
+# Should include 'GPU'
+```
+
+**Fallback to CPU**
+
+If GPU fails, the worker automatically falls back to CPU inference. Check logs:
+```bash
+docker compose logs hbmon-worker | grep -i "falling back\|openvino\|gpu"
+```
+
+To force CPU backend explicitly:
+```bash
+HBMON_YOLO_BACKEND=pytorch  # PyTorch CPU
+# or
+HBMON_YOLO_BACKEND=openvino-cpu  # OpenVINO CPU (may be faster than PyTorch)
+```
 
 ---
 

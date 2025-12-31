@@ -22,9 +22,11 @@ dependencies = [
   "opencv-python-headless>=4.8,<5",
   "numpy>=1.26,<2.0",
 
+
   # ML stack
   "scikit-learn>=1.4,<2",
   "ultralytics>=8.3.0,<9",
+  "openvino>=2024.0,<2025",
   "torch>=2.2,<3",
   "torchvision>=0.17,<1",
   "open-clip-torch>=2.20,<4",
