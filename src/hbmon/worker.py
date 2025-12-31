@@ -1343,6 +1343,7 @@ async def run_worker() -> None:
             last_settings_load = now
         return settings
 
+    consecutive_failures = 0
     print("[worker] Producer loop started.")
     while True:
         s = get_settings()
@@ -1361,11 +1362,19 @@ async def run_worker() -> None:
 
         ok, frame = cap.read()
         if not ok or frame is None:
+            consecutive_failures += 1
+            print(f"[worker] Frame read failed. Reconnecting... (failure {consecutive_failures})")
             if cap:
-                cap.release()
+                try:
+                    cap.release()
+                except Exception:
+                    pass
             cap = None
-            await asyncio.sleep(1.0)
+            # Use a shorter, increasing delay for read failures
+            await asyncio.sleep(min(0.2 * consecutive_failures, 2.0))
             continue
+ 
+        consecutive_failures = 0
 
         # ROI & Background
         roi_frame = frame
