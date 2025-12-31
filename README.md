@@ -552,7 +552,16 @@ Available backends:
 > **First Run**: Model conversion happens at worker startup and takes 30-60 seconds. 
 > Subsequent runs use cached models and start immediately.
 
-#### 3) Build Docker image with Intel GPU runtime (optional)
+#### 3) OpenVINO Caching (Optimization)
+
+The monitor uses a unified cache directory to accelerate startup and persist converted models:
+- **Location**: `/data/openvino_cache` (configured via `OPENVINO_CACHE_DIR`)
+- **YOLO IR & CLIP IR**: Converted models are stored here to avoid re-conversion on every restart.
+- **Compiled Blobs**: OpenVINO's built-in model caching is enabled, storing device-specific binary blobs for instant loading without re-compilation.
+
+Ensure this directory is persisted in your `docker-compose.yml` (it is by default via the `./data` volume).
+
+#### 4) Build Docker image with Intel GPU runtime (optional)
 
 **OpenVINO is always installed** in the Docker image for CPU inference (which is 1.5-2x faster than PyTorch). However, the **Intel GPU runtime** is optional to keep the default image smaller.
 
