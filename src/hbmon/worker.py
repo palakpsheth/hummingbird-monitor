@@ -989,7 +989,7 @@ async def _prepare_crop_and_clip(
     h, w = frame.shape[:2]
     x1, y1, x2, y2 = _bbox_with_padding(det, (h, w), pad_frac=crop_padding)
     crop = frame[y1:y2, x1:x2].copy()
-    _write_jpeg(snap_clip_path, crop)
+    await _write_jpeg_async(snap_clip_path, crop)
 
     if clip is None:
         return crop, (None, 0.0), None
@@ -1032,14 +1032,17 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
             _safe_mkdir(mask_path.parent)
 
             annotated_frame = _draw_bbox(frame, det_full, show_confidence=True)
-            _write_jpeg(snap_path, frame)
-            _write_jpeg(snap_annotated_path, annotated_frame)
+            await asyncio.gather(
+                _write_jpeg_async(snap_path, frame),
+                _write_jpeg_async(snap_annotated_path, annotated_frame)
+            )
 
             mask_rel = None
             mask_overlay_rel = None
             if save_masks and motion_mask is not None:
                 overlay_dest = mask_overlay_path if save_mask_overlay else None
-                _save_motion_mask_images(
+                await asyncio.to_thread(
+                    _save_motion_mask_images,
                     motion_mask=motion_mask,
                     roi_frame=frame,
                     mask_path=mask_path,
@@ -1113,13 +1116,14 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
             print(f"[worker] clip record failed: {e}")
 
         if background_img is not None:
-            _write_jpeg(snap_background_path, background_img)
+            await _write_jpeg_async(snap_background_path, background_img)
 
         mask_rel = None
         mask_overlay_rel = None
         if save_masks and motion_mask is not None:
             rel_m, rel_o = _build_mask_paths(stamp, snap_id, mask_ext=mask_format)
-            _save_motion_mask_images(
+            await asyncio.to_thread(
+                _save_motion_mask_images,
                 motion_mask=motion_mask,
                 roi_frame=frame,
                 mask_path=media_root / rel_m,
@@ -1377,7 +1381,7 @@ async def run_worker() -> None:
         if (now_dbg - last_debug_log) > debug_every:
              print(f"[worker] alive q_size={queue.qsize()} rtsp={s.rtsp_url}")
              if debug_save:
-                 _write_jpeg(media_dir() / "debug_latest.jpg", frame)
+                 await _write_jpeg_async(media_dir() / "debug_latest.jpg", frame)
              last_debug_log = now_dbg
 
         motion_mask = None
