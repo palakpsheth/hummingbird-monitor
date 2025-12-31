@@ -579,7 +579,7 @@ docker compose logs hbmon-worker | grep -i openvino
 
 You should see: `[worker] Loading YOLO model: ... (OpenVINO GPU backend)`
 
-#### 4) Fallback behavior
+#### 5) Fallback behavior
 If GPU is unavailable, the worker automatically falls back:
 - `openvino-gpu` → `openvino-cpu` → `pytorch`
 
