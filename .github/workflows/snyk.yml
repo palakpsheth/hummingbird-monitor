@@ -61,6 +61,7 @@ jobs:
             --package-manager=pip \
             --severity-threshold=high \
             --skip-unresolved=true \
+            --policy-path=.snyk \
             --sarif-file-output=snyk-python.sarif
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -101,7 +102,8 @@ jobs:
           snyk monitor \
             --file=requirements-snyk.txt \
             --package-manager=pip \
-            --skip-unresolved=true
+            --skip-unresolved=true \
+            --policy-path=.snyk
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
@@ -148,6 +150,7 @@ jobs:
             --docker hbmon:${{ github.sha }} \
             --file=Dockerfile \
             --severity-threshold=high \
+            --policy-path=.snyk \
             --sarif-file-output=snyk-docker.sarif
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
