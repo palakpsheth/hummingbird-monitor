@@ -63,6 +63,7 @@ from hbmon.config import (
 )
 from hbmon.db import async_session_scope, init_async_db
 from hbmon.models import Candidate, Embedding, Individual, Observation
+from hbmon.yolo_utils import resolve_predict_imgsz
 
 # ---------------------------------------------------------------------------
 # Optional heavy dependencies
@@ -1105,9 +1106,9 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
         ]
         
         # Save ROI snapshot if configured
-        roi_frame, _ = _apply_roi(frame, s)
         has_roi = s.roi is not None
         if has_roi:
+            roi_frame, _ = _apply_roi(frame, s)
             roi_save_tasks.append(_write_jpeg_async(media_root / media_paths.snapshot_roi_rel, roi_frame))
         
         await asyncio.gather(*roi_save_tasks)
@@ -1415,25 +1416,9 @@ async def run_worker() -> None:
         try:
              yolo_verbose = (os.getenv("HBMON_DEBUG_VERBOSE") == "1")
              
-             # Resolve inference image size
-             # Default to 1088,1920 if not set (matches typical 1080p RTSP)
+             # Resolve inference image size using shared utility
              imgsz_env = os.getenv("HBMON_YOLO_IMGSZ", "1088,1920").strip()
-             
-             if imgsz_env.lower() == "auto":
-                 # Snap height/width to nearest stride 32 based on the actual input frame
-                 h, w = roi_frame.shape[:2]
-                 target_h = int(np.ceil(h / 32) * 32)
-                 target_w = int(np.ceil(w / 32) * 32)
-                 predict_imgsz = [target_h, target_w]
-             else:
-                 # Parse H,W directly
-                 try:
-                     parts = imgsz_env.split(",")
-                     predict_imgsz = [int(p) for p in parts if p.strip()]
-                     # If only one number provided, YOLO treats as square [sz, sz]
-                 except ValueError:
-                     # Fallback if parse fails
-                     predict_imgsz = [1088, 1920]
+             predict_imgsz = resolve_predict_imgsz(imgsz_env, roi_frame.shape)
 
              results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=[bird_class_id], imgsz=predict_imgsz, verbose=yolo_verbose)
         except Exception:

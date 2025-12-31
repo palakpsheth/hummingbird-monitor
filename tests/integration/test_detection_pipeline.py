@@ -31,6 +31,7 @@ from hbmon.worker import (
     _pick_best_bird_det,
     _sanitize_bg_params,
 )
+from hbmon.yolo_utils import resolve_predict_imgsz
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
@@ -236,17 +237,8 @@ def _run_detection_pipeline(
             motion_mask = None
 
     imgsz_env = os.getenv("HBMON_YOLO_IMGSZ", "1088,1920").strip()
-    if imgsz_env.lower() == "auto":
-        h, w = roi_frame.shape[:2]
-        target_h = int(np.ceil(h / 32) * 32)
-        target_w = int(np.ceil(w / 32) * 32)
-        imgsz = [target_h, target_w]
-    else:
-        try:
-            parts = imgsz_env.split(",")
-            imgsz = [int(p) for p in parts if p.strip()]
-        except ValueError:
-            imgsz = [1088, 1920]
+    imgsz = resolve_predict_imgsz(imgsz_env, roi_frame.shape)
+    
     results = yolo.predict(
         roi_frame,
         conf=float(settings.detect_conf),

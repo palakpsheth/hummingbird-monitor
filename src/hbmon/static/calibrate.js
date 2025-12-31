@@ -107,7 +107,7 @@
     }
   }
 
-  function readRoiFromDom() {
+  function getCurrentRoiCoords() {
     const inputs = getRoiInputs();
     if (!inputs.x1 || !inputs.y1 || !inputs.x2 || !inputs.y2) return null;
 
@@ -132,7 +132,7 @@
 
   // Draw current ROI on page load (red dashed box)
   function drawCurrentRoi() {
-    const r = readRoiFromDom();
+    const r = getCurrentRoiCoords();
     if (r) {
       drawBox(currentRoiBox, r);
     }
@@ -344,7 +344,7 @@
 
   // Initialize proposed ROI from current ROI (if any) so it can be tweaked immediately
   function initProposedRoi() {
-    const r = readRoiFromDom();
+    const r = getCurrentRoiCoords();
     if (r) {
       proposedRect = r;
       drawBox(proposedRoiBox, proposedRect);
