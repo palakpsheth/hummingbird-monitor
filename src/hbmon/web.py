@@ -855,19 +855,23 @@ def species_to_css(label: str) -> str:
     return "species-unknown"
 
 
-def get_annotated_snapshot_path(obs: Observation) -> str | None:
-    """
-    Get the annotated snapshot path for an observation from its extra_json.
-
-    Returns the annotated path if available, otherwise None.
-    """
+def _get_snapshot_path(obs: Observation, key: str) -> str | None:
     extra = obs.get_extra()
     if not extra or not isinstance(extra, dict):
         return None
     snapshots_data = extra.get("snapshots")
     if not isinstance(snapshots_data, dict):
         return None
-    return snapshots_data.get("annotated_path")
+    return snapshots_data.get(key)
+
+
+def get_annotated_snapshot_path(obs: Observation) -> str | None:
+    """
+    Get the annotated snapshot path for an observation from its extra_json.
+
+    Returns the annotated path if available, otherwise None.
+    """
+    return _get_snapshot_path(obs, "annotated_path")
 
 
 def get_observation_media_paths(obs: Observation) -> dict[str, str]:
@@ -992,13 +996,16 @@ def get_clip_snapshot_path(obs: Observation) -> str | None:
 
     Returns the CLIP snapshot path if available, otherwise None.
     """
-    extra = obs.get_extra()
-    if not extra or not isinstance(extra, dict):
-        return None
-    snapshots_data = extra.get("snapshots")
-    if not isinstance(snapshots_data, dict):
-        return None
-    return snapshots_data.get("clip_path")
+    return _get_snapshot_path(obs, "clip_path")
+    
+    
+def get_roi_snapshot_path(obs: Observation) -> str | None:
+    """
+    Get the ROI-cropped snapshot path for an observation from its extra_json.
+    
+    Returns the ROI snapshot path if available, otherwise None.
+    """
+    return _get_snapshot_path(obs, "roi_path")
 
 
 def get_background_snapshot_path(obs: Observation) -> str | None:
@@ -1007,13 +1014,7 @@ def get_background_snapshot_path(obs: Observation) -> str | None:
 
     Returns the background snapshot path if available, otherwise None.
     """
-    extra = obs.get_extra()
-    if not extra or not isinstance(extra, dict):
-        return None
-    snapshots_data = extra.get("snapshots")
-    if not isinstance(snapshots_data, dict):
-        return None
-    return snapshots_data.get("background_path")
+    return _get_snapshot_path(obs, "background_path")
 
 
 def build_hour_heatmap(hours_rows: list[tuple[int, int]]) -> list[dict[str, int]]:
@@ -1715,6 +1716,7 @@ def make_app() -> Any:
 
         # Get annotated snapshot path from extra data (if available)
         annotated_snapshot_path = get_annotated_snapshot_path(o)
+        roi_snapshot_path = get_roi_snapshot_path(o)
         clip_snapshot_path = get_clip_snapshot_path(o)
         background_snapshot_path = get_background_snapshot_path(o)
         media_paths = get_observation_media_paths(o)
@@ -1747,6 +1749,7 @@ def make_app() -> Any:
                 allowed_review_labels=ALLOWED_REVIEW_LABELS,
                 video_info=video_info,
                 annotated_snapshot_path=annotated_snapshot_path,
+                roi_snapshot_path=roi_snapshot_path,
                 clip_snapshot_path=clip_snapshot_path,
                 background_snapshot_path=background_snapshot_path,
                 mask_path=mask_path,
@@ -2258,11 +2261,17 @@ def make_app() -> Any:
         extra_copy["identification"] = identification
 
         background_rel = get_background_snapshot_path(o)
+        roi_rel = get_roi_snapshot_path(o)
         media_paths = get_observation_media_paths(o)
-        if background_rel:
+        if background_rel or roi_rel:
             snapshots = extra_copy.get("snapshots")
             snapshots_data = dict(snapshots) if isinstance(snapshots, dict) else {}
-            snapshots_data["background_path"] = "background.jpg"
+            
+            if background_rel:
+                snapshots_data["background_path"] = "background.jpg"
+            if roi_rel:
+                snapshots_data["roi_path"] = "snapshot_roi.jpg"
+            
             extra_copy["snapshots"] = snapshots_data
         if media_paths:
             media_copy = dict(media_paths)
@@ -2342,6 +2351,7 @@ def make_app() -> Any:
         annotated_path = (media_dir() / annotated_rel) if annotated_rel else None
         clip_path = (media_dir() / clip_rel) if clip_rel else None
         background_path = (media_dir() / background_rel) if background_rel else None
+        roi_path = (media_dir() / roi_rel) if roi_rel else None
         mask_rel = media_paths.get("mask_path")
         mask_overlay_rel = media_paths.get("mask_overlay_path")
         mask_path = (media_dir() / mask_rel) if mask_rel else None
@@ -2360,6 +2370,8 @@ def make_app() -> Any:
                     tf.add(clip_path, arcname=f"{safe_case}/snapshot_clip.jpg")
                 if background_path and background_path.exists():
                     tf.add(background_path, arcname=f"{safe_case}/background.jpg")
+                if roi_path and roi_path.exists():
+                    tf.add(roi_path, arcname=f"{safe_case}/snapshot_roi.jpg")
                 if mask_path and mask_path.exists():
                     tf.add(mask_path, arcname=f"{safe_case}/mask.png")
                 if mask_overlay_path and mask_overlay_path.exists():

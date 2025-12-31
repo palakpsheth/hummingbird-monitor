@@ -1812,3 +1812,45 @@ def test_api_background_upload_invalid(tmp_path, monkeypatch):
     # Empty upload
     r = client.post("/api/background/upload", data={})
     assert r.status_code == 400
+
+
+def test_export_observation_includes_roi(tmp_path, monkeypatch):
+    """Test that export includes ROI snapshot if available."""
+    client = _setup_app(tmp_path, monkeypatch)
+    mdir = media_dir()
+    
+    # Create media files
+    snap = mdir / "snap.jpg"
+    roi = mdir / "snap_roi.jpg"
+    snap.write_text("orig")
+    roi.write_text("roi")
+    
+    with session_scope() as db:
+        obs = Observation(
+            species_label="Anna's Hummingbird",
+            species_prob=0.8,
+            snapshot_path="snap.jpg",
+            video_path="vid.mp4",
+        )
+        obs.set_extra({
+            "snapshots": {
+                "roi_path": "snap_roi.jpg"
+            }
+        })
+        db.add(obs)
+        db.commit()
+        obs_id = obs.id
+
+    r = client.post(f"/observations/{obs_id}/export_integration_test", follow_redirects=False)
+    assert r.status_code == 200
+    
+    # Inspect tarball
+    with tarfile.open(fileobj=io.BytesIO(r.content), mode="r:gz") as tf:
+        names = tf.getnames()
+        # Should contain snapshot_roi.jpg
+        assert any(n.endswith("/snapshot_roi.jpg") for n in names)
+        
+        # Verify content matches
+        roi_member = next(n for n in names if n.endswith("/snapshot_roi.jpg"))
+        f = tf.extractfile(roi_member)
+        assert f.read() == b"roi"

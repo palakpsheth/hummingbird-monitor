@@ -51,7 +51,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Name individuals** in the UI
 - **Counts & last-seen** stats per individual
 - **Prototypical snapshots** shown per individual (list + detail, embedding-closest when available)
-- **Multiple snapshot views** per observation: raw, annotated, CLIP crop, plus background reference when enabled
+- **Multiple snapshot views** per observation: raw, annotated, ROI crop, CLIP crop, plus background reference when enabled
 - **Background image configuration**: define a standard background picture without hummingbirds
 - **Cross-linked** navigation:
   - Individuals list → individual page → all observations
@@ -67,7 +67,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
     - `clip.mp4` (video clip)
     - Optional `background.jpg` (reference background frame used for background subtraction)
     - Optional `mask.png` and `mask_overlay.png` when motion masks are saved
-    - Optional `snapshot_annotated.jpg` and `snapshot_clip.jpg` when available
+    - Optional `snapshot_annotated.jpg`, `snapshot_roi.jpg`, and `snapshot_clip.jpg` when available
   - Candidate detail pages can export a similar bundle for motion-rejected detections.
   - Missing sensitivity/identification fields are backfilled with current defaults when exporting older observations.
 

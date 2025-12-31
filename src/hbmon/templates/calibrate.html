@@ -32,7 +32,12 @@
         draggable="false"
       />
       <div id="current-roi-box"></div>
-      <div id="proposed-roi-box"></div>
+      <div id="proposed-roi-box">
+        <div class="resize-handle n" data-edge="n"></div>
+        <div class="resize-handle s" data-edge="s"></div>
+        <div class="resize-handle e" data-edge="e"></div>
+        <div class="resize-handle w" data-edge="w"></div>
+      </div>
     </div>
 
     <form method="post" action="/api/roi" class="inline" style="margin-top:12px;">
