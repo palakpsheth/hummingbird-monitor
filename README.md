@@ -532,7 +532,7 @@ HBMON_INFERENCE_BACKEND=openvino-gpu
 
 Available backends:
 - `cpu` (default): Standard PyTorch CPU inference
-- `openvino-cpu`: OpenVINO on CPU (**1.5-2x faster than PyTorch**, recommended if OpenVINO installed)
+- `openvino-cpu`: OpenVINO on CPU (**1.5-2x faster than PyTorch**, always available)
 - `openvino-gpu`: OpenVINO on Intel GPU (fastest for Intel iGPU/Arc)
 - `cuda`: NVIDIA GPU with CUDA
 
