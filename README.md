@@ -552,12 +552,17 @@ Available backends:
 > **First Run**: Model conversion happens at worker startup and takes 30-60 seconds. 
 > Subsequent runs use cached models and start immediately.
 
-#### 3) Build Docker image with OpenVINO
+#### 3) Build Docker image with Intel GPU runtime (optional)
 
-By default, the Docker image does **not** include OpenVINO to keep the image size smaller. To enable OpenVINO support, build with the `INSTALL_OPENVINO` build argument:
+**OpenVINO is always installed** in the Docker image for CPU inference (which is 1.5-2x faster than PyTorch). However, the **Intel GPU runtime** is optional to keep the default image smaller.
+
+To enable Intel GPU support, build with the `INSTALL_OPENVINO` build argument:
 
 ```bash
-# Build with OpenVINO support
+# Default build (OpenVINO CPU only, no GPU runtime)
+docker build -t hbmon .
+
+# Build with Intel GPU runtime support
 docker compose build --build-arg INSTALL_OPENVINO=1
 
 # Or use the Makefile target

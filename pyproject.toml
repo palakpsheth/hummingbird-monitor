@@ -26,15 +26,11 @@ dependencies = [
   # ML stack
   "scikit-learn>=1.4,<2",
   "ultralytics>=8.3.0,<9",
+  "openvino>=2024.0,<2025",
   "torch>=2.2,<3",
   "torchvision>=0.17,<1",
   "open-clip-torch>=2.20,<4",
   "pillow>=10,<13",
-]
-
-[project.optional-dependencies]
-openvino = [
-  "openvino>=2024.0,<2025",
 ]
 
 # MOVED FROM [project.optional-dependencies] to [dependency-groups]

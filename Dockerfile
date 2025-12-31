@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     wget \
+    gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 
@@ -18,7 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Only installed if INSTALL_OPENVINO=1 is passed as build argument
 ARG INSTALL_OPENVINO=0
 RUN if [ "$INSTALL_OPENVINO" = "1" ]; then \
-        apt-get update && apt-get install -y --no-install-recommends gnupg && \
         wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg \
         && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy client" \
            > /etc/apt/sources.list.d/intel-gpu-jammy.list \
@@ -60,12 +60,6 @@ RUN --mount=type=bind,source=.,target=/tmp/src,ro \
         fi; \
     fi
 
-# Install Python dependencies
-# If INSTALL_OPENVINO=1, include the openvino optional dependency group
-RUN if [ "$INSTALL_OPENVINO" = "1" ]; then \
-        pip install --no-cache-dir --index-url ${PYTORCH_INDEX_URL} --extra-index-url https://pypi.org/simple -e ".[openvino]"; \
-    else \
-        pip install --no-cache-dir --index-url ${PYTORCH_INDEX_URL} --extra-index-url https://pypi.org/simple -e .; \
-    fi
+RUN pip install --no-cache-dir --index-url ${PYTORCH_INDEX_URL} --extra-index-url https://pypi.org/simple -e .
 
 EXPOSE 8000
