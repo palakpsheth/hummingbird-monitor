@@ -226,9 +226,9 @@ make test            # full pytest + coverage
 make test-unit       # unit tests + coverage (marker: not integration)
 make test-integration # integration/UI tests + coverage (marker: integration)
 make docker-build    # docker compose build
-make docker-up       # docker compose build + up -d
-make docker-build-gpu # docker compose build (CUDA-enabled PyTorch)
-make docker-up-gpu   # docker compose build + up -d (CUDA-enabled PyTorch)
+make docker-up       # docker compose build + up -d (CPU-only / OpenVINO CPU)
+make docker-up-cuda  # docker compose build + up -d (NVIDIA CUDA support)
+make docker-up-intel # docker compose build + up -d (Intel GPU support)
 make docker-down     # docker compose down
 make clean-db        # remove local database file only (defaults to ./data)
 make clean-media     # remove local media files (defaults to ./data/media)
@@ -431,7 +431,7 @@ make check-gpu
 This will:
 - Detect NVIDIA, Intel, and AMD GPUs
 - Check for required drivers and devices
-- Recommend the appropriate build command (`make docker-up`, `make docker-up-gpu`, or `make docker-up-openvino`)
+- Recommend the appropriate build command (`make docker-up`, `make docker-up-cuda`, or `make docker-up-intel`)
 
 Example output:
 ```
@@ -443,7 +443,7 @@ Example output:
 
 === Recommended Build ===
 
-→ Use: make docker-up-openvino
+→ Use: make docker-up-intel
   (Intel GPU with OpenVINO acceleration)
   Set HBMON_INFERENCE_BACKEND=openvino-gpu in .env
 ```
@@ -485,7 +485,7 @@ To build CUDA-enabled images, use the Makefile targets (or pass the build arg yo
 
 ```bash
 make docker-build-gpu
-make docker-up-gpu
+make docker-up-cuda
 ```
 
 These targets set `PYTORCH_INDEX_URL` to the CUDA wheel index (default: `cu121`). You can override
@@ -566,7 +566,7 @@ docker build -t hbmon .
 docker compose build --build-arg INSTALL_OPENVINO=1
 
 # Or use the Makefile target
-make docker-build-openvino
+make docker-build-intel
 ```
 
 Then start the containers:

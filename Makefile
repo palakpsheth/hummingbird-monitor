@@ -85,13 +85,14 @@ check-gpu: ## Detect available GPU hardware and recommend build
 	echo "=== Recommended Build ==="; \
 	echo ""; \
 	if [ $$NVIDIA_FOUND -eq 1 ]; then \
-		echo "→ Use: make docker-up-gpu"; \
-		echo "  (NVIDIA GPU with CUDA acceleration)"; \
+		echo "→ Use: make docker-up-cuda"; \
+		echo "  (NVIDIA GPU with CUDA support)"; \
+		echo "  Set HBMON_INFERENCE_BACKEND=cuda in .env"; \
 		echo ""; \
 	fi; \
 	if [ $$INTEL_FOUND -eq 1 ]; then \
-		echo "→ Use: make docker-up-openvino"; \
-		echo "  (Intel GPU with OpenVINO acceleration)"; \
+		echo "→ Use: make docker-up-intel"; \
+		echo "  (Intel GPU support)"; \
 		echo "  Set HBMON_INFERENCE_BACKEND=openvino-gpu in .env"; \
 		echo ""; \
 	fi; \
@@ -114,17 +115,17 @@ docker-up: ## Start docker compose (build if needed)
 	docker compose build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_INDEX_URL)
 	docker compose up -d
 
-docker-build-gpu: ## Build docker images with CUDA-enabled PyTorch
+docker-build-cuda: ## Build docker images with NVIDIA CUDA support
 	docker compose build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_GPU_INDEX_URL)
 
-docker-up-gpu: ## Start docker compose with CUDA-enabled PyTorch (build if needed)
+docker-up-cuda: ## Start docker compose with NVIDIA CUDA support (build if needed)
 	docker compose build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_GPU_INDEX_URL)
 	docker compose up -d
 
-docker-build-openvino: ## Build docker images with Intel GPU (OpenVINO) support
+docker-build-intel: ## Build docker images with Intel GPU support
 	docker compose build --build-arg INSTALL_OPENVINO=1
 
-docker-up-openvino: ## Start docker compose with Intel GPU (OpenVINO) support (build if needed)
+docker-up-intel: ## Start docker compose with Intel GPU support (build if needed)
 	docker compose build --build-arg INSTALL_OPENVINO=1
 	docker compose up -d
 
