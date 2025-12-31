@@ -1105,9 +1105,9 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
         ]
         
         # Save ROI snapshot if configured
-        roi_frame, _ = _apply_roi(frame, s)
         has_roi = s.roi is not None
         if has_roi:
+            roi_frame, _ = _apply_roi(frame, s)
             roi_save_tasks.append(_write_jpeg_async(media_root / media_paths.snapshot_roi_rel, roi_frame))
         
         await asyncio.gather(*roi_save_tasks)
