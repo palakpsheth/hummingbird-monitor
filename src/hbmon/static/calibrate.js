@@ -105,29 +105,37 @@
     }
   }
 
-  // Draw current ROI on page load (red dashed box)
-  function drawCurrentRoi() {
+  function readRoiFromDom() {
     const elx1 = document.getElementById("x1");
     const ely1 = document.getElementById("y1");
     const elx2 = document.getElementById("x2");
     const ely2 = document.getElementById("y2");
 
-    if (!elx1 || !ely1 || !elx2 || !ely2) return;
+    if (!elx1 || !ely1 || !elx2 || !ely2) return null;
 
     const x1 = parseFloat(elx1.value);
     const y1 = parseFloat(ely1.value);
     const x2 = parseFloat(elx2.value);
     const y2 = parseFloat(ely2.value);
 
-    // Only draw if we have valid ROI coordinates with non-zero area
-    if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) &&
-      x2 > x1 && y2 > y1) {
-      const r = {
+    if (
+      !isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) &&
+      x2 > x1 && y2 > y1
+    ) {
+      return {
         x: x1,
         y: y1,
         w: x2 - x1,
         h: y2 - y1
       };
+    }
+    return null;
+  }
+
+  // Draw current ROI on page load (red dashed box)
+  function drawCurrentRoi() {
+    const r = readRoiFromDom();
+    if (r) {
       drawBox(currentRoiBox, r);
     }
   }
@@ -288,13 +296,8 @@
         // Changing top edge (y1). Fixed bottom is y2.
         // New height = y2 - y
         let newH = y2 - y;
-        if (newH < 0) newH = 0; // handled by abs in snap but logic here implies direction
-        // Actually, if user drags below y2, we might invert? 
-        // Original code prevented invert with minSize.
-        // Let's use snap logic on the height.
-
+        if (newH < 0) newH = 0;
         let snappedH = snapToStride32(newH, nh);
-        // y1 should be y2 - snappedH
         y1 = Math.max(0, y2 - snappedH);
 
       } else if (resizeState.edge === "s") {
@@ -343,29 +346,9 @@
 
   // Initialize proposed ROI from current ROI (if any) so it can be tweaked immediately
   function initProposedRoi() {
-    const elx1 = document.getElementById("x1");
-    const ely1 = document.getElementById("y1");
-    const elx2 = document.getElementById("x2");
-    const ely2 = document.getElementById("y2");
-
-    if (!elx1 || !ely1 || !elx2 || !ely2) return;
-
-    const x1 = parseFloat(elx1.value);
-    const y1 = parseFloat(ely1.value);
-    const x2 = parseFloat(elx2.value);
-    const y2 = parseFloat(ely2.value);
-
-    // Only init if we have valid coordinates
-    if (
-      !isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2) &&
-      x2 > x1 && y2 > y1
-    ) {
-      proposedRect = {
-        x: x1,
-        y: y1,
-        w: x2 - x1,
-        h: y2 - y1,
-      };
+    const r = readRoiFromDom();
+    if (r) {
+      proposedRect = r;
       drawBox(proposedRoiBox, proposedRect);
     }
   }
