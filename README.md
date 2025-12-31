@@ -445,7 +445,7 @@ Example output:
 
 → Use: make docker-up-openvino
   (Intel GPU with OpenVINO acceleration)
-  Don't forget to set HBMON_YOLO_BACKEND=openvino-gpu in .env
+  Set HBMON_INFERENCE_BACKEND=openvino-gpu in .env
 ```
 
 ### 2) Install NVIDIA Container Toolkit (host)
@@ -532,9 +532,9 @@ HBMON_INFERENCE_BACKEND=openvino-gpu
 
 Available backends:
 - `cpu` (default): Standard PyTorch CPU inference
-- `cuda`: NVIDIA GPU with CUDA
-- `openvino-cpu`: OpenVINO on CPU (often faster than PyTorch)
+- `openvino-cpu`: OpenVINO on CPU (**1.5-2x faster than PyTorch**, recommended if OpenVINO installed)
 - `openvino-gpu`: OpenVINO on Intel GPU (fastest for Intel iGPU/Arc)
+- `cuda`: NVIDIA GPU with CUDA
 
 > **Important**: OpenVINO now accelerates **both YOLO and CLIP** models on Intel GPU!
 > 

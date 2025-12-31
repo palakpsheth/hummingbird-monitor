@@ -92,7 +92,7 @@ check-gpu: ## Detect available GPU hardware and recommend build
 	if [ $$INTEL_FOUND -eq 1 ]; then \
 		echo "→ Use: make docker-up-openvino"; \
 		echo "  (Intel GPU with OpenVINO acceleration)"; \
-		echo "  Don't forget to set HBMON_YOLO_BACKEND=openvino-gpu in .env"; \
+		echo "  Set HBMON_INFERENCE_BACKEND=openvino-gpu in .env"; \
 		echo ""; \
 	fi; \
 	if [ $$AMD_FOUND -eq 1 ]; then \

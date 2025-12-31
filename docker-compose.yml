@@ -189,7 +189,7 @@ services:
         PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     container_name: hbmon-worker
     command: ["python", "-m", "hbmon.worker"]
-    # Intel GPU (OpenVINO) device mapping - required for HBMON_YOLO_BACKEND=openvino-gpu
+    # Intel GPU (OpenVINO) device mapping - required for HBMON_INFERENCE_BACKEND=openvino-gpu
     devices:
       - /dev/dri:/dev/dri
     group_add:
@@ -231,6 +231,7 @@ services:
       - HBMON_MATCH_THRESHOLD=${HBMON_MATCH_THRESHOLD}
       - HBMON_EMA_ALPHA=${HBMON_EMA_ALPHA}
 
+      - HBMON_INFERENCE_BACKEND=${HBMON_INFERENCE_BACKEND}
       - HBMON_DEVICE=${HBMON_DEVICE}
       - HBMON_YOLO_BACKEND=${HBMON_YOLO_BACKEND:-pytorch}
       - OPENVINO_CACHE_DIR=${OPENVINO_CACHE_DIR:-/data/openvino_cache}

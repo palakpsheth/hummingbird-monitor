@@ -61,8 +61,10 @@ def get_recommended_backend() -> str:
 
     Returns:
     - "openvino-gpu" if Intel GPU is available
-    - "openvino-cpu" if OpenVINO is installed but no GPU
+    - "openvino-cpu" if OpenVINO is installed (faster than PyTorch CPU)
     - "pytorch" if OpenVINO is not available
+    
+    Note: OpenVINO CPU is typically 1.5-2x faster than PyTorch CPU for inference.
     """
     if validate_openvino_gpu():
         return "openvino-gpu"
