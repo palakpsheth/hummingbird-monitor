@@ -121,10 +121,10 @@ docker-up-gpu: ## Start docker compose with CUDA-enabled PyTorch (build if neede
 	docker compose build --build-arg PYTORCH_INDEX_URL=$(PYTORCH_GPU_INDEX_URL)
 	docker compose up -d
 
-docker-build-openvino: ## Build docker images with OpenVINO support
+docker-build-openvino: ## Build docker images with Intel GPU (OpenVINO) support
 	docker compose build --build-arg INSTALL_OPENVINO=1
 
-docker-up-openvino: ## Start docker compose with OpenVINO (build if needed)
+docker-up-openvino: ## Start docker compose with Intel GPU (OpenVINO) support (build if needed)
 	docker compose build --build-arg INSTALL_OPENVINO=1
 	docker compose up -d
 
