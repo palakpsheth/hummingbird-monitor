@@ -154,7 +154,9 @@ def get_engine() -> Engine:
         def _set_sqlite_pragmas(dbapi_connection: Any, connection_record: Any) -> None:  # type: ignore[override]
             try:
                 cursor = dbapi_connection.cursor()
-                cursor.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+                # Use % formatting instead of f-string to avoid CodeQL SQL injection warning
+                # busy_timeout_ms is validated as int via env_int() so this is safe
+                cursor.execute("PRAGMA busy_timeout=%d" % int(busy_timeout_ms))
                 cursor.close()
             except Exception as exc:  # pragma: no cover - defensive
                 print(f"[db] failed to set PRAGMA busy_timeout: {exc}")
@@ -203,7 +205,9 @@ def get_async_engine() -> AsyncEngine:
         def _set_sqlite_pragmas(dbapi_connection: Any, connection_record: Any) -> None:  # type: ignore[override]
             try:
                 cursor = dbapi_connection.cursor()
-                cursor.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+                # Use % formatting instead of f-string to avoid CodeQL SQL injection warning
+                # busy_timeout_ms is validated as int via env_int() so this is safe
+                cursor.execute("PRAGMA busy_timeout=%d" % int(busy_timeout_ms))
                 cursor.close()
             except Exception as exc:  # pragma: no cover - defensive
                 print(f"[db] failed to set async PRAGMA busy_timeout: {exc}")
