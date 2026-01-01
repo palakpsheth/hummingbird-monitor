@@ -218,6 +218,40 @@ User settings are stored in `/data/config.json` and include:
 - Tuned detection thresholds
 - Other runtime-adjusted parameters
 
+The config UI (`/config`) exposes the following grouped settings:
+
+**Performance & Recording:**
+- `fps_limit`: FPS limit for frame processing (1-60)
+- `clip_seconds`: Duration of recorded clips (1-30 seconds)
+- `cooldown_seconds`: Cooldown between triggers (0-120 seconds)
+
+**Detection (YOLO):**
+- `detect_conf`: Detection confidence threshold (0.05-0.95)
+- `detect_iou`: IOU threshold for NMS (0.05-0.95)
+- `min_box_area`: Minimum bounding box area (pixels)
+
+**Classification (CLIP):**
+- `min_species_prob`: Minimum species probability (0-1)
+- `crop_padding`: Padding around bbox for CLIP crop (0-0.5)
+
+**Re-Identification:**
+- `match_threshold`: Cosine distance threshold for re-ID (0-1)
+- `ema_alpha`: Prototype update weight (0-1)
+
+**Background Subtraction:**
+- `bg_subtraction_enabled`: Enable/disable motion filtering
+- `bg_motion_threshold`: Pixel difference threshold (0-255)
+- `bg_motion_blur`: Gaussian blur kernel size (odd integer)
+- `bg_min_overlap`: Required motion overlap fraction (0-1)
+- `bg_log_rejected`: Log motion-rejected candidates
+- `bg_rejected_cooldown_seconds`: Cooldown for rejected logging (0-60)
+- `bg_rejected_save_clip`: Save clips for rejected candidates
+- `bg_save_masks`: Save motion masks for observations
+- `bg_save_mask_overlay`: Save mask overlay images
+
+**Display:**
+- `timezone`: IANA timezone name or "local"
+
 ## Machine Learning Components
 
 ### YOLO Detection

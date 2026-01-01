@@ -120,7 +120,12 @@ def test_validate_detection_inputs():
         "bg_motion_blur": "5",
         "bg_min_overlap": "0.15",
         "bg_subtraction_enabled": "true",
-        "timezone": "America/Los_Angeles"
+        "timezone": "America/Los_Angeles",
+        # New fields
+        "fps_limit": "10",
+        "clip_seconds": "3.0",
+        "crop_padding": "0.10",
+        "bg_rejected_cooldown_seconds": "3.0",
     }
     parsed, errors = _validate_detection_inputs(valid_raw)
     assert not errors

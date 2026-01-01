@@ -1318,8 +1318,27 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
     parse_odd_int("bg_motion_blur", "Background motion blur", 1, 99)
     parse_float("bg_min_overlap", "Background minimum overlap", 0.0, 1.0)
 
+    # New fields
+    parse_float("fps_limit", "FPS limit", 1.0, 60.0)
+    parse_float("clip_seconds", "Clip duration", 1.0, 30.0)
+    parse_float("crop_padding", "Crop padding", 0.0, 0.5)
+    parse_float("bg_rejected_cooldown_seconds", "Rejected cooldown", 0.0, 60.0)
+
     bg_enabled_raw = str(raw.get("bg_subtraction_enabled", "")).strip().lower()
     parsed["bg_subtraction_enabled"] = bg_enabled_raw in {"1", "true", "yes", "on"}
+
+    # New boolean fields
+    bg_log_rejected_raw = str(raw.get("bg_log_rejected", "")).strip().lower()
+    parsed["bg_log_rejected"] = bg_log_rejected_raw in {"1", "true", "yes", "on"}
+
+    bg_rejected_save_clip_raw = str(raw.get("bg_rejected_save_clip", "")).strip().lower()
+    parsed["bg_rejected_save_clip"] = bg_rejected_save_clip_raw in {"1", "true", "yes", "on"}
+
+    bg_save_masks_raw = str(raw.get("bg_save_masks", "")).strip().lower()
+    parsed["bg_save_masks"] = bg_save_masks_raw in {"1", "true", "yes", "on"}
+
+    bg_save_mask_overlay_raw = str(raw.get("bg_save_mask_overlay", "")).strip().lower()
+    parsed["bg_save_mask_overlay"] = bg_save_mask_overlay_raw in {"1", "true", "yes", "on"}
 
     tz_text = str(raw.get("timezone", "")).strip()
     if not tz_text:
@@ -1482,6 +1501,15 @@ def make_app() -> Any:
             "bg_motion_threshold": str(int(getattr(settings, "bg_motion_threshold", 30))),
             "bg_motion_blur": str(int(getattr(settings, "bg_motion_blur", 5))),
             "bg_min_overlap": f"{float(getattr(settings, 'bg_min_overlap', 0.15)):.2f}",
+            # New fields
+            "fps_limit": f"{float(getattr(settings, 'fps_limit', 8.0)):.1f}",
+            "clip_seconds": f"{float(getattr(settings, 'clip_seconds', 2.0)):.1f}",
+            "crop_padding": f"{float(getattr(settings, 'crop_padding', 0.05)):.2f}",
+            "bg_log_rejected": "1" if getattr(settings, "bg_log_rejected", False) else "0",
+            "bg_rejected_cooldown_seconds": f"{float(getattr(settings, 'bg_rejected_cooldown_seconds', 3.0)):.1f}",
+            "bg_rejected_save_clip": "1" if getattr(settings, "bg_rejected_save_clip", False) else "0",
+            "bg_save_masks": "1" if getattr(settings, "bg_save_masks", True) else "0",
+            "bg_save_mask_overlay": "1" if getattr(settings, "bg_save_mask_overlay", True) else "0",
         }
         if raw:
             for k, v in raw.items():
@@ -2842,10 +2870,20 @@ def make_app() -> Any:
             "bg_motion_threshold",
             "bg_motion_blur",
             "bg_min_overlap",
+            # New fields
+            "fps_limit",
+            "clip_seconds",
+            "crop_padding",
+            "bg_rejected_cooldown_seconds",
         )
         raw = {name: str(form.get(name, "") or "").strip() for name in field_names}
         raw["timezone"] = str(form.get("timezone", "") or "").strip()
         raw["bg_subtraction_enabled"] = "1" if form.get("bg_subtraction_enabled") else "0"
+        # New boolean fields
+        raw["bg_log_rejected"] = "1" if form.get("bg_log_rejected") else "0"
+        raw["bg_rejected_save_clip"] = "1" if form.get("bg_rejected_save_clip") else "0"
+        raw["bg_save_masks"] = "1" if form.get("bg_save_masks") else "0"
+        raw["bg_save_mask_overlay"] = "1" if form.get("bg_save_mask_overlay") else "0"
         parsed, errors = _validate_detection_inputs(raw)
 
         if errors:
@@ -2875,6 +2913,15 @@ def make_app() -> Any:
         s.bg_motion_threshold = parsed["bg_motion_threshold"]
         s.bg_motion_blur = parsed["bg_motion_blur"]
         s.bg_min_overlap = parsed["bg_min_overlap"]
+        # New fields
+        s.fps_limit = parsed["fps_limit"]
+        s.clip_seconds = parsed["clip_seconds"]
+        s.crop_padding = parsed["crop_padding"]
+        s.bg_log_rejected = parsed["bg_log_rejected"]
+        s.bg_rejected_cooldown_seconds = parsed["bg_rejected_cooldown_seconds"]
+        s.bg_rejected_save_clip = parsed["bg_rejected_save_clip"]
+        s.bg_save_masks = parsed["bg_save_masks"]
+        s.bg_save_mask_overlay = parsed["bg_save_mask_overlay"]
         save_settings(s)
 
         return RedirectResponse(url="/config?saved=1", status_code=303)

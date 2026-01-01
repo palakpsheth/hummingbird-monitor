@@ -138,6 +138,12 @@ class Settings:
     bg_motion_threshold: int = 30
     bg_motion_blur: int = 5
     bg_min_overlap: float = 0.15
+    # Background subtraction extras (for rejected candidate logging)
+    bg_log_rejected: bool = False
+    bg_rejected_cooldown_seconds: float = 3.0
+    bg_rejected_save_clip: bool = False
+    bg_save_masks: bool = True
+    bg_save_mask_overlay: bool = True
 
     # misc
     timezone: str = "local"
@@ -174,6 +180,13 @@ class Settings:
         s.bg_motion_threshold = env_int("HBMON_BG_MOTION_THRESHOLD", s.bg_motion_threshold)
         s.bg_motion_blur = env_int("HBMON_BG_MOTION_BLUR", s.bg_motion_blur)
         s.bg_min_overlap = env_float("HBMON_BG_MIN_OVERLAP", s.bg_min_overlap)
+        s.bg_log_rejected = env_bool("HBMON_BG_LOG_REJECTED", s.bg_log_rejected)
+        s.bg_rejected_cooldown_seconds = env_float(
+            "HBMON_BG_REJECTED_COOLDOWN_SECONDS", s.bg_rejected_cooldown_seconds
+        )
+        s.bg_rejected_save_clip = env_bool("HBMON_BG_REJECTED_SAVE_CLIP", s.bg_rejected_save_clip)
+        s.bg_save_masks = env_bool("HBMON_BG_SAVE_MASKS", s.bg_save_masks)
+        s.bg_save_mask_overlay = env_bool("HBMON_BG_SAVE_MASK_OVERLAY", s.bg_save_mask_overlay)
 
         # ROI can also be overridden via env for debugging
         roi_env = env_str("HBMON_ROI", "")
@@ -321,6 +334,11 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
         bg_motion_threshold=int(d.get("bg_motion_threshold", 30)),
         bg_motion_blur=int(d.get("bg_motion_blur", 5)),
         bg_min_overlap=float(d.get("bg_min_overlap", 0.15)),
+        bg_log_rejected=_parse_bool(d.get("bg_log_rejected"), False),
+        bg_rejected_cooldown_seconds=float(d.get("bg_rejected_cooldown_seconds", 3.0)),
+        bg_rejected_save_clip=_parse_bool(d.get("bg_rejected_save_clip"), False),
+        bg_save_masks=_parse_bool(d.get("bg_save_masks"), True),
+        bg_save_mask_overlay=_parse_bool(d.get("bg_save_mask_overlay"), True),
         last_updated_utc=float(d.get("last_updated_utc", 0.0)),
     )
     return s
