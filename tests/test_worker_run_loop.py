@@ -52,7 +52,7 @@ class _DummyYOLO:
     # Use dict to allow bird_class_id resolution to find 'bird' = 0
     names = {0: "bird"}
 
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, **kwargs):
         self.model_name = model_name
 
     def predict(self, frame, *, conf, iou, classes, verbose=False, **kwargs):
@@ -199,7 +199,7 @@ class _RejectResult:
 class _RejectYOLO:
     names = {0: "bird"}
 
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, **kwargs):
         self.model_name = model_name
 
     def predict(self, frame, *, conf, iou, classes, verbose=False, **kwargs):

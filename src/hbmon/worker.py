@@ -1280,13 +1280,13 @@ def _load_yolo_model() -> Any:
     # PyTorch backend (default)
     if backend == "pytorch":
         logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
-        return YOLO(model_name)  # type: ignore[misc]
+        return YOLO(model_name, task="detect")  # type: ignore[misc]
 
     # OpenVINO backends
     if not is_openvino_available():
         logger.warning("OpenVINO not available, falling back to PyTorch")
         logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
-        return YOLO(model_name)  # type: ignore[misc]
+        return YOLO(model_name, task="detect")  # type: ignore[misc]
 
     # Check GPU for openvino-gpu backend
     if backend == "openvino-gpu":
@@ -1314,7 +1314,7 @@ def _load_yolo_model() -> Any:
 
     if not ov_model_dir.exists():
         logger.info(f"Exporting {model_name} to OpenVINO format...")
-        yolo = YOLO(model_name)  # type: ignore[misc]
+        yolo = YOLO(model_name, task="detect")  # type: ignore[misc]
         try:
             # The export() method returns the path to the exported model directory.
             # Using dynamic=True allows variable input sizes (e.g. 1088x1920) without crashing OpenVINO.
@@ -1332,12 +1332,12 @@ def _load_yolo_model() -> Any:
     logger.info(f"Loading YOLO model: {ov_model_dir} (OpenVINO {device} backend)")
 
     try:
-        yolo = YOLO(str(ov_model_dir))  # type: ignore[misc]
+        yolo = YOLO(str(ov_model_dir), task="detect")  # type: ignore[misc]
         return yolo
     except Exception as e:
         logger.warning(f"Failed to load OpenVINO model: {e}")
         logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
-        return YOLO(model_name)  # type: ignore[misc]
+        return YOLO(model_name, task="detect")  # type: ignore[misc]
 
 
 async def run_worker() -> None:

@@ -24,8 +24,9 @@ def test_load_yolo_model_path_resolution(mock_gpu, mock_ov_av, mock_yolo, monkey
     # Mock Path.exists to return True for the model
     with patch("hbmon.worker.Path.exists", autospec=True, side_effect=exists_side_effect):
         _load_yolo_model()
+        print(f"\nDEBUG mock_yolo calls: {mock_yolo.call_args_list}")
         # Check that YOLO was called with the correct path
-        mock_yolo.assert_any_call(str(expected_path))
+        mock_yolo.assert_any_call(str(expected_path), task="detect")
         
     # 2. Test without OPENVINO_CACHE_DIR but with YOLO_CONFIG_DIR
     mock_yolo.reset_mock()
@@ -40,7 +41,7 @@ def test_load_yolo_model_path_resolution(mock_gpu, mock_ov_av, mock_yolo, monkey
 
     with patch("hbmon.worker.Path.exists", autospec=True, side_effect=exists_side_effect_2):
         _load_yolo_model()
-        mock_yolo.assert_any_call(str(expected_path_2))
+        mock_yolo.assert_any_call(str(expected_path_2), task="detect")
 
 @patch("hbmon.worker.YOLO")
 @patch("hbmon.worker.is_openvino_available")
@@ -74,6 +75,9 @@ def test_load_yolo_model_export_path(mock_rmtree, mock_move, mock_ov_av, mock_yo
         
         # Verify it tried to create the directory
         assert expected_parent.exists()
+        
+        # Verify YOLO was called for export with correct task
+        mock_yolo.assert_any_call("yolo11n.pt", task="detect")
         
         # Verify export was called
         mock_yolo_instance.export.assert_called_once_with(format="openvino", dynamic=True, half=False)
