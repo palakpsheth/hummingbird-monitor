@@ -974,6 +974,11 @@ def test_config_save(tmp_path, monkeypatch):
         "bg_motion_threshold": "30",
         "bg_motion_blur": "5",
         "bg_min_overlap": "0.15",
+        # New fields
+        "fps_limit": "10",
+        "clip_seconds": "3.0",
+        "crop_padding": "0.10",
+        "bg_rejected_cooldown_seconds": "3.0",
     }, follow_redirects=False)
     assert r.status_code == 303
 
@@ -1559,7 +1564,7 @@ def test_export_integration_test_bundle(tmp_path, monkeypatch):
 
 
 def test_dashboard_contains_live_camera_feed_section(tmp_path, monkeypatch):
-    """Test that the dashboard includes the Live Camera Feed section with MJPEG stream."""
+    """Test that the dashboard includes the Live Camera Feed section with snapshot controls."""
     client = _setup_app(tmp_path, monkeypatch)
     r = client.get("/")
     assert r.status_code == 200
@@ -1568,8 +1573,8 @@ def test_dashboard_contains_live_camera_feed_section(tmp_path, monkeypatch):
     assert "live-feed-img" in r.text
     assert "live-feed-play" in r.text
     assert "live-feed-pause" in r.text
-    assert "data-snapshot-src" in r.text
-    assert "/api/stream.mjpeg" in r.text
+    assert "live-feed-rate-select" in r.text
+    assert "live-feed-source-indicator" in r.text
 
 def test_bulk_delete_observations_empty(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
@@ -1782,7 +1787,12 @@ def test_config_save_complete(tmp_path, monkeypatch):
         "bg_subtraction_enabled": "on",
         "bg_motion_threshold": "30",
         "bg_motion_blur": "5",
-        "bg_min_overlap": "0.15"
+        "bg_min_overlap": "0.15",
+        # New fields
+        "fps_limit": "15",
+        "clip_seconds": "5.0",
+        "crop_padding": "0.10",
+        "bg_rejected_cooldown_seconds": "5.0",
     }
     r = client.post("/config", data=data, follow_redirects=False)
     assert r.status_code == 303

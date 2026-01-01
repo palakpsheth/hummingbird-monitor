@@ -72,7 +72,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
   - Missing sensitivity/identification fields are backfilled with current defaults when exporting older observations.
 
 ### Web UI pages
-- **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for the live feed, a detection health indicator alongside stream diagnostics that remain visible while streaming stalls, and pauses when the tab is hidden); recent observations are paginated with a per-page selector
+- **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for auto-refresh with configurable refresh rate (1s, 2s, 5s, 10s), a live/fallback source indicator, and a detection health indicator); recent observations are paginated with a per-page selector
 - **Observations**: filterable, sortable table (including dynamic extra metadata fields such as
   detector confidence) with compact thumbnails, a per-page selector, column visibility checklist (sensitivity
   fields hidden by default), links to raw/annotated/clip snapshots + video, multi-select + bulk delete, and
@@ -80,7 +80,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Candidates**: motion-rejected detections for review (thumbnails, overlap/confidence, label form, bulk delete)
 - **Individuals**: sortable list + detail page with prototypical snapshot and a paginated observations table with a per-page selector
 - **ROI calibration**: draw a box on the latest snapshot
-- **Config**: tune detection thresholds, re-ID thresholds, and background subtraction settings
+- **Config**: tune detection thresholds, classification, re-ID settings, and background subtraction—organized into logical groups with helpful descriptions
 - **Background image**: configure a reference background (select from observations, upload, or capture a live snapshot) with a paginated observation picker
 - **API Docs**: interactive Swagger UI for API exploration (`/docs`)
 - Page headers mirror the footer status line (current time, time zone, version, and commit).

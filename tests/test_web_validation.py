@@ -36,6 +36,11 @@ def _base_raw() -> dict[str, str]:
         "bg_motion_threshold": "30",
         "bg_motion_blur": "5",
         "bg_min_overlap": "0.15",
+        # New fields
+        "fps_limit": "8",
+        "clip_seconds": "2.0",
+        "crop_padding": "0.05",
+        "bg_rejected_cooldown_seconds": "3.0",
     }
 
 

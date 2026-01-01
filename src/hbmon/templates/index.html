@@ -14,16 +14,13 @@
 <div class="card">
   <div class="live-feed-header">
     <h2 class="live-feed-title">Live Camera Feed</h2>
-    <div class="muted" id="live-feed-status">Stream paused (click to start)</div>
+    <div class="muted" id="live-feed-status">Paused (click ▶ to auto-refresh)</div>
   </div>
-  <dl class="live-feed-diagnostics" id="live-feed-diagnostics" hidden></dl>
   <div class="live-feed-container">
     <div id="live-feed-thumb-container">
       <div id="live-feed-frame" class="live-feed-frame">
-        <img id="live-feed-img" src="/api/snapshot.jpg?ts={{ ts }}" data-stream-src="/api/stream.mjpeg"
-          data-snapshot-src="/api/snapshot.jpg" data-poll-src="/api/snapshot.jpg"
-          alt="Live camera feed from hummingbird feeder - click to enlarge" class="live-feed-thumb"
-          title="Click to view full size HD stream" />
+        <img id="live-feed-img" src="/api/snapshot.jpg?ts={{ ts }}" data-poll-src="/api/snapshot.jpg"
+          alt="Live camera feed from hummingbird feeder" class="live-feed-thumb" />
         {% if roi %}
         <div id="live-feed-roi" class="live-feed-roi" style="
                 left: {{ roi.x1 * 100 }}%;
@@ -34,7 +31,7 @@
         {% endif %}
       </div>
     </div>
-    <div class="live-feed-controls" role="group" aria-label="Live stream controls">
+    <div class="live-feed-controls" role="group" aria-label="Live feed controls">
       <div class="live-feed-actions">
         <button type="button" id="live-feed-play" class="icon-button" aria-label="Start auto-refresh">
           <span aria-hidden="true">▶</span>
@@ -43,26 +40,26 @@
           <span aria-hidden="true">⏸</span>
         </button>
       </div>
-      <span class="muted live-feed-mode" id="live-feed-mode"></span>
+      <div class="live-feed-rate">
+        <label for="live-feed-rate-select" class="muted">Refresh:</label>
+        <select id="live-feed-rate-select" aria-label="Refresh rate">
+          <option value="1000">1s</option>
+          <option value="2000" selected>2s</option>
+          <option value="5000">5s</option>
+          <option value="10000">10s</option>
+        </select>
+      </div>
+      <div id="live-feed-source-indicator" class="live-feed-source-indicator">
+        <span class="live-feed-source-dot"></span>
+        <span class="live-feed-source-label">Loading</span>
+      </div>
     </div>
-    <div class="live-feed-hint">Click image to view full-size HD stream</div>
   </div>
   <div class="live-feed-footer">
     <div class="live-feed-health live-feed-health--idle" id="live-feed-health" role="status">
       Detection health: —
     </div>
     <a class="muted" href="/calibrate">Calibrate ROI</a>
-  </div>
-</div>
-
-<!-- Full-size modal for live feed -->
-<div id="live-feed-modal" class="live-feed-modal" role="dialog" aria-modal="true"
-  aria-labelledby="live-feed-modal-title">
-  <div class="live-feed-modal-content">
-    <h2 id="live-feed-modal-title" class="visually-hidden">Full size camera view</h2>
-    <button type="button" id="live-feed-modal-close" class="live-feed-modal-close"
-      aria-label="Close full size view">&times;</button>
-    <div id="live-feed-modal-body"></div>
   </div>
 </div>
 
@@ -173,84 +170,49 @@
   (function () {
     var img = document.getElementById('live-feed-img');
     var statusEl = document.getElementById('live-feed-status');
-    var modeEl = document.getElementById('live-feed-mode');
-    var diagnosticsEl = document.getElementById('live-feed-diagnostics');
-    var modal = document.getElementById('live-feed-modal');
-    var modalBody = document.getElementById('live-feed-modal-body');
-    var modalClose = document.getElementById('live-feed-modal-close');
-    var thumbContainer = document.getElementById('live-feed-thumb-container');
-    var frame = document.getElementById('live-feed-frame');
     var playBtn = document.getElementById('live-feed-play');
     var pauseBtn = document.getElementById('live-feed-pause');
     var healthEl = document.getElementById('live-feed-health');
+    var rateSelect = document.getElementById('live-feed-rate-select');
+    var sourceIndicator = document.getElementById('live-feed-source-indicator');
+    var sourceLabel = sourceIndicator ? sourceIndicator.querySelector('.live-feed-source-label') : null;
 
-    // Modes: 'paused', 'polling', 'streaming'
-    // - paused: static snapshot, no refresh
-    // - polling: refresh snapshot every 2 seconds (default when Play clicked)
-    // - streaming: MJPEG stream (only used in full-screen modal)
+    // Modes: 'paused', 'polling'
     var currentMode = 'paused';
     var hasInteracted = false;
-    var wasPollingBeforeModal = false;
     var wasPollingBeforeHidden = false;
     var pollTimer = null;
-    var pollIntervalMs = 2000; // 2 second refresh
-    var diagnosticsTimer = null;
-    var diagnosticsTickTimer = null;
+    var pollIntervalMs = rateSelect ? parseInt(rateSelect.value, 10) : 2000;
     var healthTimer = null;
-    var latestDiagnostics = null;
-    var lastDiagnosticsFetchedAt = null;
-    var lastFrameAgeSeconds = null;
-    var lastFrameTimestamp = null;
     var latestHealth = null;
     var detectionWarnSeconds = 120;
     var detectionCriticalSeconds = 300;
-
-    var defaultStreamSrc = '/api/stream.mjpeg';
-    var defaultPollSrc = '/api/snapshot.jpg';
-    var diagnosticsSrc = '/api/stream_diagnostics';
-
-    function sanitizeApiSrc(value, fallback) {
-      if (!value) return fallback;
-
-      var rawValue = String(value).trim();
-      if (!rawValue) return fallback;
-
-      try {
-        var parsedUrl = new URL(rawValue, window.location.origin);
-
-        // Same-origin only
-        if (parsedUrl.origin !== window.location.origin) {
-          return fallback;
-        }
-
-        // Restrict to API endpoints only
-        if (!parsedUrl.pathname.startsWith('/api/')) {
-          return fallback;
-        }
-
-        // Return a safe relative URL
-        return encodeURI(parsedUrl.pathname + parsedUrl.search);
-      } catch (e) {
-        return fallback;
-      }
-    }
-
-    var rawStreamSrc = img ? (img.getAttribute('data-stream-src') || defaultStreamSrc) : defaultStreamSrc;
-    var rawPollSrc = img ? (img.getAttribute('data-poll-src') || defaultPollSrc) : defaultPollSrc;
-    var streamSrc = sanitizeApiSrc(rawStreamSrc, defaultStreamSrc);
-    var pollSrc = sanitizeApiSrc(rawPollSrc, defaultPollSrc);
-    var fallbackPollSrc = '/api/frame.jpg';
     var usedFallback = false;
 
+    var defaultPollSrc = '/api/snapshot.jpg';
+    var fallbackPollSrc = '/api/frame.jpg';
 
-    function buildSnapshotSrc(base) {
-      if (!base) return base;
-      var url = new URL(base, window.location.origin);
-      url.searchParams.set('ts', Date.now().toString());
-      return url.pathname + url.search;
+    // Safely extract and validate pollSrc from DOM attribute
+    function getSafePollSrc() {
+      if (!img) return defaultPollSrc;
+      var dataSrc = img.getAttribute('data-poll-src');
+      if (!dataSrc) return defaultPollSrc;
+      // Validate that the value is a same-origin /api/ URL path to avoid unsafe redirects
+      try {
+        var url = new URL(dataSrc, window.location.origin);
+        // Only allow same-origin URLs with /api/ paths
+        if (url.origin === window.location.origin && url.pathname.startsWith('/api/')) {
+          return url.pathname;
+        }
+      } catch (e) {
+        // Invalid URL, fall back to default
+      }
+      return defaultPollSrc;
     }
 
-    function buildStreamSrc(base) {
+    var pollSrc = getSafePollSrc();
+
+    function buildSnapshotSrc(base) {
       if (!base) return base;
       var url = new URL(base, window.location.origin);
       url.searchParams.set('ts', Date.now().toString());
@@ -261,16 +223,17 @@
       if (statusEl) statusEl.textContent = text;
     }
 
-    function clearDiagnostics() {
-      if (!diagnosticsEl) return;
-      diagnosticsEl.replaceChildren();
-      diagnosticsEl.hidden = true;
-    }
-
-    function formatNumber(value, digits) {
-      if (value === null || value === undefined) return '—';
-      if (typeof value !== 'number') return String(value);
-      return value.toFixed(digits);
+    function updateSourceIndicator(isLive) {
+      if (!sourceIndicator) return;
+      if (isLive) {
+        sourceIndicator.classList.remove('fallback');
+        sourceIndicator.classList.add('live');
+        if (sourceLabel) sourceLabel.textContent = 'Live';
+      } else {
+        sourceIndicator.classList.remove('live');
+        sourceIndicator.classList.add('fallback');
+        if (sourceLabel) sourceLabel.textContent = 'Fallback';
+      }
     }
 
     function formatAge(seconds) {
@@ -313,9 +276,7 @@
       }
 
       // Show mode status
-      if (currentMode === 'streaming') {
-        parts.push('Mode: HD stream');
-      } else if (currentMode === 'polling') {
+      if (currentMode === 'polling') {
         parts.push('Mode: auto-refresh');
       } else {
         parts.push('Mode: paused');
@@ -326,210 +287,11 @@
       healthEl.classList.add('live-feed-health--' + level);
     }
 
-    function formatBitrate(kbps) {
-      if (kbps === null || kbps === undefined) return '—';
-      if (kbps >= 1000) return (kbps / 1000).toFixed(2) + ' Mbps';
-      return formatNumber(kbps, 1) + ' Kbps';
-    }
-
-    function renderDiagnostics(data) {
-      if (!diagnosticsEl || !data) return;
-      var rows = [];
-      var source = data.source || {};
-      var frame = data.frame || {};
-      var mjpeg = data.mjpeg || {};
-
-      rows.push({ label: 'Codec', value: source.codec || '—' });
-      rows.push({ label: 'Source FPS', value: formatNumber(source.fps, 2) });
-      rows.push({ label: 'Source Resolution', value: source.resolution || '—' });
-      rows.push({ label: 'Output Resolution', value: frame.output_resolution || '—' });
-      rows.push({
-        label: 'MJPEG FPS',
-        value: formatNumber(mjpeg.current_fps, 2) + ' / ' + formatNumber(mjpeg.target_fps, 2) + ' target',
-      });
-      rows.push({
-        label: 'MJPEG Quality',
-        value: [
-          'cur ' + formatNumber(mjpeg.current_quality, 0),
-          'base ' + formatNumber(mjpeg.base_quality, 0),
-          'min ' + formatNumber(mjpeg.min_quality, 0),
-        ].join(' · '),
-      });
-      rows.push({ label: 'Adaptive MJPEG', value: mjpeg.adaptive_enabled ? 'Enabled' : 'Disabled' });
-      rows.push({
-        label: 'Max Output Size',
-        value: mjpeg.max_width && mjpeg.max_height ? mjpeg.max_width + '×' + mjpeg.max_height : '—',
-      });
-      rows.push({
-        label: 'Frame Size', value: frame.last_frame_size_bytes
-          ? formatNumber(frame.last_frame_size_bytes / 1024.0, 1) + ' KB'
-          : '—'
-      });
-      rows.push({ label: 'Estimated Bitrate', value: formatBitrate(frame.estimated_bitrate_kbps) });
-      rows.push({ label: 'Encode Time', value: frame.encode_ms ? formatNumber(frame.encode_ms, 1) + ' ms' : '—' });
-      rows.push({
-        label: 'Last Frame Age',
-        value: frame.last_frame_age_s !== null && frame.last_frame_age_s !== undefined
-          ? formatNumber(frame.last_frame_age_s * 1000.0, 0) + ' ms'
-          : '—',
-      });
-      rows.push({ label: 'Streaming Clients', value: data.clients !== undefined ? String(data.clients) : '—' });
-
-      diagnosticsEl.replaceChildren();
-      rows.forEach(function (row) {
-        var item = document.createElement('div');
-        item.className = 'live-feed-diagnostics-item';
-        var dt = document.createElement('dt');
-        dt.textContent = row.label;
-        var dd = document.createElement('dd');
-        dd.textContent = row.value;
-        item.appendChild(dt);
-        item.appendChild(dd);
-        diagnosticsEl.appendChild(item);
-      });
-      diagnosticsEl.hidden = false;
-    }
-
-    function coalesceValue(previousValue, nextValue) {
-      return nextValue === null || nextValue === undefined ? previousValue : nextValue;
-    }
-
-    function mergeDiagnostics(previousData, nextData) {
-      if (!previousData) return nextData || null;
-      if (!nextData) return previousData;
-      var merged = {
-        clients: coalesceValue(previousData.clients, nextData.clients),
-        source: {},
-        frame: {},
-        mjpeg: {},
-      };
-      var previousSource = previousData.source || {};
-      var nextSource = nextData.source || {};
-      merged.source.codec = coalesceValue(previousSource.codec, nextSource.codec);
-      merged.source.fps = coalesceValue(previousSource.fps, nextSource.fps);
-      merged.source.resolution = coalesceValue(previousSource.resolution, nextSource.resolution);
-
-      var previousFrame = previousData.frame || {};
-      var nextFrame = nextData.frame || {};
-      merged.frame.output_resolution = coalesceValue(previousFrame.output_resolution, nextFrame.output_resolution);
-      merged.frame.last_frame_timestamp = coalesceValue(
-        previousFrame.last_frame_timestamp,
-        nextFrame.last_frame_timestamp,
-      );
-      merged.frame.last_frame_size_bytes = coalesceValue(previousFrame.last_frame_size_bytes, nextFrame.last_frame_size_bytes);
-      merged.frame.encode_ms = coalesceValue(previousFrame.encode_ms, nextFrame.encode_ms);
-      merged.frame.estimated_bitrate_kbps = coalesceValue(
-        previousFrame.estimated_bitrate_kbps,
-        nextFrame.estimated_bitrate_kbps,
-      );
-      merged.frame.last_frame_age_s = coalesceValue(previousFrame.last_frame_age_s, nextFrame.last_frame_age_s);
-
-      var previousMjpeg = previousData.mjpeg || {};
-      var nextMjpeg = nextData.mjpeg || {};
-      merged.mjpeg.adaptive_enabled = coalesceValue(previousMjpeg.adaptive_enabled, nextMjpeg.adaptive_enabled);
-      merged.mjpeg.target_fps = coalesceValue(previousMjpeg.target_fps, nextMjpeg.target_fps);
-      merged.mjpeg.current_fps = coalesceValue(previousMjpeg.current_fps, nextMjpeg.current_fps);
-      merged.mjpeg.min_fps = coalesceValue(previousMjpeg.min_fps, nextMjpeg.min_fps);
-      merged.mjpeg.base_quality = coalesceValue(previousMjpeg.base_quality, nextMjpeg.base_quality);
-      merged.mjpeg.current_quality = coalesceValue(previousMjpeg.current_quality, nextMjpeg.current_quality);
-      merged.mjpeg.min_quality = coalesceValue(previousMjpeg.min_quality, nextMjpeg.min_quality);
-      merged.mjpeg.max_width = coalesceValue(previousMjpeg.max_width, nextMjpeg.max_width);
-      merged.mjpeg.max_height = coalesceValue(previousMjpeg.max_height, nextMjpeg.max_height);
-      return merged;
-    }
-
-    function getFrameAgeSeconds() {
-      if (lastFrameAgeSeconds === null || lastFrameAgeSeconds === undefined || !lastDiagnosticsFetchedAt) {
-        return null;
-      }
-      var elapsed = (Date.now() - lastDiagnosticsFetchedAt) / 1000.0;
-      return Math.max(0, lastFrameAgeSeconds + elapsed);
-    }
-
-    function getDiagnosticsSnapshot() {
-      if (!latestDiagnostics) return null;
-      var snapshot = JSON.parse(JSON.stringify(latestDiagnostics));
-      var frameAge = getFrameAgeSeconds();
-      if (snapshot.frame) {
-        snapshot.frame.last_frame_age_s = frameAge;
-      }
-      return snapshot;
-    }
-
-    function refreshDiagnosticsDisplay() {
-      if (!latestDiagnostics) return;
-      renderDiagnostics(getDiagnosticsSnapshot());
-    }
-
-    function fetchDiagnostics() {
-      if (!diagnosticsEl || !isStreaming) return;
-      fetch(diagnosticsSrc, { cache: 'no-store' })
-        .then(function (res) {
-          if (!res.ok) throw new Error('bad response');
-          return res.json();
-        })
-        .then(function (data) {
-          var predictedAge = getFrameAgeSeconds();
-          var incomingFrameTimestamp = data && data.frame ? data.frame.last_frame_timestamp : null;
-          latestDiagnostics = mergeDiagnostics(latestDiagnostics, data);
-          if (incomingFrameTimestamp !== null && incomingFrameTimestamp !== undefined) {
-            if (lastFrameTimestamp === null || lastFrameTimestamp === undefined || incomingFrameTimestamp > lastFrameTimestamp) {
-              lastFrameTimestamp = incomingFrameTimestamp;
-              if (data && data.frame && data.frame.last_frame_age_s !== null && data.frame.last_frame_age_s !== undefined) {
-                lastFrameAgeSeconds = data.frame.last_frame_age_s;
-              }
-            } else if (predictedAge !== null && predictedAge !== undefined) {
-              lastFrameAgeSeconds = predictedAge;
-            }
-          } else if (predictedAge !== null && predictedAge !== undefined) {
-            lastFrameAgeSeconds = predictedAge;
-          }
-          lastDiagnosticsFetchedAt = Date.now();
-          refreshDiagnosticsDisplay();
-          updateHealthIndicator();
-          var frameAge = getFrameAgeSeconds();
-          if (frameAge !== null && frameAge !== undefined && frameAge > staleFrameThresholdSeconds) {
-            restartStream('Stale diagnostics data');
-          }
-        })
-        .catch(function () {
-          refreshDiagnosticsDisplay();
-          updateHealthIndicator();
-          restartStream('Diagnostics unavailable');
-        });
-    }
-
-    function startDiagnosticsPolling() {
-      if (!diagnosticsEl || diagnosticsTimer) return;
-      fetchDiagnostics();
-      diagnosticsTimer = window.setInterval(fetchDiagnostics, 2500);
-      if (!diagnosticsTickTimer) {
-        diagnosticsTickTimer = window.setInterval(refreshDiagnosticsDisplay, 1000);
-      }
-    }
-
-    function stopDiagnosticsPolling() {
-      if (diagnosticsTimer) {
-        window.clearInterval(diagnosticsTimer);
-        diagnosticsTimer = null;
-      }
-      if (diagnosticsTickTimer) {
-        window.clearInterval(diagnosticsTickTimer);
-        diagnosticsTickTimer = null;
-      }
-      clearDiagnostics();
-      latestDiagnostics = null;
-      lastDiagnosticsFetchedAt = null;
-      lastFrameAgeSeconds = null;
-      lastFrameTimestamp = null;
-      updateHealthIndicator();
-    }
-
     function updateButtons() {
-      var isPollingOrStreaming = (currentMode === 'polling' || currentMode === 'streaming');
+      var isPolling = (currentMode === 'polling');
       if (playBtn) {
-        playBtn.disabled = isPollingOrStreaming;
-        playBtn.classList.toggle('is-active', isPollingOrStreaming);
+        playBtn.disabled = isPolling;
+        playBtn.classList.toggle('is-active', isPolling);
       }
       if (pauseBtn) {
         pauseBtn.disabled = currentMode === 'paused';
@@ -572,7 +334,12 @@
       }
     }
 
-    // Start snapshot polling (auto-refresh every 2 seconds)
+    function getRefreshLabel() {
+      var seconds = pollIntervalMs / 1000;
+      return 'Auto-refreshing (every ' + seconds + 's)';
+    }
+
+    // Start snapshot polling
     function startPolling() {
       if (!img) return;
       if (document.visibilityState === 'hidden') {
@@ -584,7 +351,7 @@
       currentMode = 'polling';
       refreshSnapshot();
       pollTimer = window.setInterval(refreshSnapshot, pollIntervalMs);
-      updateStatus('Auto-refreshing (every 2s)');
+      updateStatus(getRefreshLabel());
       startHealthPolling();
       updateButtons();
       updateHealthIndicator();
@@ -596,127 +363,25 @@
         window.clearInterval(pollTimer);
         pollTimer = null;
       }
-      if (currentMode !== 'streaming') {
-        currentMode = 'paused';
-        updateStatus('Paused');
-        updateButtons();
-        updateHealthIndicator();
-      }
-    }
-
-    // Start MJPEG streaming (only used in modal)
-    function startStreaming() {
-      if (!img) return;
-      stopPolling();
-      currentMode = 'streaming';
-      img.src = buildStreamSrc(streamSrc);
-      updateStatus('HD streaming');
-      startDiagnosticsPolling();
-      startHealthPolling();
+      currentMode = 'paused';
+      updateStatus('Paused');
       updateButtons();
       updateHealthIndicator();
     }
 
-    // Stop streaming, return to polling or paused
-    function stopStreaming(returnToPolling) {
-      if (!img) return;
-      stopDiagnosticsPolling();
-      if (returnToPolling) {
-        startPolling();
-      } else {
-        currentMode = 'paused';
-        refreshSnapshot();
-        updateStatus('Paused');
-        updateButtons();
-        updateHealthIndicator();
-      }
-    }
-
-    function openModal() {
-      if (modal && modalBody && img && frame) {
-        if (!hasInteracted) {
-          hasInteracted = true;
-        }
-
-        // Remember if we were polling
-        wasPollingBeforeModal = (currentMode === 'polling');
-
-        // Always start streaming in full-screen modal
-        startStreaming();
-
-        // Move the existing thumbnail frame into the modal (no duplicate stream elements)
-        modalBody.appendChild(frame);
-        img.classList.remove('live-feed-thumb');
-        img.classList.add('live-feed-modal-img');
-        frame.classList.add('live-feed-frame-modal');
-
-        modal.classList.add('open');
-        document.body.style.overflow = 'hidden';
-
-        // Focus close button for keyboard accessibility
-        if (modalClose) {
-          modalClose.focus();
-        }
-      }
-    }
-
-    function closeModal() {
-      if (modal) {
-        modal.classList.remove('open');
-        document.body.style.overflow = '';
-
-        if (thumbContainer && frame) {
-          thumbContainer.appendChild(frame);
-          img.classList.remove('live-feed-modal-img');
-          img.classList.add('live-feed-thumb');
-          frame.classList.remove('live-feed-frame-modal');
-        }
-
-        // Return to polling if we were polling before, otherwise pause
-        stopStreaming(wasPollingBeforeModal);
-
-        // Return focus to thumbnail image
-        if (img) {
-          img.focus();
-        }
-      }
-    }
-
-    // Modal click handlers
-    if (img) {
-      img.addEventListener('click', openModal);
-      img.style.cursor = 'pointer';
-
-      // Make thumbnail focusable for keyboard users
-      img.setAttribute('tabindex', '0');
-      img.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          openModal();
+    // Refresh rate selector handler
+    if (rateSelect) {
+      rateSelect.addEventListener('change', function () {
+        pollIntervalMs = parseInt(rateSelect.value, 10) || 2000;
+        if (currentMode === 'polling') {
+          // Restart polling with new interval
+          stopPolling();
+          startPolling();
         }
       });
     }
 
-    if (modalClose) {
-      modalClose.addEventListener('click', closeModal);
-    }
-
-    if (modal) {
-      modal.addEventListener('click', function (e) {
-        if (e.target === modal) {
-          closeModal();
-        }
-      });
-    }
-
-    // Close modal on Escape key
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && modal && modal.classList.contains('open')) {
-        closeModal();
-      }
-    });
-
-    // Play button: start polling (auto-refresh every 2s)
+    // Play button: start polling
     if (playBtn) {
       playBtn.addEventListener('click', function () {
         if (!hasInteracted) {
@@ -740,26 +405,24 @@
     // Handle image load events
     if (img) {
       img.onerror = function () {
-        if (currentMode === 'paused' && !usedFallback) {
+        if (!usedFallback) {
           usedFallback = true;
           pollSrc = fallbackPollSrc;
           refreshSnapshot();
-          updateStatus('Showing latest snapshot');
+          updateStatus('Showing fallback snapshot');
+          updateSourceIndicator(false);
           return;
         }
-        if (currentMode === 'streaming') {
-          updateStatus('Stream unavailable');
-          stopDiagnosticsPolling();
-        } else if (currentMode === 'polling') {
+        if (currentMode === 'polling') {
           updateStatus('Refresh failed');
         }
+        updateSourceIndicator(false);
       };
       img.onload = function () {
-        if (currentMode === 'streaming') {
-          updateStatus('HD streaming');
-        } else if (currentMode === 'polling') {
-          updateStatus('Auto-refreshing (every 2s)');
+        if (currentMode === 'polling') {
+          updateStatus(getRefreshLabel());
         }
+        updateSourceIndicator(!usedFallback);
       };
     }
 
@@ -769,9 +432,6 @@
         if (currentMode === 'polling') {
           stopPolling();
           updateStatus('Auto-refresh paused (tab hidden)');
-        } else if (currentMode === 'streaming') {
-          stopStreaming(false);
-          updateStatus('Stream paused (tab hidden)');
         }
         stopHealthPolling();
         return;
@@ -787,6 +447,7 @@
     // Default state: paused until user interacts
     currentMode = 'paused';
     updateStatus('Paused (click ▶ to auto-refresh)');
+    updateSourceIndicator(true); // Assume live initially
 
     startHealthPolling();
     updateHealthIndicator();

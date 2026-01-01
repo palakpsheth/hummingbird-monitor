@@ -1,59 +1,58 @@
 {% extends "base.html" %}
 {% block content %}
-  <div class="page-header">
-    <h1 class="page-title">Config</h1>
-    <div class="muted page-meta">
-      Current time:
-      <span data-current-time="true" data-timezone="{{ tz_value }}">--</span>
-      · TZ: <span>{{ tz_label }}</span>
-      · Version: <span>{{ app_version }}</span>
-      · Commit: <span>{{ git_commit }}</span>
-    </div>
+<div class="page-header">
+  <h1 class="page-title">Config</h1>
+  <div class="muted page-meta">
+    Current time:
+    <span data-current-time="true" data-timezone="{{ tz_value }}">--</span>
+    · TZ: <span>{{ tz_label }}</span>
+    · Version: <span>{{ app_version }}</span>
+    · Commit: <span>{{ git_commit }}</span>
   </div>
+</div>
 
-  <div class="card">
-    <p class="muted">
-      Adjust detection sensitivity while the worker is running. Changes are saved to config.json and picked up by the worker automatically.
-    </p>
+<div class="card">
+  <p class="muted">
+    Adjust settings while the worker is running. Changes are saved to config.json and picked up by the worker
+    automatically (within a few seconds).
+  </p>
 
-    {% if saved %}
-      <div class="alert success">Settings saved. Worker will apply them within a few seconds.</div>
-    {% endif %}
+  {% if saved %}
+  <div class="alert success">Settings saved. Worker will apply them within a few seconds.</div>
+  {% endif %}
 
-    {% if errors %}
-      <div class="alert error">
-        <div><strong>Please fix the following:</strong></div>
-        <ul>
-          {% for e in errors %}
-            <li>{{ e }}</li>
-          {% endfor %}
-        </ul>
-      </div>
-    {% endif %}
+  {% if errors %}
+  <div class="alert error">
+    <div><strong>Please fix the following:</strong></div>
+    <ul>
+      {% for e in errors %}
+      <li>{{ e }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
 
-    <form method="post" action="/config" class="stack">
+  <form method="post" action="/config" class="stack">
+
+    <!-- Performance & Recording -->
+    <fieldset class="config-group">
+      <legend>Performance & Recording</legend>
+
       <label class="stack">
         <span>
-          <strong>Detection confidence:</strong>
-          <span class="muted">(0.05–0.95). Higher reduces false positives.</span>
+          <strong>FPS limit:</strong>
+          <span class="muted">(1–60). Higher = more CPU usage, better detection.</span>
         </span>
-        <input type="number" name="detect_conf" step="0.01" min="0.05" max="0.95" value="{{ form_values.detect_conf }}" required />
+        <input type="number" name="fps_limit" step="1" min="1" max="60" value="{{ form_values.fps_limit }}" required />
       </label>
 
       <label class="stack">
         <span>
-          <strong>IOU threshold:</strong>
-          <span class="muted">(0.05–0.95). Higher merges overlapping boxes more aggressively.</span>
+          <strong>Clip duration (seconds):</strong>
+          <span class="muted">(1–30). Duration of recorded video clips.</span>
         </span>
-        <input type="number" name="detect_iou" step="0.01" min="0.05" max="0.95" value="{{ form_values.detect_iou }}" required />
-      </label>
-
-      <label class="stack">
-        <span>
-          <strong>Minimum box area:</strong>
-          <span class="muted">(pixels). Ignores tiny detections and noise.</span>
-        </span>
-        <input type="number" name="min_box_area" step="1" min="1" max="200000" value="{{ form_values.min_box_area }}" required />
+        <input type="number" name="clip_seconds" step="0.5" min="1" max="30" value="{{ form_values.clip_seconds }}"
+          required />
       </label>
 
       <label class="stack">
@@ -61,31 +60,77 @@
           <strong>Cooldown seconds:</strong>
           <span class="muted">(0–120). Prevents duplicate triggers for the same visit.</span>
         </span>
-        <input type="number" name="cooldown_seconds" step="0.1" min="0" max="120" value="{{ form_values.cooldown_seconds }}" required />
+        <input type="number" name="cooldown_seconds" step="0.1" min="0" max="120"
+          value="{{ form_values.cooldown_seconds }}" required />
+      </label>
+    </fieldset>
+
+    <!-- Detection Settings -->
+    <fieldset class="config-group">
+      <legend>Detection (YOLO)</legend>
+
+      <label class="stack">
+        <span>
+          <strong>Detection confidence:</strong>
+          <span class="muted">(0.05–0.95). Higher reduces false positives.</span>
+        </span>
+        <input type="number" name="detect_conf" step="0.01" min="0.05" max="0.95" value="{{ form_values.detect_conf }}"
+          required />
       </label>
 
       <label class="stack">
         <span>
-          <strong>Timezone:</strong>
-          <span class="muted">IANA name like <code>America/Los_Angeles</code> or <code>local</code> for browser time.</span>
+          <strong>IOU threshold:</strong>
+          <span class="muted">(0.05–0.95). Higher merges overlapping boxes more aggressively.</span>
         </span>
-        <input type="text" name="timezone" value="{{ form_values.timezone }}" placeholder="local" />
+        <input type="number" name="detect_iou" step="0.01" min="0.05" max="0.95" value="{{ form_values.detect_iou }}"
+          required />
       </label>
+
+      <label class="stack">
+        <span>
+          <strong>Minimum box area:</strong>
+          <span class="muted">(pixels). Ignores tiny detections and noise.</span>
+        </span>
+        <input type="number" name="min_box_area" step="1" min="1" max="200000" value="{{ form_values.min_box_area }}"
+          required />
+      </label>
+    </fieldset>
+
+    <!-- Classification Settings -->
+    <fieldset class="config-group">
+      <legend>Classification (CLIP)</legend>
 
       <label class="stack">
         <span>
           <strong>Minimum species probability:</strong>
           <span class="muted">(0–1). Lower allows more uncertain labels.</span>
         </span>
-        <input type="number" name="min_species_prob" step="0.01" min="0" max="1" value="{{ form_values.min_species_prob }}" required />
+        <input type="number" name="min_species_prob" step="0.01" min="0" max="1"
+          value="{{ form_values.min_species_prob }}" required />
       </label>
+
+      <label class="stack">
+        <span>
+          <strong>Crop padding:</strong>
+          <span class="muted">(0–0.5). Padding fraction around bird bbox for CLIP crop. Lower = tighter crop.</span>
+        </span>
+        <input type="number" name="crop_padding" step="0.01" min="0" max="0.5" value="{{ form_values.crop_padding }}"
+          required />
+      </label>
+    </fieldset>
+
+    <!-- Re-ID Settings -->
+    <fieldset class="config-group">
+      <legend>Re-Identification</legend>
 
       <label class="stack">
         <span>
           <strong>Match threshold:</strong>
           <span class="muted">(0–1). Lower is stricter for re-ID (creates more individuals).</span>
         </span>
-        <input type="number" name="match_threshold" step="0.01" min="0" max="1" value="{{ form_values.match_threshold }}" required />
+        <input type="number" name="match_threshold" step="0.01" min="0" max="1"
+          value="{{ form_values.match_threshold }}" required />
       </label>
 
       <label class="stack">
@@ -93,51 +138,106 @@
           <strong>EMA alpha:</strong>
           <span class="muted">(0–1). Higher adapts prototypes faster; lower keeps them stable.</span>
         </span>
-        <input type="number" name="ema_alpha" step="0.01" min="0" max="1" value="{{ form_values.ema_alpha }}" required />
+        <input type="number" name="ema_alpha" step="0.01" min="0" max="1" value="{{ form_values.ema_alpha }}"
+          required />
       </label>
+    </fieldset>
 
-      <h2 style="margin-top: 12px;">Background subtraction</h2>
+    <!-- Background Subtraction -->
+    <fieldset class="config-group">
+      <legend>Background Subtraction</legend>
       <p class="muted">
         Motion-based filtering uses the configured
         <a href="/background">background image</a> to reduce false positives.
       </p>
 
       <label class="inline" style="align-items: center; gap: 10px;">
-        <input type="checkbox" name="bg_subtraction_enabled" value="1"
-               {% if form_values.bg_subtraction_enabled == "1" %}checked{% endif %} />
-        <span>
-          <strong>Enable background subtraction</strong>
-        </span>
+        <input type="checkbox" name="bg_subtraction_enabled" value="1" {% if form_values.bg_subtraction_enabled=="1"
+          %}checked{% endif %} />
+        <span><strong>Enable background subtraction</strong></span>
       </label>
 
       <label class="stack">
         <span>
-          <strong>Background motion threshold:</strong>
+          <strong>Motion threshold:</strong>
           <span class="muted">(0–255). Lower values are more sensitive to change.</span>
         </span>
-        <input type="number" name="bg_motion_threshold" step="1" min="0" max="255" value="{{ form_values.bg_motion_threshold }}" required />
+        <input type="number" name="bg_motion_threshold" step="1" min="0" max="255"
+          value="{{ form_values.bg_motion_threshold }}" required />
       </label>
 
       <label class="stack">
         <span>
-          <strong>Background motion blur:</strong>
+          <strong>Motion blur:</strong>
           <span class="muted">(odd integer). Higher values smooth noise but can miss small motion.</span>
         </span>
-        <input type="number" name="bg_motion_blur" step="2" min="1" max="99" value="{{ form_values.bg_motion_blur }}" required />
+        <input type="number" name="bg_motion_blur" step="2" min="1" max="99" value="{{ form_values.bg_motion_blur }}"
+          required />
       </label>
 
       <label class="stack">
         <span>
-          <strong>Background minimum overlap:</strong>
+          <strong>Minimum overlap:</strong>
           <span class="muted">(0–1). Fraction of detection area that must contain motion.</span>
         </span>
-        <input type="number" name="bg_min_overlap" step="0.01" min="0" max="1" value="{{ form_values.bg_min_overlap }}" required />
+        <input type="number" name="bg_min_overlap" step="0.01" min="0" max="1" value="{{ form_values.bg_min_overlap }}"
+          required />
       </label>
 
-      <div class="inline">
-        <button type="submit">Save</button>
-        <span class="muted">Saved values persist to /data/config.json.</span>
-      </div>
-    </form>
-  </div>
+      <h4>Rejected Candidate Logging</h4>
+
+      <label class="inline" style="align-items: center; gap: 10px;">
+        <input type="checkbox" name="bg_log_rejected" value="1" {% if form_values.bg_log_rejected=="1" %}checked{% endif
+          %} />
+        <span><strong>Log motion-rejected candidates</strong></span>
+      </label>
+
+      <label class="stack">
+        <span>
+          <strong>Rejected cooldown seconds:</strong>
+          <span class="muted">(0–60). Cooldown between logging rejected candidates.</span>
+        </span>
+        <input type="number" name="bg_rejected_cooldown_seconds" step="0.5" min="0" max="60"
+          value="{{ form_values.bg_rejected_cooldown_seconds }}" required />
+      </label>
+
+      <label class="inline" style="align-items: center; gap: 10px;">
+        <input type="checkbox" name="bg_rejected_save_clip" value="1" {% if form_values.bg_rejected_save_clip=="1"
+          %}checked{% endif %} />
+        <span><strong>Save clips for rejected candidates</strong></span>
+      </label>
+
+      <label class="inline" style="align-items: center; gap: 10px;">
+        <input type="checkbox" name="bg_save_masks" value="1" {% if form_values.bg_save_masks=="1" %}checked{% endif
+          %} />
+        <span><strong>Save motion masks</strong></span>
+      </label>
+
+      <label class="inline" style="align-items: center; gap: 10px;">
+        <input type="checkbox" name="bg_save_mask_overlay" value="1" {% if form_values.bg_save_mask_overlay=="1"
+          %}checked{% endif %} />
+        <span><strong>Save mask overlays</strong></span>
+      </label>
+    </fieldset>
+
+    <!-- Display Settings -->
+    <fieldset class="config-group">
+      <legend>Display</legend>
+
+      <label class="stack">
+        <span>
+          <strong>Timezone:</strong>
+          <span class="muted">IANA name like <code>America/Los_Angeles</code> or <code>local</code> for browser
+            time.</span>
+        </span>
+        <input type="text" name="timezone" value="{{ form_values.timezone }}" placeholder="local" />
+      </label>
+    </fieldset>
+
+    <div class="inline">
+      <button type="submit">Save</button>
+      <span class="muted">Saved values persist to /data/config.json.</span>
+    </div>
+  </form>
+</div>
 {% endblock %}

@@ -42,6 +42,11 @@ def _valid_form_data():
         "bg_motion_blur": "5",
         "bg_min_overlap": "0.15",
         "timezone": "local",
+        # New fields
+        "fps_limit": "8",
+        "clip_seconds": "2.0",
+        "crop_padding": "0.05",
+        "bg_rejected_cooldown_seconds": "3.0",
     }
 
 def test_config_page_rendering(tmp_path, monkeypatch):
