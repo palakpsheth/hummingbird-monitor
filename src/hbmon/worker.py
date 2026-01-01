@@ -35,6 +35,17 @@ Background subtraction extras:
 
 from __future__ import annotations
 
+import logging
+
+# Configure logging to show INFO messages (e.g. from ClipModel)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s:%(name)s:%(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+logger = logging.getLogger(__name__)
+
 import asyncio
 from collections import deque
 import os
@@ -86,7 +97,7 @@ except Exception:  # pragma: no cover
     _YOLO_AVAILABLE = False
 
 try:
-    from hbmon.openvino_utils import is_openvino_available, validate_openvino_gpu
+    from hbmon.openvino_utils import is_openvino_available, validate_openvino_gpu, force_openvino_gpu_override
     _OPENVINO_UTILS_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _OPENVINO_UTILS_AVAILABLE = False
@@ -96,6 +107,9 @@ except ImportError:  # pragma: no cover
 
     def validate_openvino_gpu() -> bool:
         return False
+
+    def force_openvino_gpu_override() -> None:
+        pass
 
 
 # Default COCO class id for 'bird'. We attempt to resolve this from the loaded model
@@ -1277,9 +1291,13 @@ def _load_yolo_model() -> Any:
         return YOLO(model_name)  # type: ignore[misc]
 
     # Check GPU for openvino-gpu backend
-    if backend == "openvino-gpu" and not validate_openvino_gpu():
-        print("[worker] WARNING: OpenVINO GPU not available, falling back to openvino-cpu")
-        backend = "openvino-cpu"
+    if backend == "openvino-gpu":
+        if validate_openvino_gpu():
+            print("[worker] Enabling OpenVINO GPU override patch...")
+            force_openvino_gpu_override()
+        else:
+            print("[worker] WARNING: OpenVINO GPU not available, falling back to openvino-cpu")
+            backend = "openvino-cpu"
 
     # Export model to OpenVINO format if needed
     ov_suffix = "_openvino_model"
@@ -1301,7 +1319,8 @@ def _load_yolo_model() -> Any:
         yolo = YOLO(model_name)  # type: ignore[misc]
         try:
             # The export() method returns the path to the exported model directory.
-            exported_model_path = yolo.export(format="openvino", half=False)
+            # Using dynamic=True allows variable input sizes (e.g. 1088x1920) without crashing OpenVINO.
+            exported_model_path = yolo.export(format="openvino", dynamic=True, half=False)
             # Move the exported model to our custom cache directory.
             shutil.move(str(exported_model_path), str(ov_model_dir))
             print("[worker] OpenVINO model exported successfully")
@@ -1373,13 +1392,14 @@ async def run_worker() -> None:
     # Start dispatcher
     queue: asyncio.Queue = asyncio.Queue()
     # Initialize CLIP model with backend selection
+    # Initialize CLIP model with backend selection
     # Priority: HBMON_DEVICE > HBMON_INFERENCE_BACKEND > "cpu"
     clip_backend = os.getenv("HBMON_DEVICE") or os.getenv("HBMON_INFERENCE_BACKEND", "cpu")
     clip = ClipModel(backend=clip_backend)
     asyncio.create_task(processing_dispatcher(queue, clip))
 
     env = os.getenv("HBMON_SPECIES_LIST", "").strip()
-    if env:
+    if env and clip is not None:
         import re
         labels = [s.strip() for s in re.split(r",\s*", env) if s.strip()]
         if labels:
@@ -1449,7 +1469,19 @@ async def run_worker() -> None:
         return settings
 
     consecutive_failures = 0
-    print("[worker] Producer loop started.")
+    # Determine YOLO backend label for logging
+    _bend = (os.getenv("HBMON_YOLO_BACKEND") or os.getenv("HBMON_INFERENCE_BACKEND", "pytorch")).lower()
+    if "openvino" in _bend:
+        if "gpu" in _bend:
+            yolo_device_label = "OpenVINO-GPU"
+        else:
+            yolo_device_label = "OpenVINO-CPU"
+    elif "cuda" in _bend:
+        yolo_device_label = "PyTorch-CUDA"
+    else:
+        yolo_device_label = "PyTorch-CPU"
+
+    print(f"[worker] Producer loop started. YOLO backend: {yolo_device_label}")
     while True:
         s = get_settings()
         if not s.rtsp_url:
@@ -1513,8 +1545,14 @@ async def run_worker() -> None:
              imgsz_env = os.getenv("HBMON_YOLO_IMGSZ", "1088,1920").strip()
              predict_imgsz = resolve_predict_imgsz(imgsz_env, roi_frame.shape)
 
+             t0_yolo = time.perf_counter()
              results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=[bird_class_id], imgsz=predict_imgsz, verbose=yolo_verbose)
+             dt_yolo = (time.perf_counter() - t0_yolo) * 1000
+             
+             if yolo_verbose:
+                  logger.info(f"YOLO Inference ({yolo_device_label}): {dt_yolo:.2f}ms")
         except Exception:
+             logger.error("YOLO inference failed", exc_info=True)
              await asyncio.sleep(0.5)
              continue
 

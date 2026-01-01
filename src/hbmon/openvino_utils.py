@@ -112,6 +112,57 @@ def get_recommended_backend() -> str:
     return "pytorch"
 
 
+def force_openvino_gpu_override() -> None:
+    """
+    Monkeypatch OpenVINO Core.compile_model to force GPU execution.
+    
+    This is required because the ultralytics library defaults to 'AUTO' or 'CPU'
+    when using the OpenVINO backend, and its own device selection logic triggers
+    errors if we try to explicitly pass device='GPU' (due to missing CUDA).
+    
+    This patch intercepts the low-level OpenVINO compilation call and redirects
+    'AUTO' or 'CPU' requests to 'GPU'.
+    """
+    if not _OPENVINO_AVAILABLE:
+        return
+
+    try:
+        from openvino.runtime import Core  # type: ignore
+        import openvino.runtime as ov_runtime  # type: ignore
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        # Avoid double-patching
+        if getattr(Core, "_is_hbmon_patched", False):
+            return
+
+        original_compile_model = Core.compile_model
+
+        def patched_compile_model(self, model, device_name=None, config=None):
+            # If logic requests AUTO (standard for ultralytics) or CPU, upgrade to GPU
+            target = "GPU"
+            
+            # Simple check: if we are forcing GPU, we override generic requests
+            if device_name in (None, "AUTO", "CPU"):
+                logger.info(f"OpenVINO: Intercepting device='{device_name}' -> forcing '{target}' (Intel GPU)")
+                device_name = target
+            
+            return original_compile_model(self, model, device_name, config)
+
+        # Apply patch to class
+        Core.compile_model = patched_compile_model
+        Core._is_hbmon_patched = True  # type: ignore
+        
+        # Also patch the module-level alias if it exists
+        if hasattr(ov_runtime, "Core"):
+            ov_runtime.Core.compile_model = patched_compile_model
+
+        print("[openvino_utils] Patched OpenVINO to force GPU execution")
+
+    except Exception as e:
+        print(f"[openvino_utils] Failed to patch OpenVINO: {e}")
+
 # ---------------------------------------------------------------------------
 # CLIP Model Conversion and Loading
 # ---------------------------------------------------------------------------
@@ -194,19 +245,39 @@ def convert_clip_to_openvino(
         
         logger.info(f"Converting CLIP model {model_name} ({pretrained}) to OpenVINO IR...")
         
+        import torch
+
+        # Define wrappers to ensure correct tracing of sub-modules
+        class VisualWrapper(torch.nn.Module):
+            def __init__(self, model):
+                super().__init__()
+                self.model = model
+            def forward(self, x):
+                return self.model(x)
+
+        class TextWrapper(torch.nn.Module):
+            def __init__(self, model):
+                super().__init__()
+                self.model = model
+            def forward(self, x):
+                return self.model.encode_text(x)
+
         # Convert image encoder
-        logger.info("Converting CLIP image encoder...")
-        image_model_ov = convert_model(
-            pytorch_model.visual,
-            example_input=example_image_input,
-        )
+        logger.info("Tracing and converting CLIP image encoder...")
+        # We manually trace with check_trace=False to avoid issues with some specific
+        # OpenCLIP ops diverging during trace validation.
+        visual_wrapper = VisualWrapper(pytorch_model.visual)
+        traced_visual = torch.jit.trace(visual_wrapper, example_image_input, check_trace=False)
+        
+        # Pass traced model to convert_model WITHOUT example_input to avoid re-tracing
+        image_model_ov = convert_model(traced_visual)
         
         # Convert text encoder  
-        logger.info("Converting CLIP text encoder...")
-        text_model_ov = convert_model(
-            pytorch_model.encode_text,
-            example_input=example_text_input,
-        )
+        logger.info("Tracing and converting CLIP text encoder...")
+        text_wrapper = TextWrapper(pytorch_model)
+        traced_text = torch.jit.trace(text_wrapper, example_text_input, check_trace=False)
+        
+        text_model_ov = convert_model(traced_text)
         
         # Save models to cache
         logger.info(f"Saving OpenVINO CLIP models to {cache_dir}...")

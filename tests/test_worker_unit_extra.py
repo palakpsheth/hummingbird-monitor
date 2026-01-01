@@ -76,7 +76,7 @@ def test_load_yolo_model_export_path(mock_rmtree, mock_move, mock_ov_av, mock_yo
         assert expected_parent.exists()
         
         # Verify export was called
-        mock_yolo_instance.export.assert_called_once_with(format="openvino", half=False)
+        mock_yolo_instance.export.assert_called_once_with(format="openvino", dynamic=True, half=False)
         
         # Verify shutil.move was called with the correct arguments
         mock_move.assert_called_once_with("/tmp/fake_export_path", str(expected_path))

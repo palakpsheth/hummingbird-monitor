@@ -299,6 +299,13 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
   - Lower for CPU-constrained machines
   - Typical CPU sweet spot: **6–10**
 
+### YOLO Model Selection
+- `HBMON_YOLO_MODEL` (default `yolo11n.pt`)
+  - **yolo11n.pt (Nano)**: Fastest, lowest resource usage. Best for CPU-only setups.
+  - **yolo11s.pt (Small)**: **Recommended for Intel GPU**. ~1.5x faster on OpenVINO GPU than Nano on CPU, with significantly better accuracy.
+  - **yolo11m.pt (Medium)**: Higher accuracy but slower. Requires strong GPU.
+  - Note: Changing the model requires a container restart. The worker will automatically download and export the new model on first run.
+
 ### Event frequency control
 - `HBMON_COOLDOWN_SECONDS` (default ~2–6)
   - Increase if one visit creates many events
