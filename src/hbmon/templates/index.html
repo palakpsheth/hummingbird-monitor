@@ -197,7 +197,7 @@
       if (!img) return defaultPollSrc;
       var dataSrc = img.getAttribute('data-poll-src');
       if (!dataSrc) return defaultPollSrc;
-      // Validate that the value is a safe URL path (prevents XSS)
+      // Validate that the value is a same-origin /api/ URL path to avoid unsafe redirects
       try {
         var url = new URL(dataSrc, window.location.origin);
         // Only allow same-origin URLs with /api/ paths
