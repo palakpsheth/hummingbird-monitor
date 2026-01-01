@@ -631,6 +631,36 @@ def _timezone_label(tz: str | None) -> str:
     return "Browser local" if clean.lower() == "local" else clean
 
 
+def _safe_internal_url(path: str, resource_id: int | None = None) -> str:
+    """
+    Construct a safe internal URL from a base path and optional resource ID.
+    
+    This function ensures URLs are constructed safely to prevent open redirect
+    vulnerabilities flagged by CodeQL. Path must start with "/" and resource_id
+    is validated as an integer.
+    
+    Args:
+        path: Base path (e.g., "/observations", "/individuals")
+        resource_id: Optional integer ID to append to path
+        
+    Returns:
+        Safe internal URL path
+        
+    Examples:
+        _safe_internal_url("/observations", 123) -> "/observations/123"
+        _safe_internal_url("/individuals") -> "/individuals"
+    """
+    if not path.startswith("/"):
+        raise ValueError(f"Path must start with '/': {path}")
+    
+    if resource_id is not None:
+        # Validate resource_id is an integer to prevent injection
+        validated_id = int(resource_id)
+        return f"{path}/{validated_id}"
+    
+    return path
+
+
 def _sanitize_redirect_path(raw: str | None, default: str = "/observations") -> str:
     """
     Sanitize a user-provided redirect path so that only internal, absolute
@@ -1816,7 +1846,7 @@ def make_app() -> Any:
                 o.set_extra(extra_copy)
         await _commit_with_retry(db)
 
-        return RedirectResponse(url=f"/observations/{obs_id}", status_code=303)
+        return RedirectResponse(url=_safe_internal_url("/observations", obs_id), status_code=303)
 
     @app.post("/observations/{obs_id}/delete")
     async def delete_observation(
@@ -2058,7 +2088,7 @@ def make_app() -> Any:
                 c.set_extra(extra_copy)
 
         await _commit_with_retry(db)
-        return RedirectResponse(url=f"/candidates/{candidate_id}", status_code=303)
+        return RedirectResponse(url=_safe_internal_url("/candidates", candidate_id), status_code=303)
 
     @app.post("/candidates/{candidate_id}/export_integration_test")
     async def export_candidate_integration_test(
@@ -2593,7 +2623,7 @@ def make_app() -> Any:
         ind.name = new_name[:128]
         await db.commit()
 
-        return RedirectResponse(url=f"/individuals/{individual_id}", status_code=303)
+        return RedirectResponse(url=_safe_internal_url("/individuals", individual_id), status_code=303)
 
     @app.post("/individuals/{individual_id}/delete")
     async def delete_individual(
@@ -2645,14 +2675,14 @@ def make_app() -> Any:
         ).scalars().all()
 
         if not embs:
-            return RedirectResponse(url=f"/individuals/{individual_id}", status_code=303)
+            return RedirectResponse(url=_safe_internal_url("/individuals", individual_id), status_code=303)
 
         vecs = [e.get_vec() for e in embs]
         proto = l2_normalize(sum(vecs) / max(1, len(vecs)))
         ind.set_prototype(proto)
         await db.commit()
 
-        return RedirectResponse(url=f"/individuals/{individual_id}", status_code=303)
+        return RedirectResponse(url=_safe_internal_url("/individuals", individual_id), status_code=303)
 
     @app.get("/individuals/{individual_id}/split_review", response_class=HTMLResponse)
     async def split_review(
@@ -2753,7 +2783,7 @@ def make_app() -> Any:
         obs_to_b = [oid for (oid, side) in assign.items() if side == "B"]
         if not obs_to_b:
             # no-op
-            return RedirectResponse(url=f"/individuals/{individual_id}", status_code=303)
+            return RedirectResponse(url=_safe_internal_url("/individuals", individual_id), status_code=303)
 
         # Create individual B
         ind_b = Individual(name=f"(split from {ind_a.id})", visit_count=0, last_seen_at=None)
@@ -2808,7 +2838,7 @@ def make_app() -> Any:
 
         await db.commit()
 
-        return RedirectResponse(url=f"/individuals/{ind_b.id}", status_code=303)
+        return RedirectResponse(url=_safe_internal_url("/individuals", ind_b.id), status_code=303)
 
     @app.get("/config", response_class=HTMLResponse)
     async def config_page(request: Request) -> HTMLResponse:

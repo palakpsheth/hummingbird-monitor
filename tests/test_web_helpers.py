@@ -451,6 +451,56 @@ def test_sanitize_redirect_path(monkeypatch):
     assert web._sanitize_redirect_path("/path\nInjected: header") == "/observations"
 
 
+def test_safe_internal_url(monkeypatch):
+    """Test _safe_internal_url helper for constructing safe redirect URLs."""
+    web = _import_web(monkeypatch)
+    
+    # Valid path without resource_id
+    assert web._safe_internal_url("/observations") == "/observations"
+    assert web._safe_internal_url("/candidates") == "/candidates"
+    assert web._safe_internal_url("/individuals") == "/individuals"
+    
+    # Valid path with integer resource_id
+    assert web._safe_internal_url("/observations", 123) == "/observations/123"
+    assert web._safe_internal_url("/individuals", 456) == "/individuals/456"
+    assert web._safe_internal_url("/candidates", 789) == "/candidates/789"
+    
+    # URL construction correctness with various ID values
+    assert web._safe_internal_url("/observations", 1) == "/observations/1"
+    assert web._safe_internal_url("/observations", 0) == "/observations/0"
+    assert web._safe_internal_url("/observations", 999999) == "/observations/999999"
+    
+    # Path validation - path must start with "/"
+    with pytest.raises(ValueError, match="Path must start with"):
+        web._safe_internal_url("observations", 123)
+    
+    with pytest.raises(ValueError, match="Path must start with"):
+        web._safe_internal_url("relative/path")
+    
+    with pytest.raises(ValueError, match="Path must start with"):
+        web._safe_internal_url("")
+    
+    # resource_id validation - non-integer values should raise ValueError
+    with pytest.raises(ValueError):
+        web._safe_internal_url("/observations", "not_an_int")
+    
+    with pytest.raises(ValueError):
+        web._safe_internal_url("/observations", "123; DROP TABLE")
+    
+    # Lists and dicts should raise TypeError (not ValueError) from int()
+    with pytest.raises(TypeError):
+        web._safe_internal_url("/observations", [123])
+    
+    with pytest.raises(TypeError):
+        web._safe_internal_url("/observations", {"id": 123})
+    
+    # String numbers should be converted to integers (defensive)
+    assert web._safe_internal_url("/observations", "456") == "/observations/456"
+    
+    # Float values should be truncated to integers
+    assert web._safe_internal_url("/observations", 123.9) == "/observations/123"
+
+
 def test_sanitize_case_name(monkeypatch):
     web = _import_web(monkeypatch)
     assert web._sanitize_case_name(None, "fallback") == "fallback"
