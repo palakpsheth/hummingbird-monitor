@@ -2838,7 +2838,7 @@ def make_app() -> Any:
 
         await db.commit()
 
-        return RedirectResponse(url=f"/individuals/{ind_b.id}", status_code=303)
+        return RedirectResponse(url=_safe_internal_url("/individuals", ind_b.id), status_code=303)
 
     @app.get("/config", response_class=HTMLResponse)
     async def config_page(request: Request) -> HTMLResponse:
