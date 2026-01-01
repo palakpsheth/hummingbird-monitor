@@ -1233,7 +1233,7 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
             logger.info(f"Saved observation {obs.id} (ind={individual_id})")
             
             if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
-                 logger.debug(f"[DEBUG] Processing details: individual={individual_id}, species={species_label}({species_prob:.2f}), match_score={match_score:.2f}")
+                 logger.debug(f"Processing details: individual={individual_id}, species={species_label}({species_prob:.2f}), match_score={match_score:.2f}")
 
     except Exception as e:
         logger.error(f"task failed: {e}", exc_info=True)
@@ -1559,7 +1559,7 @@ async def run_worker() -> None:
             continue
 
         if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
-             logger.debug(f"[DEBUG-YOLO] Found {len(detections)} bird detections.")
+             logger.debug(f"Found {len(detections)} bird detections.")
 
         # Check motion overlap
         kept_entries = []
@@ -1581,7 +1581,7 @@ async def run_worker() -> None:
         elif os.getenv("HBMON_DEBUG_BG") == "1" and rejected_entries:
             # Optionally log why detections were rejected
             for d, stats in rejected_entries:
-                logger.debug(f"[DEBUG-BG] REJECTED: p={d.conf:.2f} area={d.area} overlap={stats['bbox_overlap_ratio']:.2f} (min={s.bg_min_overlap})")
+                logger.debug(f"REJECTED: p={d.conf:.2f} area={d.area} overlap={stats['bbox_overlap_ratio']:.2f} (min={s.bg_min_overlap})")
 
         timestamp = time.time()
 
