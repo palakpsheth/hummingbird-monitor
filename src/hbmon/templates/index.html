@@ -190,8 +190,27 @@
     var usedFallback = false;
 
     var defaultPollSrc = '/api/snapshot.jpg';
-    var pollSrc = img ? (img.getAttribute('data-poll-src') || defaultPollSrc) : defaultPollSrc;
     var fallbackPollSrc = '/api/frame.jpg';
+
+    // Safely extract and validate pollSrc from DOM attribute
+    function getSafePollSrc() {
+      if (!img) return defaultPollSrc;
+      var dataSrc = img.getAttribute('data-poll-src');
+      if (!dataSrc) return defaultPollSrc;
+      // Validate that the value is a safe URL path (prevents XSS)
+      try {
+        var url = new URL(dataSrc, window.location.origin);
+        // Only allow same-origin URLs with /api/ paths
+        if (url.origin === window.location.origin && url.pathname.startsWith('/api/')) {
+          return url.pathname;
+        }
+      } catch (e) {
+        // Invalid URL, fall back to default
+      }
+      return defaultPollSrc;
+    }
+
+    var pollSrc = getSafePollSrc();
 
     function buildSnapshotSrc(base) {
       if (!base) return base;
