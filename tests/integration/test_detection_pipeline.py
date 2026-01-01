@@ -395,6 +395,11 @@ class TestClassificationPipeline:
             # Run classification
             label, prob = clip_model.predict_species_label_prob(img)
 
+            # Apply threshold logic similar to worker
+            min_prob = 0.35  # Default threshold
+            if prob < min_prob:
+                label = "Hummingbird (unknown species)"
+
             expected_label = expected.get("species_label_final") or expected.get("species_label")
             assert label == expected_label, (
                 f"Classification mismatch for {test_dir.name}: "

@@ -197,7 +197,11 @@ def get_clip_model_path(model_name: str, pretrained: str) -> tuple[str, str]:
     
     cache_dir = Path(get_clip_cache_dir())
     # Create a safe filename from model name and pretrained source
-    safe_name = f"{model_name}_{pretrained}".replace("/", "_").replace(":", "_")
+    if pretrained:
+        safe_name = f"{model_name}_{pretrained}"
+    else:
+        safe_name = model_name
+    safe_name = safe_name.replace("/", "_").replace(":", "_")
     
     xml_path = cache_dir / f"{safe_name}.xml"
     bin_path = cache_dir / f"{safe_name}.bin"

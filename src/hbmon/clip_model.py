@@ -15,8 +15,8 @@ Design notes:
 
 Environment variables (optional):
 - HBMON_DEVICE: "cpu" (default), "cuda", "openvino-cpu", or "openvino-gpu"
-- HBMON_CLIP_MODEL: e.g. "ViT-B-32" (default)
-- HBMON_CLIP_PRETRAINED: e.g. "openai" (default)
+- HBMON_CLIP_MODEL: e.g. "hf-hub:imageomics/bioclip" (default)
+- HBMON_CLIP_PRETRAINED: "" (default for hf-hub) or "openai" (for standard models)
 - HBMON_CLIP_PROMPT_PREFIX: e.g. "a photo of " (default)
 """
 
@@ -226,6 +226,10 @@ def _load_openclip(model_name: str, pretrained: str, device: str) -> tuple[Any, 
         lower = model_name.lower()
     except Exception:
         lower = ""
+    # If pretrained is None/empty, open_clip might expect it to be omitted or None
+    if not pretrained:
+        pretrained = None
+
     if pretrained and isinstance(pretrained, str):
         if "quickgelu" not in lower:
             # Heuristically adjust to the quickgelu variant when using a known
@@ -290,8 +294,12 @@ class ClipModel:
 
         # Backend selection: prefer explicit backend, fall back to device (for compatibility)
         self.backend = backend or device or _get_env("HBMON_DEVICE", "cpu")
-        self.model_name = model_name or _get_env("HBMON_CLIP_MODEL", "ViT-B-32")
-        self.pretrained = pretrained or _get_env("HBMON_CLIP_PRETRAINED", "openai")
+        self.model_name = model_name or _get_env("HBMON_CLIP_MODEL", "hf-hub:imageomics/bioclip")
+        
+        # For hf-hub models, the weights are implied by the model name, so default pretrained is empty.
+        # For standard architecture names (e.g. ViT-B-32), we default to "openai".
+        default_pretrained = "" if self.model_name.startswith("hf-hub:") else "openai"
+        self.pretrained = pretrained or _get_env("HBMON_CLIP_PRETRAINED", default_pretrained)
         self.prompt_prefix = prompt_prefix or _get_env("HBMON_CLIP_PROMPT_PREFIX", "a photo of ")
 
         self.labels = labels or list(DEFAULT_SPECIES)

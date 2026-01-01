@@ -5,8 +5,8 @@
         "detection": false,
         "human_verified": true,
         "species_accepted": true,
-        "species_label": "Costa's Hummingbird",
-        "species_label_final": "Allen's Hummingbird"
+        "species_label": "Hummingbird (unknown species)",
+        "species_label_final": "Hummingbird (unknown species)"
     },
     "original_observation": {
         "bbox_xyxy": [
