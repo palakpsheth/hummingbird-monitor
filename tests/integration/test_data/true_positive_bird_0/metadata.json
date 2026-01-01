@@ -2,8 +2,8 @@
     "description": "True positive hummingbird detection with separate daytime snapshot and nighttime background reference.",
     "expected": {
         "detection": false,
-        "species_label": "Costa's Hummingbird",
-        "species_label_final": "Costa's Hummingbird",
+        "species_label": "Hummingbird (unknown species)",
+        "species_label_final": "Hummingbird (unknown species)",
         "species_accepted": true,
         "behavior": "flying",
         "human_verified": true

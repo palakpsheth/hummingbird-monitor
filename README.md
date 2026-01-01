@@ -299,6 +299,13 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
   - Lower for CPU-constrained machines
   - Typical CPU sweet spot: **6–10**
 
+### YOLO Model Selection
+- `HBMON_YOLO_MODEL` (default `yolo11n.pt`)
+  - **yolo11n.pt (Nano)**: Fastest, lowest resource usage. Best for CPU-only setups.
+  - **yolo11s.pt (Small)**: **Recommended for Intel GPU**. ~1.5x faster on OpenVINO GPU than Nano on CPU, with significantly better accuracy.
+  - **yolo11m.pt (Medium)**: Higher accuracy but slower. Requires strong GPU.
+  - Note: Changing the model requires a container restart. The worker will automatically download and export the new model on first run.
+
 ### Event frequency control
 - `HBMON_COOLDOWN_SECONDS` (default ~2–6)
   - Increase if one visit creates many events
@@ -311,7 +318,9 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 > Note: the current worker records a **post-trigger** clip (starting right after the detection).
 > A true **pre-trigger buffer** (ring buffer of frames) is a great next upgrade; see “Ideas for improvement”.
 
-### Species classification (CLIP)
+### Species classification (BioCLIP)
+- **Default Model**: `hf-hub:imageomics/bioclip` (BioCLIP).
+- `HF_TOKEN` (optional): Set in `.env` to avoid Hugging Face Hub rate limits or access gated models.
 - `HBMON_MIN_SPECIES_PROB` (default ~0.35)
   - Raise if species labels are noisy
   - Lower if too many are forced into “unknown”
@@ -552,7 +561,16 @@ Available backends:
 > **First Run**: Model conversion happens at worker startup and takes 30-60 seconds. 
 > Subsequent runs use cached models and start immediately.
 
-#### 3) Build Docker image with Intel GPU runtime (optional)
+#### 3) OpenVINO Caching (Optimization)
+
+The monitor uses a unified cache directory to accelerate startup and persist converted models:
+- **Location**: `/data/openvino_cache` (configured via `OPENVINO_CACHE_DIR`)
+- **YOLO IR & CLIP IR**: Converted models are stored here to avoid re-conversion on every restart.
+- **Compiled Blobs**: OpenVINO's built-in model caching is enabled, storing device-specific binary blobs for instant loading without re-compilation.
+
+Ensure this directory is persisted in your `docker-compose.yml` (it is by default via the `./data` volume).
+
+#### 4) Build Docker image with Intel GPU runtime (optional)
 
 **OpenVINO is always installed** in the Docker image for CPU inference (which is 1.5-2x faster than PyTorch). However, the **Intel GPU runtime** is optional to keep the default image smaller.
 

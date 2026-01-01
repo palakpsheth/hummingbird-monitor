@@ -15,8 +15,8 @@ Design notes:
 
 Environment variables (optional):
 - HBMON_DEVICE: "cpu" (default), "cuda", "openvino-cpu", or "openvino-gpu"
-- HBMON_CLIP_MODEL: e.g. "ViT-B-32" (default)
-- HBMON_CLIP_PRETRAINED: e.g. "openai" (default)
+- HBMON_CLIP_MODEL: e.g. "hf-hub:imageomics/bioclip" (default)
+- HBMON_CLIP_PRETRAINED: "" (default for hf-hub) or "openai" (for standard models)
 - HBMON_CLIP_PROMPT_PREFIX: e.g. "a photo of " (default)
 """
 
@@ -226,6 +226,10 @@ def _load_openclip(model_name: str, pretrained: str, device: str) -> tuple[Any, 
         lower = model_name.lower()
     except Exception:
         lower = ""
+    # If pretrained is None/empty, open_clip might expect it to be omitted or None
+    if not pretrained:
+        pretrained = None
+
     if pretrained and isinstance(pretrained, str):
         if "quickgelu" not in lower:
             # Heuristically adjust to the quickgelu variant when using a known
@@ -290,8 +294,12 @@ class ClipModel:
 
         # Backend selection: prefer explicit backend, fall back to device (for compatibility)
         self.backend = backend or device or _get_env("HBMON_DEVICE", "cpu")
-        self.model_name = model_name or _get_env("HBMON_CLIP_MODEL", "ViT-B-32")
-        self.pretrained = pretrained or _get_env("HBMON_CLIP_PRETRAINED", "openai")
+        self.model_name = model_name or _get_env("HBMON_CLIP_MODEL", "hf-hub:imageomics/bioclip")
+        
+        # For hf-hub models, the weights are implied by the model name, so default pretrained is empty.
+        # For standard architecture names (e.g. ViT-B-32), we default to "openai".
+        default_pretrained = "" if self.model_name.startswith("hf-hub:") else "openai"
+        self.pretrained = pretrained or _get_env("HBMON_CLIP_PRETRAINED", default_pretrained)
         self.prompt_prefix = prompt_prefix or _get_env("HBMON_CLIP_PROMPT_PREFIX", "a photo of ")
 
         self.labels = labels or list(DEFAULT_SPECIES)
@@ -361,6 +369,7 @@ class ClipModel:
         
         # Select OpenVINO device
         ov_device = select_clip_device(self.backend)
+        self.ov_device = ov_device
         logger.info(f"Loading CLIP model: {self.model_name} ({self.pretrained}) - OpenVINO {ov_device} backend")
         
         # Try to load cached OpenVINO model
@@ -422,8 +431,8 @@ class ClipModel:
         
         # Compile for target device
         logger.info(f"Compiling OpenVINO models for {ov_device}...")
-        from openvino import Core  # type: ignore
-        core = Core()
+        from hbmon.openvino_utils import get_core
+        core = get_core()
         self._ov_image_model = core.compile_model(image_model_ov, ov_device)
         self._ov_text_model = core.compile_model(text_model_ov, ov_device)
         
@@ -572,6 +581,10 @@ class ClipModel:
     
     def _predict_logits_pytorch(self, image_bgr: np.ndarray, bbox_xyxy: tuple[int, int, int, int] | None) -> np.ndarray:
         """Predict logits using PyTorch backend."""
+        import time
+        import logging
+        t0 = time.perf_counter()
+        
         img = crop_bgr(image_bgr, bbox_xyxy)
         pil = _ensure_rgb_pil(img)
 
@@ -584,10 +597,17 @@ class ClipModel:
             # text: [N, D], image: [1, D] => logits: [1, N]
             logits_t = (image_feat @ self._text_features.T).squeeze(0)  # [N]
             logits = logits_t.detach().cpu().numpy().astype(np.float64, copy=False)
+            
+        dt = (time.perf_counter() - t0) * 1000
+        logging.getLogger(__name__).info(f"CLIP Inference (PyTorch-{self.device.upper()}): {dt:.2f}ms")
         return logits
     
     def _predict_logits_openvino(self, image_bgr: np.ndarray, bbox_xyxy: tuple[int, int, int, int] | None) -> np.ndarray:
         """Predict logits using OpenVINO backend."""
+        import time
+        import logging
+        t0 = time.perf_counter()
+        
         img = crop_bgr(image_bgr, bbox_xyxy)
         pil = _ensure_rgb_pil(img)
         
@@ -598,10 +618,13 @@ class ClipModel:
         img_feat = self._ov_image_model(inp.numpy())[0]  # Get first output
         img_feat_torch = torch.from_numpy(img_feat).float()
         img_feat_torch = _l2_normalize_torch(img_feat_torch)
-        
-        # cosine similarities to per-class text features
+
+        # Calculate logits using cached text features (which are already torch tensors)
         logits_t = (img_feat_torch @ self._text_features.T).squeeze(0)
         logits = logits_t.numpy().astype(np.float64, copy=False)
+        
+        dt = (time.perf_counter() - t0) * 1000
+        logging.getLogger(__name__).info(f"CLIP Inference (OpenVINO-{self.ov_device}): {dt:.2f}ms")
         return logits
 
     def predict_species_label_prob(

@@ -35,6 +35,17 @@ Background subtraction extras:
 
 from __future__ import annotations
 
+import logging
+
+# Configure logging to show INFO messages (e.g. from ClipModel)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s:%(name)s:%(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+logger = logging.getLogger(__name__)
+
 import asyncio
 from collections import deque
 import os
@@ -86,7 +97,7 @@ except Exception:  # pragma: no cover
     _YOLO_AVAILABLE = False
 
 try:
-    from hbmon.openvino_utils import is_openvino_available, validate_openvino_gpu
+    from hbmon.openvino_utils import is_openvino_available, validate_openvino_gpu, force_openvino_gpu_override
     _OPENVINO_UTILS_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _OPENVINO_UTILS_AVAILABLE = False
@@ -96,6 +107,9 @@ except ImportError:  # pragma: no cover
 
     def validate_openvino_gpu() -> bool:
         return False
+
+    def force_openvino_gpu_override() -> None:
+        pass
 
 
 # Default COCO class id for 'bird'. We attempt to resolve this from the loaded model
@@ -1136,7 +1150,7 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
             )
             clip_rel = str(recorded_path.relative_to(media_root))
         except Exception as e:
-            print(f"[worker] clip record failed: {e}")
+            logger.warning(f"clip record failed: {e}")
 
         if background_img is not None:
             await _write_jpeg_async(snap_background_path, background_img)
@@ -1216,15 +1230,13 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
                 e.set_vec(emb)
                 db.add(e)
             
-            print(f"[worker] Saved observation {obs.id} (ind={individual_id})")
+            logger.info(f"Saved observation {obs.id} (ind={individual_id})")
             
             if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
-                 print(f"[worker] [DEBUG] Processing details: individual={individual_id}, species={species_label}({species_prob:.2f}), match_score={match_score:.2f}")
+                 logger.debug(f"Processing details: individual={individual_id}, species={species_label}({species_prob:.2f}), match_score={match_score:.2f}")
 
     except Exception as e:
-        print(f"[worker] task failed: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"task failed: {e}", exc_info=True)
     finally:
         sem.release()
 
@@ -1236,7 +1248,7 @@ async def processing_dispatcher(queue: asyncio.Queue, clip: ClipModel) -> None:
     max_tasks = int(os.getenv("HBMON_WORKER_MAX_CONCURRENT_TASKS", "4"))
     sem = asyncio.Semaphore(max_tasks)
     media_root = media_dir()
-    print(f"[worker] Dispatcher started (max_tasks={max_tasks})")
+    logger.info(f"Dispatcher started (max_tasks={max_tasks})")
     while True:
         item = await queue.get()
         await sem.acquire()
@@ -1267,47 +1279,64 @@ def _load_yolo_model() -> Any:
 
     # PyTorch backend (default)
     if backend == "pytorch":
-        print(f"[worker] Loading YOLO model: {model_name} (PyTorch backend)")
+        logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
         return YOLO(model_name)  # type: ignore[misc]
 
     # OpenVINO backends
     if not is_openvino_available():
-        print("[worker] WARNING: OpenVINO not available, falling back to PyTorch")
-        print(f"[worker] Loading YOLO model: {model_name} (PyTorch backend)")
+        logger.warning("OpenVINO not available, falling back to PyTorch")
+        logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
         return YOLO(model_name)  # type: ignore[misc]
 
     # Check GPU for openvino-gpu backend
-    if backend == "openvino-gpu" and not validate_openvino_gpu():
-        print("[worker] WARNING: OpenVINO GPU not available, falling back to openvino-cpu")
-        backend = "openvino-cpu"
+    if backend == "openvino-gpu":
+        if validate_openvino_gpu():
+            logger.info("Enabling OpenVINO GPU override patch...")
+            force_openvino_gpu_override()
+        else:
+            logger.warning("OpenVINO GPU not available, falling back to openvino-cpu")
+            backend = "openvino-cpu"
 
     # Export model to OpenVINO format if needed
     ov_suffix = "_openvino_model"
     model_base = model_name.replace(".pt", "")
-    yolo_config_dir = Path(os.getenv("YOLO_CONFIG_DIR", "/data/yolo"))
-    ov_model_dir = yolo_config_dir / f"{model_base}{ov_suffix}"
+    
+    # Try to use the centralized OpenVINO cache directory
+    ov_cache_dir = os.getenv("OPENVINO_CACHE_DIR")
+    if ov_cache_dir:
+        ov_model_dir = Path(ov_cache_dir) / "yolo" / f"{model_base}{ov_suffix}"
+    else:
+        yolo_config_dir = Path(os.getenv("YOLO_CONFIG_DIR", "/data/yolo"))
+        ov_model_dir = yolo_config_dir / f"{model_base}{ov_suffix}"
+    
+    # Ensure parent directory exists for export
+    ov_model_dir.parent.mkdir(parents=True, exist_ok=True)
 
     if not ov_model_dir.exists():
-        print(f"[worker] Exporting {model_name} to OpenVINO format...")
+        logger.info(f"Exporting {model_name} to OpenVINO format...")
         yolo = YOLO(model_name)  # type: ignore[misc]
         try:
-            yolo.export(format="openvino", half=False)
-            print("[worker] OpenVINO model exported successfully")
+            # The export() method returns the path to the exported model directory.
+            # Using dynamic=True allows variable input sizes (e.g. 1088x1920) without crashing OpenVINO.
+            exported_model_path = yolo.export(format="openvino", dynamic=True, half=False)
+            # Move the exported model to our custom cache directory.
+            shutil.move(str(exported_model_path), str(ov_model_dir))
+            logger.info("OpenVINO model exported successfully")
         except Exception as e:
-            print(f"[worker] WARNING: OpenVINO export failed: {e}")
-            print(f"[worker] Loading YOLO model: {model_name} (PyTorch backend)")
-            return YOLO(model_name)  # type: ignore[misc]
+            logger.warning(f"OpenVINO export failed: {e}")
+            logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
+            return yolo
 
     # Load OpenVINO model
     device = "GPU" if backend == "openvino-gpu" else "CPU"
-    print(f"[worker] Loading YOLO model: {ov_model_dir} (OpenVINO {device} backend)")
+    logger.info(f"Loading YOLO model: {ov_model_dir} (OpenVINO {device} backend)")
 
     try:
         yolo = YOLO(str(ov_model_dir))  # type: ignore[misc]
         return yolo
     except Exception as e:
-        print(f"[worker] WARNING: Failed to load OpenVINO model: {e}")
-        print(f"[worker] Loading YOLO model: {model_name} (PyTorch backend)")
+        logger.warning(f"Failed to load OpenVINO model: {e}")
+        logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
         return YOLO(model_name)  # type: ignore[misc]
 
 
@@ -1354,12 +1383,13 @@ async def run_worker() -> None:
 
     if bird_class_id is None:
         bird_class_id = int(os.getenv('HBMON_BIRD_CLASS_ID', str(DEFAULT_BIRD_CLASS_ID)))
-        print(f'[worker] Using bird_class_id={bird_class_id} (fallback)')
+        logger.info(f'Using bird_class_id={bird_class_id} (fallback)')
     else:
-        print(f'[worker] Resolved bird_class_id={bird_class_id} from model names')
+        logger.info(f'Resolved bird_class_id={bird_class_id} from model names')
 
     # Start dispatcher
     queue: asyncio.Queue = asyncio.Queue()
+    # Initialize CLIP model with backend selection
     # Initialize CLIP model with backend selection
     # Priority: HBMON_DEVICE > HBMON_INFERENCE_BACKEND > "cpu"
     clip_backend = os.getenv("HBMON_DEVICE") or os.getenv("HBMON_INFERENCE_BACKEND", "cpu")
@@ -1367,7 +1397,7 @@ async def run_worker() -> None:
     asyncio.create_task(processing_dispatcher(queue, clip))
 
     env = os.getenv("HBMON_SPECIES_LIST", "").strip()
-    if env:
+    if env and clip is not None:
         import re
         labels = [s.strip() for s in re.split(r",\s*", env) if s.strip()]
         if labels:
@@ -1437,7 +1467,19 @@ async def run_worker() -> None:
         return settings
 
     consecutive_failures = 0
-    print("[worker] Producer loop started.")
+    # Determine YOLO backend label for logging
+    _bend = (os.getenv("HBMON_YOLO_BACKEND") or os.getenv("HBMON_INFERENCE_BACKEND", "pytorch")).lower()
+    if "openvino" in _bend:
+        if "gpu" in _bend:
+            yolo_device_label = "OpenVINO-GPU"
+        else:
+            yolo_device_label = "OpenVINO-CPU"
+    elif "cuda" in _bend:
+        yolo_device_label = "PyTorch-CUDA"
+    else:
+        yolo_device_label = "PyTorch-CPU"
+
+    logger.info(f"Producer loop started. YOLO backend: {yolo_device_label}")
     while True:
         s = get_settings()
         if not s.rtsp_url:
@@ -1445,7 +1487,7 @@ async def run_worker() -> None:
             continue
 
         if cap is None or not cap.isOpened():
-            print(f"[worker] Opening RTSP: {s.rtsp_url}")
+            logger.info(f"Opening RTSP: {s.rtsp_url}")
             cap = cv2.VideoCapture(s.rtsp_url)
             try:
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
@@ -1456,7 +1498,7 @@ async def run_worker() -> None:
         ok, frame = cap.read()
         if not ok or frame is None:
             consecutive_failures += 1
-            print(f"[worker] Frame read failed. Reconnecting... (failure {consecutive_failures})")
+            logger.warning(f"Frame read failed. Reconnecting... (failure {consecutive_failures})")
             if cap:
                 try:
                     cap.release()
@@ -1481,7 +1523,7 @@ async def run_worker() -> None:
         now_dbg = time.time()
 
         if (now_dbg - last_debug_log) > debug_every:
-             print(f"[worker] alive q_size={queue.qsize()} rtsp={s.rtsp_url}")
+             logger.info(f"alive q_size={queue.qsize()} rtsp={s.rtsp_url}")
              if debug_save:
                  await _write_jpeg_async(media_dir() / "debug_latest.jpg", frame)
              last_debug_log = now_dbg
@@ -1501,8 +1543,14 @@ async def run_worker() -> None:
              imgsz_env = os.getenv("HBMON_YOLO_IMGSZ", "1088,1920").strip()
              predict_imgsz = resolve_predict_imgsz(imgsz_env, roi_frame.shape)
 
+             t0_yolo = time.perf_counter()
              results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=[bird_class_id], imgsz=predict_imgsz, verbose=yolo_verbose)
+             dt_yolo = (time.perf_counter() - t0_yolo) * 1000
+             
+             if yolo_verbose:
+                  logger.info(f"YOLO Inference ({yolo_device_label}): {dt_yolo:.2f}ms")
         except Exception:
+             logger.error("YOLO inference failed", exc_info=True)
              await asyncio.sleep(0.5)
              continue
 
@@ -1511,7 +1559,7 @@ async def run_worker() -> None:
             continue
 
         if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
-             print(f"[worker] [DEBUG-YOLO] Found {len(detections)} bird detections.")
+             logger.debug(f"Found {len(detections)} bird detections.")
 
         # Check motion overlap
         kept_entries = []
@@ -1533,7 +1581,7 @@ async def run_worker() -> None:
         elif os.getenv("HBMON_DEBUG_BG") == "1" and rejected_entries:
             # Optionally log why detections were rejected
             for d, stats in rejected_entries:
-                print(f"[worker] [DEBUG-BG] REJECTED: p={d.conf:.2f} area={d.area} overlap={stats['bbox_overlap_ratio']:.2f} (min={s.bg_min_overlap})")
+                logger.debug(f"REJECTED: p={d.conf:.2f} area={d.area} overlap={stats['bbox_overlap_ratio']:.2f} (min={s.bg_min_overlap})")
 
         timestamp = time.time()
 
