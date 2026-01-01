@@ -2908,12 +2908,15 @@ def make_app() -> Any:
         )
         raw = {name: str(form.get(name, "") or "").strip() for name in field_names}
         raw["timezone"] = str(form.get("timezone", "") or "").strip()
-        raw["bg_subtraction_enabled"] = "1" if form.get("bg_subtraction_enabled") else "0"
-        # New boolean fields
-        raw["bg_log_rejected"] = "1" if form.get("bg_log_rejected") else "0"
-        raw["bg_rejected_save_clip"] = "1" if form.get("bg_rejected_save_clip") else "0"
-        raw["bg_save_masks"] = "1" if form.get("bg_save_masks") else "0"
-        raw["bg_save_mask_overlay"] = "1" if form.get("bg_save_mask_overlay") else "0"
+        bool_field_names = (
+            "bg_subtraction_enabled",
+            "bg_log_rejected",
+            "bg_rejected_save_clip",
+            "bg_save_masks",
+            "bg_save_mask_overlay",
+        )
+        for name in bool_field_names:
+            raw[name] = "1" if form.get(name) else "0"
         parsed, errors = _validate_detection_inputs(raw)
 
         if errors:
