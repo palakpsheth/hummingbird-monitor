@@ -158,10 +158,10 @@ def force_openvino_gpu_override() -> None:
         if hasattr(ov_runtime, "Core"):
             ov_runtime.Core.compile_model = patched_compile_model
 
-        print("[openvino_utils] Patched OpenVINO to force GPU execution")
+        logger.info("[openvino_utils] Patched OpenVINO to force GPU execution")
 
     except Exception as e:
-        print(f"[openvino_utils] Failed to patch OpenVINO: {e}")
+        logger.warning(f"[openvino_utils] Failed to patch OpenVINO: {e}")
 
 # ---------------------------------------------------------------------------
 # CLIP Model Conversion and Loading
