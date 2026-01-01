@@ -318,7 +318,9 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 > Note: the current worker records a **post-trigger** clip (starting right after the detection).
 > A true **pre-trigger buffer** (ring buffer of frames) is a great next upgrade; see “Ideas for improvement”.
 
-### Species classification (CLIP)
+### Species classification (BioCLIP)
+- **Default Model**: `hf-hub:imageomics/bioclip` (BioCLIP).
+- `HF_TOKEN` (optional): Set in `.env` to avoid Hugging Face Hub rate limits or access gated models.
 - `HBMON_MIN_SPECIES_PROB` (default ~0.35)
   - Raise if species labels are noisy
   - Lower if too many are forced into “unknown”
