@@ -1180,7 +1180,7 @@ def _load_yolo_model() -> tuple[Any, str]:
     Returns:
         tuple: (Loaded YOLO model, device_label string)
     """
-    if not _YOLO_AVAILABLE:
+    if YOLO is None or not _YOLO_AVAILABLE:
         raise RuntimeError("ultralytics must be installed to load YOLO models")
 
     model_name = os.getenv("HBMON_YOLO_MODEL", "yolo11n.pt")
