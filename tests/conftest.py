@@ -84,10 +84,13 @@ def import_web():
     safe directories before importing hbmon.web. This avoids permission issues
     and ensures tests don't write to /data or /media.
 
+    Note: When tmp_path is not provided, this fixture reuses the directories
+    already set by the isolate_test_dirs autouse fixture to avoid conflicts.
+
     Usage:
         def test_something(import_web, monkeypatch):
             web = import_web(monkeypatch)
-            # use web module
+            # use web module (reuses isolate_test_dirs directories)
 
         def test_with_db(import_web, monkeypatch, tmp_path):
             web = import_web(monkeypatch, tmp_path=tmp_path, with_db=True)
@@ -98,27 +101,32 @@ def import_web():
 
         Args:
             monkeypatch: pytest monkeypatch fixture
-            tmp_path: optional pytest tmp_path fixture for isolated directories
-            with_db: if True, also configure DB URLs (requires tmp_path)
+            tmp_path: optional pytest tmp_path fixture for isolated directories.
+                      When None, reuses directories from isolate_test_dirs.
+            with_db: if True, also configure DB URLs. Requires tmp_path to be provided.
 
         Returns:
             The imported hbmon.web module
+
+        Raises:
+            ValueError: if with_db=True but tmp_path is None
         """
+        if with_db and tmp_path is None:
+            raise ValueError("tmp_path must be provided when with_db=True")
+
         if tmp_path is not None:
+            # Set up isolated directories with optional DB configuration
             data_dir = tmp_path / "data"
             media_dir = tmp_path / "media"
+            monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
+            monkeypatch.setenv("HBMON_MEDIA_DIR", str(media_dir))
+
             if with_db:
                 db_path = tmp_path / "db.sqlite"
                 monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
                 monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
-        else:
-            # Use current working directory names to avoid permission issues
-            cwd = Path.cwd().resolve()
-            data_dir = cwd / "data"
-            media_dir = cwd / "media"
-
-        monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
-        monkeypatch.setenv("HBMON_MEDIA_DIR", str(media_dir))
+        # else: When tmp_path is None, rely on isolate_test_dirs autouse fixture
+        # which already sets HBMON_DATA_DIR and HBMON_MEDIA_DIR from its own tmp_path
 
         # Remove module from sys.modules if already loaded to force re-import
         if "hbmon.web" in importlib.sys.modules:
