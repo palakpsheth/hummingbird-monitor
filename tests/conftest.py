@@ -5,10 +5,12 @@ This conftest defines:
 - Fixtures for setting up safe test directories
 - Markers for unit and integration tests
 - Test data paths for integration tests
+- Shared fixture for importing hbmon.web safely
 """
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
@@ -71,3 +73,57 @@ def cleanup_db_engines():
     """
     yield
     db.reset_db_state()
+
+
+@pytest.fixture
+def import_web():
+    """
+    Factory fixture for importing hbmon.web safely with test-appropriate environment.
+
+    Returns a callable that accepts monkeypatch and optional tmp_path to set up
+    safe directories before importing hbmon.web. This avoids permission issues
+    and ensures tests don't write to /data or /media.
+
+    Usage:
+        def test_something(import_web, monkeypatch):
+            web = import_web(monkeypatch)
+            # use web module
+
+        def test_with_db(import_web, monkeypatch, tmp_path):
+            web = import_web(monkeypatch, tmp_path=tmp_path, with_db=True)
+            # use web module with DB configured
+    """
+    def _import_web(monkeypatch, tmp_path=None, with_db=False):
+        """Import hbmon.web after setting safe directories via monkeypatch.
+
+        Args:
+            monkeypatch: pytest monkeypatch fixture
+            tmp_path: optional pytest tmp_path fixture for isolated directories
+            with_db: if True, also configure DB URLs (requires tmp_path)
+
+        Returns:
+            The imported hbmon.web module
+        """
+        if tmp_path is not None:
+            data_dir = tmp_path / "data"
+            media_dir = tmp_path / "media"
+            if with_db:
+                db_path = tmp_path / "db.sqlite"
+                monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
+                monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
+        else:
+            # Use current working directory names to avoid permission issues
+            cwd = Path.cwd().resolve()
+            data_dir = cwd / "data"
+            media_dir = cwd / "media"
+
+        monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("HBMON_MEDIA_DIR", str(media_dir))
+
+        # Remove module from sys.modules if already loaded to force re-import
+        if "hbmon.web" in importlib.sys.modules:
+            importlib.sys.modules.pop("hbmon.web")
+
+        return importlib.import_module("hbmon.web")
+
+    return _import_web

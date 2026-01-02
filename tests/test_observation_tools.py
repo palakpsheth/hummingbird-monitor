@@ -21,7 +21,7 @@ except ImportError:
 
 
 pytestmark = pytest.mark.skipif(not _MODULE_AVAILABLE, reason="observation_tools module not available")
-_HAS_CV2 = _MODULE_AVAILABLE and observation_tools._CV2_AVAILABLE and hasattr(observation_tools, "cv2")
+_HAS_CV2 = _MODULE_AVAILABLE and observation_tools._CV2_AVAILABLE
 
 
 def test_extract_video_metadata_no_cv2():
