@@ -1429,13 +1429,75 @@ def make_app() -> Any:
             exists = await _run_blocking(video_file.exists)
             size_kb = 0.0
             suffix = ""
+            fps = None
+            width = None
+            height = None
+            duration = None
+            fourcc = None
+            
             if exists:
                 try:
                     size_kb = round((await _run_blocking(video_file.stat)).st_size / 1024, 2)
                 except OSError:
                     pass
                 suffix = video_file.suffix.lower()
-            video_info = {"exists": exists, "size_kb": size_kb, "suffix": suffix}
+                
+                # Extract video metadata using OpenCV
+                def _extract_video_metadata(path: Path) -> dict[str, Any]:
+                    """Extract video metadata using OpenCV."""
+                    metadata: dict[str, Any] = {}
+                    try:
+                        cv2 = _load_cv2()
+                        cap = cv2.VideoCapture(str(path))
+                        if cap.isOpened():
+                            # Get FPS
+                            fps_val = cap.get(cv2.CAP_PROP_FPS)
+                            if fps_val > 0:
+                                metadata["fps"] = round(fps_val, 2)
+                            
+                            # Get resolution
+                            width_val = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                            height_val = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                            if width_val > 0 and height_val > 0:
+                                metadata["width"] = width_val
+                                metadata["height"] = height_val
+                            
+                            # Get frame count and duration
+                            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                            if frame_count > 0 and fps_val > 0:
+                                metadata["duration"] = round(frame_count / fps_val, 2)
+                            
+                            # Get codec (fourcc)
+                            fourcc_val = int(cap.get(cv2.CAP_PROP_FOURCC))
+                            if fourcc_val != 0:
+                                codec_str = "".join([chr((fourcc_val >> 8 * i) & 0xFF) for i in range(4)])
+                                metadata["fourcc"] = codec_str
+                            
+                            cap.release()
+                    except Exception:
+                        pass
+                    return metadata
+                
+                try:
+                    video_metadata = await _run_blocking(_extract_video_metadata, video_file)
+                    fps = video_metadata.get("fps")
+                    width = video_metadata.get("width")
+                    height = video_metadata.get("height")
+                    duration = video_metadata.get("duration")
+                    fourcc = video_metadata.get("fourcc")
+                except Exception:
+                    pass
+            
+            video_info = {
+                "exists": exists,
+                "size_kb": size_kb,
+                "suffix": suffix,
+                "fps": fps,
+                "width": width,
+                "height": height,
+                "duration": duration,
+                "fourcc": fourcc,
+            }
 
         return templates.TemplateResponse(
             request,
@@ -3109,7 +3171,41 @@ def make_app() -> Any:
             },
         )
 
-
+    @app.get("/api/video/{obs_id}")
+    async def stream_video(
+        obs_id: int,
+        request: Request,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Any:
+        """
+        Stream a video file with proper HTTP range request support for browser playback.
+        
+        This endpoint serves video files with:
+        - HTTP 206 Partial Content support for seeking
+        - Proper Content-Type headers for MP4 files
+        - Content-Length and Accept-Ranges headers
+        
+        This ensures videos can be streamed in the browser's <video> element.
+        """
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+        
+        video_path = o.video_path or ""
+        if not video_path:
+            raise HTTPException(status_code=404, detail="No video path for this observation")
+        
+        full_path = media_dir() / video_path
+        if not await _run_blocking(full_path.exists):
+            raise HTTPException(status_code=404, detail="Video file not found")
+        
+        # FileResponse in Starlette 0.50+ automatically handles range requests
+        # and returns 206 Partial Content when appropriate
+        return FileResponse(
+            str(full_path),
+            media_type="video/mp4",
+            filename=full_path.name,
+        )
 
 
     @app.get("/api/video_info/{obs_id}")
@@ -3160,6 +3256,48 @@ def make_app() -> Any:
             except OSError as e:
                 result["stat_error"] = str(e)
             result["file_suffix"] = full_path.suffix.lower()
+
+            # Extract video metadata using OpenCV (FPS, resolution, codec)
+            def _extract_video_metadata(path: Path) -> dict[str, Any]:
+                """Extract video metadata using OpenCV."""
+                metadata: dict[str, Any] = {}
+                try:
+                    cv2 = _load_cv2()
+                    cap = cv2.VideoCapture(str(path))
+                    if cap.isOpened():
+                        # Get FPS
+                        fps = cap.get(cv2.CAP_PROP_FPS)
+                        if fps > 0:
+                            metadata["fps"] = round(fps, 2)
+                        
+                        # Get resolution
+                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        if width > 0 and height > 0:
+                            metadata["width"] = width
+                            metadata["height"] = height
+                            metadata["resolution"] = f"{width}×{height}"
+                        
+                        # Get frame count and duration
+                        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        if frame_count > 0 and fps > 0:
+                            metadata["frame_count"] = frame_count
+                            metadata["duration_seconds"] = round(frame_count / fps, 2)
+                        
+                        # Get codec (fourcc)
+                        fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
+                        if fourcc != 0:
+                            # Convert fourcc int to string
+                            codec_str = "".join([chr((fourcc >> 8 * i) & 0xFF) for i in range(4)])
+                            metadata["fourcc"] = codec_str
+                        
+                        cap.release()
+                except Exception as e:
+                    metadata["extraction_error"] = str(e)
+                return metadata
+            
+            video_metadata = await _run_blocking(_extract_video_metadata, full_path)
+            result.update(video_metadata)
 
             # Try to detect codec from file header
             codec_hint = "unknown"
