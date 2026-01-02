@@ -42,6 +42,28 @@ def _install_openclip_stub(monkeypatch):
 
 
 def _install_openvino_stubs(monkeypatch, *, text_output: np.ndarray, image_output: np.ndarray) -> None:
+    """Install OpenVINO-related stubs for tests that exercise the OpenVINO backend.
+
+    This helper monkeypatches :mod:`hbmon.openvino_utils` so that:
+
+    * OpenVINO is reported as available.
+    * A fixed device (``"CPU"``) is selected.
+    * ``load_openvino_clip`` returns ``FakeCompiledModel`` instances that emit
+      deterministic NumPy outputs for both the image and text encoders.
+
+    The ``image_output`` and ``text_output`` arrays define the base outputs
+    for the image and text encoders respectively. They are converted to
+    ``float32`` and wrapped in ``FakeCompiledModel`` objects, which are then
+    returned by the stubbed ``load_openvino_clip`` function.
+
+    ``FakeCompiledModel`` simulates the behavior of an OpenVINO compiled model.
+    When called with a batched ``inputs`` array, it returns a single-element
+    list containing a NumPy array. If the stored output is 2D and its leading
+    dimension does not match the input batch size, the rows are repeated along
+    axis 0 so that the output batch size matches the input batch size. This
+    allows tests to verify batching behavior without requiring a real
+    OpenVINO installation.
+    """
     if clip.torch is None or clip.Image is None:
         pytest.skip("clip model dependencies missing")
     torch = clip.torch
