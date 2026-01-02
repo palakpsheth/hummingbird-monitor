@@ -48,20 +48,56 @@
 
       <label class="stack">
         <span>
-          <strong>Clip duration (seconds):</strong>
-          <span class="muted">(1–30). Duration of recorded video clips.</span>
-        </span>
-        <input type="number" name="clip_seconds" step="0.5" min="1" max="30" value="{{ form_values.clip_seconds }}"
-          required />
-      </label>
-
-      <label class="stack">
-        <span>
           <strong>Cooldown seconds:</strong>
           <span class="muted">(0–120). Prevents duplicate triggers for the same visit.</span>
         </span>
         <input type="number" name="cooldown_seconds" step="0.1" min="0" max="120"
           value="{{ form_values.cooldown_seconds }}" required />
+      </label>
+    </fieldset>
+
+    <!-- Visit Recording -->
+    <fieldset class="config-group">
+      <legend>Visit Recording</legend>
+      <p class="muted">
+        Full visit recording captures the complete bird visit from arrival through feeding to departure.
+        The total clip duration is dynamic based on the actual visit length.
+      </p>
+
+      <label class="stack">
+        <span>
+          <strong>Arrival buffer (seconds):</strong>
+          <span class="muted">(0–30). Pre-trigger buffer to capture frames before the first detection.</span>
+        </span>
+        <input type="number" name="arrival_buffer_seconds" step="0.1" min="0" max="30"
+          value="{{ form_values.arrival_buffer_seconds }}" required />
+      </label>
+
+      <label class="stack">
+        <span>
+          <strong>Departure timeout (seconds):</strong>
+          <span class="muted">(0.5–30). Time to wait with no detection before considering bird has left.</span>
+        </span>
+        <input type="number" name="departure_timeout_seconds" step="0.1" min="0.5" max="30"
+          value="{{ form_values.departure_timeout_seconds }}" required />
+      </label>
+
+      <label class="stack">
+        <span>
+          <strong>Post-departure buffer (seconds):</strong>
+          <span class="muted">(0–30). Continue recording after bird leaves to capture exit behavior.</span>
+        </span>
+        <input type="number" name="post_departure_buffer_seconds" step="0.1" min="0" max="30"
+          value="{{ form_values.post_departure_buffer_seconds }}" required />
+      </label>
+
+      <label class="stack">
+        <span>
+          <strong>Temporal window (frames):</strong>
+          <span class="muted">(1–120). Frames kept for temporal voting to smooth detections.</span>
+        </span>
+        <input type="number" name="temporal_window_frames" step="1" min="1" max="120"
+          value="{{ form_values.temporal_window_frames }}" required />
       </label>
     </fieldset>
 

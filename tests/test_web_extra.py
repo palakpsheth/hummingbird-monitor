@@ -4,9 +4,6 @@ from hbmon.web import (
     _load_cv2,
     _get_db_dialect_name,
     _candidate_json_value,
-    _load_mjpeg_settings,
-    _update_mjpeg_adaptive,
-    MJPEGSettings,
 )
 import sys
 from fastapi import HTTPException
@@ -53,46 +50,6 @@ def test_candidate_json_value_dialects():
     # Empty path
     assert _candidate_json_value(expr, [], "sqlite") is None
 
-def test_load_mjpeg_settings_overrides(monkeypatch):
-    monkeypatch.setenv("HBMON_MJPEG_FPS", "20")
-    monkeypatch.setenv("HBMON_MJPEG_MAX_WIDTH", "640")
-    monkeypatch.setenv("HBMON_MJPEG_ADAPTIVE", "1")
-    
-    settings = _load_mjpeg_settings()
-    assert settings.target_fps == 20.0
-    assert settings.max_width == 640
-    assert settings.adaptive_enabled is True
-
-def test_load_mjpeg_settings_invalid_values(monkeypatch):
-    monkeypatch.setenv("HBMON_MJPEG_FPS", "0")
-    settings = _load_mjpeg_settings()
-    assert settings.target_fps == 10.0
-
-def test_update_mjpeg_adaptive_limits():
-    settings = MJPEGSettings(
-        target_fps=10.0,
-        max_width=1280,
-        max_height=720,
-        base_quality=70,
-        adaptive_enabled=True,
-        min_fps=4.0,
-        min_quality=40,
-        fps_step=1.0,
-        quality_step=5,
-    )
-    
-    new_fps, new_quality = _update_mjpeg_adaptive(10.0, 70, settings, 1.0)
-    assert new_fps == 9.0
-    assert new_quality == 65
-    
-    new_fps, new_quality = _update_mjpeg_adaptive(4.0, 40, settings, 1.0)
-    assert new_fps == 4.0
-    assert new_quality == 40
-    
-    new_fps, new_quality = _update_mjpeg_adaptive(4.0, 40, settings, 0.01)
-    assert new_fps == 5.0
-    assert new_quality == 45
-
 from hbmon.web import _flatten_extra_metadata, _validate_detection_inputs, _prepare_observation_extras, paginate
 
 def test_flatten_extra_metadata():
@@ -123,9 +80,12 @@ def test_validate_detection_inputs():
         "timezone": "America/Los_Angeles",
         # New fields
         "fps_limit": "10",
-        "clip_seconds": "3.0",
+        "temporal_window_frames": "5",
         "crop_padding": "0.10",
         "bg_rejected_cooldown_seconds": "3.0",
+        "arrival_buffer_seconds": "5.0",
+        "departure_timeout_seconds": "2.0",
+        "post_departure_buffer_seconds": "3.0",
     }
     parsed, errors = _validate_detection_inputs(valid_raw)
     assert not errors

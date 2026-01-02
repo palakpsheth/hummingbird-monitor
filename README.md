@@ -71,6 +71,22 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
   - Candidate detail pages can export a similar bundle for motion-rejected detections.
   - Missing sensitivity/identification fields are backfilled with current defaults when exporting older observations.
 
+### Video storage and streaming
+- **Uncompressed storage**: Videos stored in pristine uncompressed format on disk for ML training and future use
+- **On-the-fly compression**: When streaming to browsers, videos are compressed using FFmpeg with intelligent caching
+  - First view: compresses to `/media/.cache/compressed/` (3-5 seconds)
+  - Subsequent views: serves from cache instantly
+  - Cache auto-refreshes when source video changes
+- **Video metadata**: FPS, resolution, duration, and codec information displayed in observation detail
+- **Streaming bitrate display**: Shows actual streaming bitrate and compression ratio after video loads
+  - Example: "Streaming: 2.45 Mbps (3.2x smaller)"
+  - Only appears after first view when cache exists
+  - Provides transparency about compression efficiency
+- **Configurable quality**: Adjust CRF (18-28) and encoding preset (fast/medium/slow) via environment variables
+- **Cache management**: Automatic cleanup of old cached files based on age (default: 7 days) and size (default: 10GB)
+- **ML training ready**: Pristine uncompressed videos preserve maximum detail for model fine-tuning
+- **Utilities**: Batch processing tools in `observation_tools.py` for extracting and updating video metadata
+
 ### Web UI pages
 - **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for auto-refresh with configurable refresh rate (1s, 2s, 5s, 10s), a live/fallback source indicator, and a detection health indicator); recent observations are paginated with a per-page selector
 - **Observations**: filterable, sortable table (including dynamic extra metadata fields such as
@@ -208,6 +224,109 @@ SQLite fallback/testing:
 - `HBMON_DB_URL`: sync SQLite/Postgres URL for local tooling/tests (default: SQLite path)
 - `HBMON_SQLITE_BUSY_TIMEOUT_MS`: SQLite busy timeout in milliseconds (default: 5000)
 
+### Environment variables and hot reload
+
+The table below maps `.env.example` variables to their defaults and whether they can be changed live through the **Config UI** (hot reloadable). A restart is required for variables marked **No**.
+
+**Wyze bridge**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `WYZE_EMAIL` | `you@example.com` | No |
+| `WYZE_PASSWORD` | `your_password` | No |
+| `WYZE_API_KEY` | `` | No |
+| `WYZE_API_ID` | `` | No |
+| `WYZE_MFA_TYPE` | `` | No |
+| `WYZE_MFA_CODE` | `` | No |
+| `WYZE_REGION` | `` | No |
+| `WYZE_CAMERA_NAME` | `hummingbirdcam` | No |
+| `WYZE_QUALITY` | `HD30` | No |
+
+**Core app & paths**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_TITLE` | `Hummingbird Monitor` | No |
+| `HBMON_RTSP_URL` | (set in `.env`) | No |
+| `HBMON_RTSP_SNAPSHOT_URL` | (set in `.env`) | No |
+| `HBMON_CAMERA_NAME` | `hummingbirdcam` | No |
+| `GIT_COMMIT` | `unknown` | No |
+| `HBMON_DATA_DIR` | `/data` | No |
+| `HBMON_MEDIA_DIR` | `/data/media` | No |
+| `HBMON_CONFIG_PATH` | `/data/config.json` | No |
+
+**Database & cache**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_DB_ASYNC_URL` | `postgresql+asyncpg://hbmon:hbmon@hbmon-db:5432/hbmon` | No |
+| `HBMON_DB_URL` | (empty) | No |
+| `HBMON_DB_POOL_SIZE` | `5` | No |
+| `HBMON_DB_MAX_OVERFLOW` | `10` | No |
+| `HBMON_DB_POOL_TIMEOUT` | `30` | No |
+| `HBMON_DB_POOL_RECYCLE` | `1800` | No |
+| `HBMON_REDIS_URL` | `redis://hbmon-redis:6379/0` | No |
+| `HBMON_REDIS_TTL_SECONDS` | `5` | No |
+| `HBMON_WEB_WORKERS` | `4` | No |
+| `HBMON_SQLITE_BUSY_TIMEOUT_MS` | `5000` | No |
+
+**Performance, detection, and visit recording** (all hot reloadable)
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_FPS_LIMIT` | `25` | Yes |
+| `HBMON_TEMPORAL_WINDOW_FRAMES` | `5` | Yes |
+| `HBMON_ARRIVAL_BUFFER_SECONDS` | `5.0` | Yes |
+| `HBMON_DEPARTURE_TIMEOUT_SECONDS` | `2.0` | Yes |
+| `HBMON_POST_DEPARTURE_BUFFER_SECONDS` | `3.0` | Yes |
+| `HBMON_DETECT_CONF` | `0.30` | Yes |
+| `HBMON_DETECT_IOU` | `0.45` | Yes |
+| `HBMON_MIN_BOX_AREA` | `600` | Yes |
+| `HBMON_COOLDOWN_SECONDS` | `4` | Yes |
+| `HBMON_SNAPSHOT_TIMEOUT` | `10.0` | No |
+| `HBMON_SNAPSHOT_RETRIES` | `10` | No |
+
+**Classification & re-ID** (hot reloadable)
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_MIN_SPECIES_PROB` | `0.35` | Yes |
+| `HBMON_MATCH_THRESHOLD` | `0.25` | Yes |
+| `HBMON_EMA_ALPHA` | `0.10` | Yes |
+| `HBMON_CROP_PADDING` | `0.05` | Yes |
+| `HBMON_SPECIES_LIST` | (see `.env.example`) | No |
+| `HBMON_INFERENCE_BACKEND` | `cpu` | No |
+
+**Background subtraction**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_BG_SUBTRACTION` | `1` | Yes |
+| `HBMON_BG_MOTION_THRESHOLD` | `30` | Yes |
+| `HBMON_BG_MOTION_BLUR` | `5` | Yes |
+| `HBMON_BG_MIN_OVERLAP` | `0.15` | Yes |
+| `HBMON_BG_LOG_REJECTED` | `1` | Yes |
+| `HBMON_BG_REJECTED_COOLDOWN_SECONDS` | `3` | Yes |
+| `HBMON_BG_REJECTED_SAVE_CLIP` | `1` | Yes |
+| `HBMON_BG_REJECTED_MAX_PER_MINUTE` | `30` | No |
+| `HBMON_BG_SAVE_MASKS` | `1` | Yes |
+| `HBMON_BG_SAVE_MASK_OVERLAY` | `1` | Yes |
+| `HBMON_BG_MASK_FORMAT` | `png` | No |
+| `HBMON_BG_MASK_DOWNSCALE_MAX` | `0` | No |
+| `HBMON_DEBUG_BG` | `1` | No |
+| `HBMON_DEBUG_VERBOSE` | `1` | No |
+
+**Video streaming**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_VIDEO_STREAM_COMPRESSION` | `1` | No |
+| `HBMON_VIDEO_CRF` | `23` | No |
+| `HBMON_VIDEO_PRESET` | `fast` | No |
+| `HBMON_VIDEO_CACHE_MAX_AGE_DAYS` | `7` | No |
+| `HBMON_VIDEO_CACHE_MAX_SIZE_GB` | `10.0` | No |
+| `HBMON_FFMPEG_PATH` | `ffmpeg` | No |
+
 ---
 
 ## Developer shortcuts (Makefile)
@@ -298,6 +417,9 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 - `HBMON_FPS_LIMIT` (default ~8)
   - Lower for CPU-constrained machines
   - Typical CPU sweet spot: **6–10**
+- `HBMON_TEMPORAL_WINDOW_FRAMES` (default 5)
+  - Frames kept in the temporal voting buffer to smooth detections across frames
+  - Increase to reduce flicker, decrease for faster reaction to quick motion
 
 ### YOLO Model Selection
 - `HBMON_YOLO_MODEL` (default `yolo11n.pt`)
@@ -311,12 +433,26 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
   - Increase if one visit creates many events
   - Decrease if you want finer-grained logging per visit
 
-### Clips
-- `HBMON_CLIP_SECONDS` (default ~2.0)
-  - Increase if you want more “arrival + feeding + departure” context
+### Clips and Visit Recording
+- **Full visit recording** (captures entire bird visit):
+  - Records from arrival to departure with pre and post-trigger buffers
+  - `HBMON_ARRIVAL_BUFFER_SECONDS` (default 5.0): Pre-trigger buffer capturing frames before first detection
+  - `HBMON_DEPARTURE_TIMEOUT_SECONDS` (default 2.0): Wait after last detection before marking departure
+  - `HBMON_POST_DEPARTURE_BUFFER_SECONDS` (default 3.0): Continue recording after departure to capture the full exit
+  - Visit videos stored uncompressed for ML training, compressed on-the-fly for browser streaming
 
-> Note: the current worker records a **post-trigger** clip (starting right after the detection).
-> A true **pre-trigger buffer** (ring buffer of frames) is a great next upgrade; see “Ideas for improvement”.
+### Video storage and streaming
+- Videos are stored **uncompressed** on disk to preserve pristine quality for ML training
+- **On-the-fly compression** when streaming to browsers using FFmpeg
+- Configuration options:
+  - `HBMON_VIDEO_STREAM_COMPRESSION` (default `1`): Enable/disable streaming compression
+  - `HBMON_VIDEO_CRF` (default `23`): Quality setting (18=high quality, 23=balanced, 28=smaller files)
+  - `HBMON_VIDEO_PRESET` (default `fast`): Encoding speed (fast, medium, slow)
+  - `HBMON_VIDEO_CACHE_MAX_AGE_DAYS` (default `7`): Remove cached compressed files older than this
+  - `HBMON_VIDEO_CACHE_MAX_SIZE_GB` (default `10.0`): Maximum cache size (oldest files removed first)
+- First view compresses the video (~3-5 seconds), subsequent views use cached compressed version
+- Cache automatically refreshes when source video changes
+- Use `observation_tools.py` utilities for batch metadata extraction on existing observations
 
 ### Species classification (BioCLIP)
 - **Default Model**: `hf-hub:imageomics/bioclip` (BioCLIP).

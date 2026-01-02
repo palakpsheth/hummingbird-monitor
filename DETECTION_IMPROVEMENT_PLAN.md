@@ -242,7 +242,6 @@ HBMON_BG_MIN_OVERLAP=0.08
 
 # === EVENT FREQUENCY (faster system can handle more) ===
 HBMON_COOLDOWN_SECONDS=1.0
-HBMON_CLIP_SECONDS=3.0
 
 # === DEBUGGING (understand what's being missed) ===
 HBMON_DEBUG_YOLO=1

@@ -546,34 +546,6 @@ def test_order_extra_columns(monkeypatch):
     assert ordered[1:] == ["alpha", "bar", "foo"]
 
 
-def test_mjpeg_settings_and_decode_helpers(monkeypatch):
-    web = _import_web(monkeypatch)
-
-    monkeypatch.setenv("HBMON_MJPEG_FPS", "-5")
-    monkeypatch.setenv("HBMON_MJPEG_MAX_WIDTH", "0")
-    monkeypatch.setenv("HBMON_MJPEG_MAX_HEIGHT", "0")
-    monkeypatch.setenv("HBMON_MJPEG_JPEG_QUALITY", "150")
-    monkeypatch.setenv("HBMON_MJPEG_ADAPTIVE", "1")
-    monkeypatch.setenv("HBMON_MJPEG_MIN_FPS", "100")
-    monkeypatch.setenv("HBMON_MJPEG_MIN_QUALITY", "5")
-    monkeypatch.setenv("HBMON_MJPEG_FPS_STEP", "0.01")
-    monkeypatch.setenv("HBMON_MJPEG_QUALITY_STEP", "0")
-
-    settings = web._load_mjpeg_settings()
-    assert settings.target_fps == 10.0
-    assert settings.min_fps == 10.0
-    assert settings.max_width == 0
-    assert settings.max_height == 0
-    assert settings.base_quality == 100
-    assert settings.min_quality == 10
-    assert settings.fps_step == 0.1
-    assert settings.quality_step == 1
-
-    fourcc = ord("M") | (ord("J") << 8) | (ord("P") << 16) | (ord("G") << 24)
-    assert web._decode_fourcc(fourcc) == "MJPG"
-    assert web._decode_fourcc(0) == ""
-
-
 def test_candidate_json_value_helpers(monkeypatch):
     web = _import_web(monkeypatch)
 

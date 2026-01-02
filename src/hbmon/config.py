@@ -114,7 +114,10 @@ class Settings:
     rtsp_url: str = ""
     camera_name: str = "camera"
     fps_limit: float = 8.0
-    clip_seconds: float = 2.0
+    temporal_window_frames: int = 5
+    arrival_buffer_seconds: float = 5.0
+    departure_timeout_seconds: float = 2.0
+    post_departure_buffer_seconds: float = 3.0
 
     # detection tuning
     detect_conf: float = 0.25
@@ -164,7 +167,10 @@ class Settings:
         s.camera_name = env_str("HBMON_CAMERA_NAME", s.camera_name)
 
         s.fps_limit = env_float("HBMON_FPS_LIMIT", s.fps_limit)
-        s.clip_seconds = env_float("HBMON_CLIP_SECONDS", s.clip_seconds)
+        s.temporal_window_frames = env_int("HBMON_TEMPORAL_WINDOW_FRAMES", s.temporal_window_frames)
+        s.arrival_buffer_seconds = env_float("HBMON_ARRIVAL_BUFFER_SECONDS", s.arrival_buffer_seconds)
+        s.departure_timeout_seconds = env_float("HBMON_DEPARTURE_TIMEOUT_SECONDS", s.departure_timeout_seconds)
+        s.post_departure_buffer_seconds = env_float("HBMON_POST_DEPARTURE_BUFFER_SECONDS", s.post_departure_buffer_seconds)
 
         s.detect_conf = env_float("HBMON_DETECT_CONF", s.detect_conf)
         s.detect_iou = env_float("HBMON_DETECT_IOU", s.detect_iou)
@@ -318,7 +324,10 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
         rtsp_url=str(d.get("rtsp_url", "")),
         camera_name=str(d.get("camera_name", "camera")),
         fps_limit=float(d.get("fps_limit", 8.0)),
-        clip_seconds=float(d.get("clip_seconds", 2.0)),
+        temporal_window_frames=int(d.get("temporal_window_frames", 5)),
+        arrival_buffer_seconds=float(d.get("arrival_buffer_seconds", 5.0)),
+        departure_timeout_seconds=float(d.get("departure_timeout_seconds", 2.0)),
+        post_departure_buffer_seconds=float(d.get("post_departure_buffer_seconds", 3.0)),
         detect_conf=float(d.get("detect_conf", 0.25)),
         detect_iou=float(d.get("detect_iou", 0.45)),
         min_box_area=int(d.get("min_box_area", 600)),
