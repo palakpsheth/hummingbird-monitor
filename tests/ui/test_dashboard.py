@@ -22,4 +22,5 @@ def test_dashboard_loads(live_server_url: str, ui_page) -> None:
     # Check for dashboard heading - use simpler locator
     expect(ui_page.locator("h1:has-text('Dashboard')")).to_be_visible()
     expect(ui_page.locator("#live-feed-img")).to_be_visible()
-    expect(ui_page.get_by_role("link", name="Calibrate ROI")).to_have_attribute("href", "/calibrate")
+    # Use .first() to select the first matching link (avoids strict mode violation with multiple matches)
+    expect(ui_page.get_by_role("link", name="Calibrate ROI").first).to_have_attribute("href", "/calibrate")
