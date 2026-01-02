@@ -314,6 +314,9 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 - `HBMON_FPS_LIMIT` (default ~8)
   - Lower for CPU-constrained machines
   - Typical CPU sweet spot: **6–10**
+- `HBMON_TEMPORAL_WINDOW_FRAMES` (default 5)
+  - Frames kept in the temporal voting buffer to smooth detections across frames
+  - Increase to reduce flicker, decrease for faster reaction to quick motion
 
 ### YOLO Model Selection
 - `HBMON_YOLO_MODEL` (default `yolo11n.pt`)
@@ -331,7 +334,8 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 - **Full visit recording** (captures entire bird visit):
   - Records from arrival to departure with pre and post-trigger buffers
   - `HBMON_ARRIVAL_BUFFER_SECONDS` (default 5.0): Pre-trigger buffer capturing frames before first detection
-  - Post-departure buffer: Continues recording after bird leaves to capture full departure
+  - `HBMON_DEPARTURE_TIMEOUT_SECONDS` (default 2.0): Wait after last detection before marking departure
+  - `HBMON_POST_DEPARTURE_BUFFER_SECONDS` (default 3.0): Continue recording after departure to capture the full exit
   - Visit videos stored uncompressed for ML training, compressed on-the-fly for browser streaming
 - **Legacy observation clips**:
   - `HBMON_CLIP_SECONDS` (default ~2.0): Short clips for individual observations
