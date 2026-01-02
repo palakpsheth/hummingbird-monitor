@@ -20,6 +20,8 @@ API:
 - /api/frame.jpg          Latest snapshot (or placeholder)
 - /api/live_frame.jpg     Single snapshot from live RTSP feed
 - /api/roi  (GET/POST)    Get/set ROI (POST accepts form)
+- /api/video/{id}         Stream video with HTTP range request support
+- /api/streaming_bitrate/{id}  Get compressed video bitrate metrics
 - /api/video_info/{id}    Video file diagnostics for troubleshooting
 
 API Documentation:
@@ -35,17 +37,7 @@ Exports:
 Notes:
 - Media is served from HBMON_MEDIA_DIR (default /media)
 - DB is served from HBMON_DATA_DIR (default /data)
-
-MJPEG streaming environment variables:
-- HBMON_MJPEG_FPS: target MJPEG frame rate (default: 10)
-- HBMON_MJPEG_MAX_WIDTH: maximum MJPEG frame width (default: 1280, 0 disables)
-- HBMON_MJPEG_MAX_HEIGHT: maximum MJPEG frame height (default: 720, 0 disables)
-- HBMON_MJPEG_JPEG_QUALITY: JPEG quality for MJPEG stream (default: 70)
-- HBMON_MJPEG_ADAPTIVE: enable adaptive degradation (default: 0)
-- HBMON_MJPEG_MIN_FPS: lowest adaptive FPS floor (default: 4)
-- HBMON_MJPEG_MIN_QUALITY: lowest adaptive JPEG quality (default: 40)
-- HBMON_MJPEG_FPS_STEP: FPS step for adaptive changes (default: 1)
-- HBMON_MJPEG_QUALITY_STEP: quality step for adaptive changes (default: 5)
+- Videos stored uncompressed, compressed on-the-fly for browser streaming
 """
 
 from __future__ import annotations
