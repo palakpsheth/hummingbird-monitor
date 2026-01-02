@@ -107,7 +107,6 @@ def test_nginx_does_not_route_stream_mjpeg() -> None:
 def test_docker_compose_uses_yaml_anchors() -> None:
     """Verify that docker-compose.yml uses YAML anchors to reduce duplication."""
     compose_text = _read_repo_file("docker-compose.yml")
-    
     # Check for anchor definitions
     assert "x-common-env:" in compose_text, "Should define x-common-env anchor"
     assert "x-bg-subtraction-env:" in compose_text, "Should define x-bg-subtraction-env anchor"
