@@ -1373,8 +1373,13 @@ async def run_worker() -> None:
 
     # Temporal voting buffer: stores recent frames to catch birds visible for only 1-2 frames
     temporal_window = int(settings.temporal_window_frames if settings else 5)
+    temporal_min_detections = int(settings.temporal_min_detections if settings else 1)
     frame_buffer: deque[FrameEntry] = deque(maxlen=temporal_window)
-    logger.info(f"Temporal voting enabled with window size: {temporal_window} frames")
+    logger.info(
+        "Temporal voting enabled with window size: %s frames (min detections: %s)",
+        temporal_window,
+        temporal_min_detections,
+    )
 
     def get_settings() -> Settings:
         nonlocal last_settings_load, settings
@@ -1430,6 +1435,15 @@ async def run_worker() -> None:
         if arrival_buffer.maxlen != target_arr_frames:
              logger.info(f"Resizing arrival buffer: {arrival_buffer.maxlen} -> {target_arr_frames} frames ({s.arrival_buffer_seconds}s)")
              arrival_buffer = deque(arrival_buffer, maxlen=target_arr_frames)
+
+        target_temporal_window = max(1, int(s.temporal_window_frames))
+        if frame_buffer.maxlen != target_temporal_window:
+            logger.info(
+                "Resizing temporal window: %s -> %s frames",
+                frame_buffer.maxlen,
+                target_temporal_window,
+            )
+            frame_buffer = deque(frame_buffer, maxlen=target_temporal_window)
 
         if cap is None or not cap.isOpened():
             logger.info(f"Opening RTSP: {s.rtsp_url}")
@@ -1518,12 +1532,21 @@ async def run_worker() -> None:
         # Temporal voting: find best detection across recent frames
         best_entry: FrameEntry | None = None
         best_det: Det | None = None
+        detection_frame_count = sum(1 for entry in frame_buffer if entry.detections)
+        min_required = max(1, min(int(s.temporal_min_detections), frame_buffer.maxlen or 1))
 
-        for entry in frame_buffer:
-            for d in entry.detections:
-                if best_det is None or d.conf > best_det.conf:
-                    best_det = d
-                    best_entry = entry
+        if detection_frame_count >= min_required:
+            for entry in frame_buffer:
+                for d in entry.detections:
+                    if best_det is None or d.conf > best_det.conf:
+                        best_det = d
+                        best_entry = entry
+        else:
+            # Not enough positive frames in the window. Use latest frame context but skip detections.
+            if len(frame_buffer) > 0:
+                best_entry = frame_buffer[-1]
+            else:
+                continue
 
         if best_entry is None:
             # No detections in window. Use latest frame context to ensure state machine runs.
@@ -1534,7 +1557,7 @@ async def run_worker() -> None:
 
         # Restore context from the best frame
         frame = best_entry.frame
-        detections = best_entry.detections
+        detections = best_entry.detections if best_det is not None else []
         motion_mask = best_entry.motion_mask
         xoff = best_entry.xoff
         yoff = best_entry.yoff

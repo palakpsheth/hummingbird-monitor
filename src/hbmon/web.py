@@ -984,6 +984,11 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
         parse_int("temporal_window_frames", "Temporal window frames", 1, 120)
     else:
         parsed["temporal_window_frames"] = 5
+    temporal_min_text = str(raw.get("temporal_min_detections", "")).strip()
+    if temporal_min_text:
+        parse_int("temporal_min_detections", "Temporal min detections", 1, 120)
+    else:
+        parsed["temporal_min_detections"] = 1
     parse_float("arrival_buffer_seconds", "Arrival buffer seconds", 0.0, 30.0)
     parse_float("departure_timeout_seconds", "Departure timeout seconds", 0.5, 60.0)
     parse_float("post_departure_buffer_seconds", "Post-departure buffer seconds", 0.0, 30.0)
@@ -1023,6 +1028,13 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
                 parsed["timezone"] = tz_clean
             except ZoneInfoNotFoundError:
                 errors.append("Timezone must be a valid IANA name (e.g., America/Los_Angeles) or 'local'.")
+
+    if (
+        "temporal_window_frames" in parsed
+        and "temporal_min_detections" in parsed
+        and parsed["temporal_min_detections"] > parsed["temporal_window_frames"]
+    ):
+        errors.append("Temporal min detections must be less than or equal to the temporal window size.")
 
     return parsed, errors
 
@@ -1175,6 +1187,7 @@ def make_app() -> Any:
             "fps_limit": f"{float(getattr(settings, 'fps_limit', 8.0)):.1f}",
 
             "temporal_window_frames": str(int(getattr(settings, "temporal_window_frames", 5))),
+            "temporal_min_detections": str(int(getattr(settings, "temporal_min_detections", 1))),
             "arrival_buffer_seconds": f"{float(getattr(settings, 'arrival_buffer_seconds', 5.0)):.1f}",
             "departure_timeout_seconds": f"{float(getattr(settings, 'departure_timeout_seconds', 2.0)):.1f}",
             "post_departure_buffer_seconds": f"{float(getattr(settings, 'post_departure_buffer_seconds', 3.0)):.1f}",
@@ -2541,7 +2554,7 @@ def make_app() -> Any:
 
     @app.get("/config", response_class=HTMLResponse)
     async def config_page(request: Request) -> HTMLResponse:
-        s = load_settings()
+        s = load_settings(apply_env_overrides=False)
         saved = request.query_params.get("saved") == "1"
         return templates.TemplateResponse(
             request,
@@ -2558,7 +2571,7 @@ def make_app() -> Any:
 
     @app.post("/config", response_class=HTMLResponse)
     async def config_save(request: Request) -> HTMLResponse:
-        s = load_settings()
+        s = load_settings(apply_env_overrides=False)
         form = await request.form()
         field_names = (
             "detect_conf",
@@ -2573,6 +2586,8 @@ def make_app() -> Any:
             "bg_min_overlap",
             # New fields
             "fps_limit",
+            "temporal_window_frames",
+            "temporal_min_detections",
 
             "arrival_buffer_seconds",
             "departure_timeout_seconds",
@@ -2622,6 +2637,8 @@ def make_app() -> Any:
         s.bg_min_overlap = parsed["bg_min_overlap"]
         # New fields
         s.fps_limit = parsed["fps_limit"]
+        s.temporal_window_frames = parsed["temporal_window_frames"]
+        s.temporal_min_detections = parsed["temporal_min_detections"]
 
         s.arrival_buffer_seconds = parsed["arrival_buffer_seconds"]
         s.departure_timeout_seconds = parsed["departure_timeout_seconds"]

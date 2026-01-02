@@ -276,6 +276,7 @@ The table below maps `.env.example` variables to their defaults and whether they
 | --- | --- | --- |
 | `HBMON_FPS_LIMIT` | `25` | Yes |
 | `HBMON_TEMPORAL_WINDOW_FRAMES` | `5` | Yes |
+| `HBMON_TEMPORAL_MIN_DETECTIONS` | `1` | Yes |
 | `HBMON_ARRIVAL_BUFFER_SECONDS` | `5.0` | Yes |
 | `HBMON_DEPARTURE_TIMEOUT_SECONDS` | `2.0` | Yes |
 | `HBMON_POST_DEPARTURE_BUFFER_SECONDS` | `3.0` | Yes |
@@ -420,6 +421,9 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 - `HBMON_TEMPORAL_WINDOW_FRAMES` (default 5)
   - Frames kept in the temporal voting buffer to smooth detections across frames
   - Increase to reduce flicker, decrease for faster reaction to quick motion
+- `HBMON_TEMPORAL_MIN_DETECTIONS` (default 1)
+  - Minimum number of frames within the temporal window that must contain a detection
+  - Example: window 20 + min 3 requires detections in at least 3 of the last 20 frames
 
 ### YOLO Model Selection
 - `HBMON_YOLO_MODEL` (default `yolo11n.pt`)

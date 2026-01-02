@@ -99,6 +99,15 @@
         <input type="number" name="temporal_window_frames" step="1" min="1" max="120"
           value="{{ form_values.temporal_window_frames }}" required />
       </label>
+
+      <label class="stack">
+        <span>
+          <strong>Temporal min detections:</strong>
+          <span class="muted">(1–120). Minimum positive frames required within the temporal window.</span>
+        </span>
+        <input type="number" name="temporal_min_detections" step="1" min="1" max="120"
+          value="{{ form_values.temporal_min_detections }}" required />
+      </label>
     </fieldset>
 
     <!-- Detection Settings -->

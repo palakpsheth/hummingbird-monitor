@@ -81,6 +81,7 @@ def test_validate_detection_inputs():
         # New fields
         "fps_limit": "10",
         "temporal_window_frames": "5",
+        "temporal_min_detections": "1",
         "crop_padding": "0.10",
         "bg_rejected_cooldown_seconds": "3.0",
         "arrival_buffer_seconds": "5.0",
