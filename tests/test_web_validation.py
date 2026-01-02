@@ -26,6 +26,7 @@ def _base_raw() -> dict[str, str]:
         # New fields
         "fps_limit": "8",
         "temporal_window_frames": "5",
+        "temporal_min_detections": "1",
         "crop_padding": "0.05",
         "bg_rejected_cooldown_seconds": "3.0",
         "arrival_buffer_seconds": "5.0",
@@ -55,6 +56,21 @@ class TestValidateDetectionInputs:
         assert parsed["match_threshold"] == 0.25
         assert parsed["ema_alpha"] == 0.10
         assert parsed["timezone"] == "America/Los_Angeles"
+
+    def test_temporal_min_detections_exceeds_window(self, import_web, monkeypatch):
+        """Ensure min detections cannot exceed the temporal window size."""
+        web = import_web(monkeypatch)
+
+        raw = _base_raw()
+        raw["timezone"] = "local"
+        raw["temporal_window_frames"] = "5"
+        raw["temporal_min_detections"] = "6"
+
+        parsed, errors = web._validate_detection_inputs(raw)
+
+        assert parsed["temporal_window_frames"] == 5
+        assert parsed["temporal_min_detections"] == 6
+        assert any("Temporal min detections" in e for e in errors)
 
     def test_invalid_detect_conf_not_number(self, import_web, monkeypatch):
         """Test validation with invalid detect_conf."""
