@@ -139,7 +139,42 @@ def ui_page(page: Any) -> Any:
 
 
 @pytest.fixture(scope="session")
-def live_server_url() -> str:
+def ui_test_dirs(tmp_path_factory):
+    """
+    Session-scoped temporary directories for UI tests.
+    
+    This ensures the live server uses consistent directories across all UI tests,
+    avoiding database initialization issues with session-scoped fixtures.
+    """
+    import os
+    tmp_base = tmp_path_factory.mktemp("ui_tests")
+    data_dir = tmp_base / "data"
+    media_dir = tmp_base / "media"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    media_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Set environment variables for the session
+    old_data_dir = os.environ.get("HBMON_DATA_DIR")
+    old_media_dir = os.environ.get("HBMON_MEDIA_DIR")
+    
+    os.environ["HBMON_DATA_DIR"] = str(data_dir)
+    os.environ["HBMON_MEDIA_DIR"] = str(media_dir)
+    
+    yield {"data_dir": data_dir, "media_dir": media_dir}
+    
+    # Restore original values
+    if old_data_dir:
+        os.environ["HBMON_DATA_DIR"] = old_data_dir
+    else:
+        os.environ.pop("HBMON_DATA_DIR", None)
+    if old_media_dir:
+        os.environ["HBMON_MEDIA_DIR"] = old_media_dir
+    else:
+        os.environ.pop("HBMON_MEDIA_DIR", None)
+
+
+@pytest.fixture(scope="session")
+def live_server_url(ui_test_dirs) -> str:
     """Start a live FastAPI server for UI tests and return its base URL."""
     host = "127.0.0.1"
     port = _get_free_port()
