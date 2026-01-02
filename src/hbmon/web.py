@@ -1438,43 +1438,9 @@ def make_app() -> Any:
                 suffix = video_file.suffix.lower()
                 
                 # Extract video metadata using OpenCV
-                def _extract_video_metadata(path: Path) -> dict[str, Any]:
-                    """Extract video metadata using OpenCV."""
-                    metadata: dict[str, Any] = {}
-                    try:
-                        cv2 = _load_cv2()
-                        cap = cv2.VideoCapture(str(path))
-                        if cap.isOpened():
-                            # Get FPS
-                            fps_val = cap.get(cv2.CAP_PROP_FPS)
-                            if fps_val > 0:
-                                metadata["fps"] = round(fps_val, 2)
-                            
-                            # Get resolution
-                            width_val = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            height_val = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                            if width_val > 0 and height_val > 0:
-                                metadata["width"] = width_val
-                                metadata["height"] = height_val
-                            
-                            # Get frame count and duration
-                            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                            if frame_count > 0 and fps_val > 0:
-                                metadata["duration"] = round(frame_count / fps_val, 2)
-                            
-                            # Get codec (fourcc)
-                            fourcc_val = int(cap.get(cv2.CAP_PROP_FOURCC))
-                            if fourcc_val != 0:
-                                codec_str = "".join([chr((fourcc_val >> 8 * i) & 0xFF) for i in range(4)])
-                                metadata["fourcc"] = codec_str
-                            
-                            cap.release()
-                    except Exception:
-                        pass
-                    return metadata
-                
                 try:
-                    video_metadata = await _run_blocking(_extract_video_metadata, video_file)
+                    from hbmon.observation_tools import extract_video_metadata
+                    video_metadata = await _run_blocking(extract_video_metadata, video_file)
                     fps = video_metadata.get("fps")
                     width = video_metadata.get("width")
                     height = video_metadata.get("height")
