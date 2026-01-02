@@ -979,6 +979,11 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
     parse_odd_int("bg_motion_blur", "Background motion blur", 1, 99)
     parse_float("bg_min_overlap", "Background minimum overlap", 0.0, 1.0)
     # Full capture
+    temporal_text = str(raw.get("temporal_window_frames", "")).strip()
+    if temporal_text:
+        parse_int("temporal_window_frames", "Temporal window frames", 1, 120)
+    else:
+        parsed["temporal_window_frames"] = 5
     parse_float("arrival_buffer_seconds", "Arrival buffer seconds", 0.0, 30.0)
     parse_float("departure_timeout_seconds", "Departure timeout seconds", 0.5, 60.0)
     parse_float("post_departure_buffer_seconds", "Post-departure buffer seconds", 0.0, 30.0)
@@ -1169,6 +1174,7 @@ def make_app() -> Any:
             # New fields
             "fps_limit": f"{float(getattr(settings, 'fps_limit', 8.0)):.1f}",
 
+            "temporal_window_frames": str(int(getattr(settings, "temporal_window_frames", 5))),
             "arrival_buffer_seconds": f"{float(getattr(settings, 'arrival_buffer_seconds', 5.0)):.1f}",
             "departure_timeout_seconds": f"{float(getattr(settings, 'departure_timeout_seconds', 2.0)):.1f}",
             "post_departure_buffer_seconds": f"{float(getattr(settings, 'post_departure_buffer_seconds', 3.0)):.1f}",
@@ -1207,7 +1213,7 @@ def make_app() -> Any:
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
-        title = "Hummingbird Monitor"
+        title = os.getenv("HBMON_TITLE", "Hummingbird Monitor")
 
         cache_key = f"hbmon:index:{page}:{page_size}"
         cached = await cache_get_json(cache_key)

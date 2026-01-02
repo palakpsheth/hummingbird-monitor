@@ -19,6 +19,7 @@ def test_validate_detection_inputs_ok(monkeypatch):
             "bg_min_overlap": "0.20",
             # New fields
             "fps_limit": "10",
+            "temporal_window_frames": "5",
             "crop_padding": "0.10",
             "bg_rejected_cooldown_seconds": "3.0",
             "arrival_buffer_seconds": "5.0",
@@ -60,6 +61,7 @@ def test_validate_detection_inputs_errors(monkeypatch):
             "bg_motion_threshold": "bad",
             "bg_motion_blur": "4",
             "bg_min_overlap": "2",
+            "temporal_window_frames": "0",
         }
     )
     assert any("between 0.05 and 0.95" in e for e in errors)
