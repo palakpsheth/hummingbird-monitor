@@ -51,7 +51,7 @@ def pytest_collection_modifyitems(config, items):
     skip_marker = pytest.mark.skip(reason="Playwright browsers are not installed.")
     for item in items:
         if "tests/ui/" in item.nodeid:
-            item.add_marker(skip_marker) origin/main
+            item.add_marker(skip_marker)
 
 
 @pytest.fixture
