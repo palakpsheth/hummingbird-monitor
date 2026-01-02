@@ -144,6 +144,8 @@ from hbmon.db import (
     init_db,
     is_async_db_available,
 )
+from hbmon.annotation_state import normalize_annotation_summary
+from hbmon.annotation_storage import read_manifest
 from hbmon.models import Candidate, Embedding, Individual, Observation, _to_utc
 from hbmon.schema import HealthOut, RoiOut
 from hbmon.clustering import l2_normalize, suggest_split_two_groups
@@ -756,6 +758,87 @@ def _as_utc_str(dt: datetime | None) -> str | None:
     return _to_utc(dt).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _parse_iso_datetime(raw: str | None) -> datetime | None:
+    """Parse an ISO 8601 datetime string, accepting trailing Z for UTC."""
+    if not raw:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _safe_int(value: Any) -> int:
+    """Coerce a value to int, returning 0 on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _annotation_summary_for_observation(observation: "Observation") -> dict[str, Any]:
+    """Extract annotation summary metadata from an observation's extra_json."""
+    extra = observation.get_extra() or {}
+    summary: dict[str, Any] = {}
+    manifest_summary: dict[str, Any] = {}
+    if isinstance(extra, dict):
+        raw_summary = extra.get("annotation_summary")
+        if isinstance(raw_summary, dict):
+            summary = raw_summary
+    try:
+        manifest = read_manifest(observation.id)
+    except (TypeError, ValueError):
+        manifest = None
+    if isinstance(manifest, dict):
+        manifest_summary = manifest
+
+    if manifest_summary:
+        if not summary:
+            summary = manifest_summary
+        else:
+            for key in ("total_frames", "reviewed_frames", "pending_frames", "state", "last_updated"):
+                if key not in summary:
+                    summary[key] = manifest_summary.get(key)
+
+    total_frames = _safe_int(summary.get("total_frames"))
+    reviewed_frames = _safe_int(summary.get("reviewed_frames"))
+    pending_frames = _safe_int(summary.get("pending_frames"))
+
+    last_updated_at = _parse_iso_datetime(summary.get("last_updated"))
+    if last_updated_at is None and manifest_summary:
+        last_updated_at = _parse_iso_datetime(manifest_summary.get("last_updated"))
+    if last_updated_at is None:
+        last_updated_at = observation.ts or datetime.now(timezone.utc)
+        if last_updated_at.tzinfo is None:
+            last_updated_at = last_updated_at.replace(tzinfo=timezone.utc)
+
+    raw_state = summary.get("state")
+    normalized = normalize_annotation_summary(
+        total_frames=total_frames,
+        reviewed_frames=reviewed_frames,
+        pending_frames=pending_frames,
+        state=raw_state if isinstance(raw_state, str) else None,
+        last_updated_at=last_updated_at,
+    )
+
+    return {
+        "total_frames": normalized["total_frames"],
+        "reviewed_frames": normalized["reviewed_frames"],
+        "pending_frames": normalized["pending_frames"],
+        "last_updated_at": last_updated_at,
+        "last_updated_utc": normalized["last_updated"],
+        "state": normalized["state"],
+    }
+
+
 def _parse_date_filter(raw: str | None, *, end: bool = False) -> datetime | None:
     if not raw:
         return None
@@ -1328,6 +1411,114 @@ def make_app() -> Any:
                 last_capture_utc=last_capture_utc,
                 snapshot_src=snapshot_src,
                 ts=int(time.time()),
+            ),
+        )
+
+    @app.get("/annotate", response_class=HTMLResponse)
+    async def annotate_overview(
+        request: Request,
+        sort: str = "pending",
+        view: str = "all",
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> HTMLResponse:
+        s = load_settings()
+        obs = (await db.execute(select(Observation).order_by(desc(Observation.ts)))).scalars().all()
+
+        state_labels = {
+            "available": "Available",
+            "preprocessing": "Preprocessing",
+            "in_review": "Manual Review",
+            "completed": "Completed",
+        }
+
+        entries: list[dict[str, Any]] = []
+        for o in obs:
+            annotated = get_annotated_snapshot_path(o)
+            o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
+            summary = _annotation_summary_for_observation(o)
+            total_frames = summary["total_frames"]
+            reviewed_frames = summary["reviewed_frames"]
+            pending_frames = summary["pending_frames"]
+            progress_pct = int((reviewed_frames / total_frames) * 100) if total_frames > 0 else 0
+            state = summary["state"]
+            entry = {
+                "observation": o,
+                "total_frames": total_frames,
+                "reviewed_frames": reviewed_frames,
+                "pending_frames": pending_frames,
+                "progress_pct": progress_pct,
+                "last_updated_at": summary["last_updated_at"],
+                "last_updated_utc": summary["last_updated_utc"],
+                "state": state,
+                "state_label": state_labels.get(state, "Available"),
+            }
+
+            if view == "active" and state == "completed":
+                continue
+            if view == "completed" and state != "completed":
+                continue
+
+            entries.append(entry)
+
+        def normalize_dt(dt: datetime | None) -> datetime:
+            if dt is None:
+                return datetime.min.replace(tzinfo=timezone.utc)
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+
+        if sort == "newest":
+            entries.sort(key=lambda e: (normalize_dt(e["last_updated_at"]), e["observation"].id), reverse=True)
+        elif sort == "stale":
+            entries.sort(key=lambda e: (normalize_dt(e["last_updated_at"]), e["observation"].id))
+        else:
+            entries.sort(
+                key=lambda e: (
+                    e["pending_frames"],
+                    normalize_dt(e["last_updated_at"]),
+                    e["observation"].id,
+                ),
+                reverse=True,
+            )
+
+        grouped: dict[str, list[dict[str, Any]]] = {key: [] for key in state_labels}
+        for entry in entries:
+            grouped[entry["state"]].append(entry)
+
+        return templates.TemplateResponse(
+            request,
+            "annotate.html",
+            _context(
+                request,
+                "Annotate",
+                settings=s,
+                groups=grouped,
+                state_labels=state_labels,
+                sort=sort,
+                view=view,
+            ),
+        )
+
+    @app.get("/annotate/{obs_id}", response_class=HTMLResponse)
+    async def annotate_detail(
+        obs_id: int,
+        request: Request,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> HTMLResponse:
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        annotated = get_annotated_snapshot_path(o)
+        o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
+
+        return templates.TemplateResponse(
+            request,
+            "annotate_detail.html",
+            _context(
+                request,
+                f"Annotate #{o.id}",
+                observation=o,
             ),
         )
 

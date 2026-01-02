@@ -97,6 +97,142 @@ a:hover {
   text-align: right;
 }
 
+/* ───────────────────────── Annotation Overview ───────────────────────── */
+
+.annotate-section {
+  margin-top: 16px;
+}
+
+.annotate-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.annotate-list {
+  display: grid;
+  gap: 12px;
+}
+
+.annotate-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 85%, transparent);
+}
+
+.annotate-thumb img {
+  display: block;
+  width: 120px;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  object-fit: cover;
+}
+
+.annotate-title {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.annotate-state {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+}
+
+.annotate-meta {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.progress {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+  overflow: hidden;
+  margin: 8px 0;
+}
+
+.progress__bar {
+  height: 100%;
+  background: var(--accent);
+}
+
+.annotate-actions {
+  display: flex;
+  align-items: center;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.button-link:hover,
+.button-link:focus {
+  background: var(--btn-bg-hover);
+  text-decoration: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.annotate-placeholder {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+}
+
+.annotate-placeholder__preview img {
+  width: 100%;
+  max-width: 320px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  display: block;
+}
+
+@media (min-width: 720px) {
+  .annotate-placeholder {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .annotate-item {
+    grid-template-columns: 1fr;
+    text-align: left;
+  }
+
+  .annotate-actions {
+    width: 100%;
+  }
+
+  .annotate-actions .button-link {
+    width: 100%;
+  }
+}
+
 /* ───────────────────────── Top Bar ───────────────────────── */
 
 .topbar {

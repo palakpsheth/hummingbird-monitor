@@ -112,3 +112,23 @@ def test_models_dataclass_stubs():
     emb.set_vec(vec)
     unpacked = emb.get_vec()
     assert np.allclose(unpacked, vec)
+
+    frame = mod.AnnotationFrame(
+        id=10,
+        observation_id=obs.id,
+        frame_index=0,
+        frame_path="frames/obs/frame_000001.jpg",
+    )
+    assert frame.bird_present is False
+    assert frame.status == "queued"
+
+    box = mod.AnnotationBox(
+        id=11,
+        frame_id=frame.id,
+        class_id=0,
+        x=0.5,
+        y=0.5,
+        w=0.2,
+        h=0.2,
+    )
+    assert box.is_false_positive is False
