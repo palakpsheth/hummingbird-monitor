@@ -352,6 +352,14 @@ make docker-down     # docker compose down
 make clean-db        # remove local database file only (defaults to ./data)
 make clean-media     # remove local media files (defaults to ./data/media)
 make clean-data      # remove all local data (defaults to ./data)
+make clean-openvino-cache  # clear OpenVINO model cache (forces re-export)
+
+# Diagnostic and testing commands
+make test-e2e        # full end-to-end detection test (auto-restores config)
+make test-detection  # test YOLO on saved snapshots with tuning recommendations
+make check-health    # check pipeline health for silent failures
+make test-stream-list   # list observation videos for test streaming
+make test-stream-start  # start RTSP test server with latest video
 ```
 
 Run `make help` to list all available targets.
@@ -814,6 +822,47 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
   - camera offline / weak Wi‑Fi
   - upstream Wyze connectivity trouble
 
+### Detection not working (no observations despite birds)
+
+Use the built-in diagnostic scripts to isolate the issue:
+
+**1. Test YOLO directly on saved snapshots:**
+```bash
+# Quick test on last 5 observations
+make test-detection
+
+# Test specific observation with confidence sweep
+uv run python scripts/test_detection.py --observation-id 28 --sweep-conf
+
+# Test with different settings
+uv run python scripts/test_detection.py --conf 0.05 --min-area 400
+```
+
+**2. Replay observation video as test RTSP stream:**
+```bash
+# List available videos
+make test-stream-list
+
+# Start test RTSP server (in one terminal)
+make test-stream-start
+
+# In another terminal, update .env and restart worker:
+# HBMON_RTSP_URL=rtsp://localhost:8555/test
+docker compose restart hbmon-worker
+```
+
+**3. Interpret diagnostic output:**
+- `NO DETECTIONS FOUND` → Lower `detect_conf` in Config UI (try 0.05)
+- Detections filtered by `min_box_area` → Lower threshold in Config UI
+- Low confidence (< 0.15) → Consider larger YOLO model (yolo11s.pt)
+
+**4. Clear OpenVINO cache if model seems broken:**
+```bash
+make docker-down
+make clean-openvino-cache
+make docker-up-intel
+```
+
 ### Worker isn’t producing snapshots
 - Verify `HBMON_RTSP_URL` is correct in the worker container
 - Check logs:
@@ -910,6 +959,16 @@ To force CPU backend explicitly:
 HBMON_YOLO_BACKEND=pytorch  # PyTorch CPU
 # or
 HBMON_YOLO_BACKEND=openvino-cpu  # OpenVINO CPU (may be faster than PyTorch)
+```
+
+**Clear OpenVINO cache to force model re-export**
+
+If detection suddenly stops working (no detections despite birds being present), the cached OpenVINO model may be corrupted:
+```bash
+# Stop containers, clear cache, restart
+make docker-down
+make clean-openvino-cache
+make docker-up-intel
 ```
 
 ---
