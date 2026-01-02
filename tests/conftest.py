@@ -5,14 +5,23 @@ This conftest defines:
 - Fixtures for setting up safe test directories
 - Markers for unit and integration tests
 - Test data paths for integration tests
+- UI testing fixtures for Playwright and a live FastAPI server
 """
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 from pathlib import Path
+import socket
+import threading
+import time
+from typing import Any
 
 import pytest
 from hbmon import db
+from hbmon.web import get_app
+import uvicorn
 
 
 # Path to the integration test data directory
@@ -23,6 +32,23 @@ def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line("markers", "integration: marks tests as integration tests")
     config.addinivalue_line("markers", "unit: marks tests as unit tests")
+
+
+def _playwright_browsers_installed() -> bool:
+    if importlib.util.find_spec("playwright") is None:
+        return False
+    sync_playwright = importlib.import_module("playwright.sync_api").sync_playwright
+    with sync_playwright() as p:
+        return Path(p.chromium.executable_path).exists()
+
+
+def pytest_collection_modifyitems(config, items):
+    if _playwright_browsers_installed():
+        return
+    skip_marker = pytest.mark.skip(reason="Playwright browsers are not installed.")
+    for item in items:
+        if "tests/ui/" in item.nodeid:
+            item.add_marker(skip_marker)
 
 
 @pytest.fixture
@@ -71,3 +97,63 @@ def cleanup_db_engines():
     """
     yield
     db.reset_db_state()
+
+
+def _get_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _wait_for_port(host: str, port: int, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.05)
+    raise RuntimeError(f"Timed out waiting for server on {host}:{port}")
+
+
+@pytest.fixture(scope="session")
+def browser_type_launch_args() -> dict[str, bool]:
+    """Force Playwright browsers to launch in headless mode for CI-friendly UI tests."""
+    return {"headless": True}
+
+
+@pytest.fixture
+def playwright_ready() -> None:
+    """
+    Skip UI tests when Playwright browsers are not installed.
+
+    Install browsers with: uv run playwright install chromium
+    """
+    if importlib.util.find_spec("playwright") is None:
+        pytest.skip("Playwright is not installed.")
+    sync_playwright = importlib.import_module("playwright.sync_api").sync_playwright
+    with sync_playwright() as p:
+        executable = Path(p.chromium.executable_path)
+        if not executable.exists():
+            pytest.skip("Playwright browsers are not installed.")
+
+
+@pytest.fixture
+def ui_page(playwright_ready, page: Any) -> Any:
+    """Provide a Playwright page that is safe to use in UI tests."""
+    return page
+
+
+@pytest.fixture
+def live_server_url() -> str:
+    """Start a live FastAPI server for UI tests and return its base URL."""
+    host = "127.0.0.1"
+    port = _get_free_port()
+    config = uvicorn.Config(get_app(), host=host, port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    _wait_for_port(host, port)
+    yield f"http://{host}:{port}"
+    server.should_exit = True
+    thread.join(timeout=5)

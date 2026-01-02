@@ -982,6 +982,15 @@ Unit tests exercise the core logic without requiring heavy ML dependencies. They
 
 Integration tests require ML dependencies (PyTorch, YOLO, CLIP) and real test data. They are marked with `@pytest.mark.integration`.
 
+### UI Tests (Playwright)
+
+UI tests live under `tests/ui/` and drive the FastAPI UI with Playwright in headless mode (CI-friendly).
+Before running them locally, install the Playwright browser binaries:
+
+```bash
+uv run playwright install chromium
+```
+
 ### Test Data Structure
 
 Integration test data is located in `tests/integration/test_data/`. Each test case folder contains:

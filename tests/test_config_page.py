@@ -1,4 +1,4 @@
-from test_web_helpers import _import_web
+from .test_web_helpers import _import_web
 
 
 def test_validate_detection_inputs_ok(monkeypatch):
