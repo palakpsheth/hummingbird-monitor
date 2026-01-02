@@ -195,6 +195,9 @@ async def test_worker_pipeline_roi_cooldown_and_recorder(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "processing_dispatcher", _capture_dispatcher)
     monkeypatch.setattr(worker, "_load_yolo_model", lambda: (dummy_yolo, "dummy-device"))
 
+    # Reset instances list to prevent test pollution
+    _DummyBackgroundRecorder.instances.clear()
+
     settings = Settings()
     settings.rtsp_url = "rtsp://example"
     settings.camera_name = "camera"
@@ -240,6 +243,12 @@ async def test_worker_pipeline_roi_cooldown_and_recorder(tmp_path, monkeypatch):
         assert total == 1
 
     assert all(shape == (10, 10, 3) for shape in yolo_shapes)
+
+    # Verify cooldown prevented second visit: only one recorder should be created
+    assert len(_DummyBackgroundRecorder.instances) == 1, (
+        f"Expected exactly 1 BackgroundRecorder (cooldown should prevent second visit), "
+        f"but got {len(_DummyBackgroundRecorder.instances)}"
+    )
 
     assert _DummyBackgroundRecorder.instances
     recorder = _DummyBackgroundRecorder.instances[0]
