@@ -1713,3 +1713,121 @@ def test_export_observation_includes_roi(tmp_path, monkeypatch):
         metadata = json.loads(tf.extractfile(metadata_member).read().decode("utf-8"))
         assert metadata["original_observation"]["extra"]["snapshots"]["roi_path"] == "roi.jpg"
 
+
+
+def test_streaming_bitrate_no_video(tmp_path, monkeypatch):
+    """Test streaming bitrate endpoint when observation has no video."""
+    client = _setup_app(tmp_path, monkeypatch)
+    
+    with session_scope() as db:
+        obs = Observation(
+            species_label="Anna's Hummingbird",
+            species_prob=0.8,
+            snapshot_path="snap.jpg",
+            video_path=None,  # No video
+        )
+        db.add(obs)
+        db.commit()
+        obs_id = obs.id
+
+    r = client.get(f"/api/streaming_bitrate/{obs_id}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["bitrate_mbps"] is None
+
+
+def test_streaming_bitrate_no_cache(tmp_path, monkeypatch):
+    """Test streaming bitrate endpoint when cached compressed video doesn't exist."""
+    client = _setup_app(tmp_path, monkeypatch)
+    mdir = media_dir()
+    
+    # Create uncompressed video file
+    video_file = mdir / "clips" / "test.mp4"
+    video_file.parent.mkdir(parents=True, exist_ok=True)
+    video_file.write_bytes(b"fake video data" * 1000)
+    
+    with session_scope() as db:
+        obs = Observation(
+            species_label="Anna's Hummingbird",
+            species_prob=0.8,
+            snapshot_path="snap.jpg",
+            video_path="clips/test.mp4",
+        )
+        db.add(obs)
+        db.commit()
+        obs_id = obs.id
+
+    r = client.get(f"/api/streaming_bitrate/{obs_id}")
+    assert r.status_code == 200
+    data = r.json()
+    # Should return None when cache doesn't exist
+    assert data["bitrate_mbps"] is None
+
+
+def test_streaming_bitrate_with_cache(tmp_path, monkeypatch):
+    """Test streaming bitrate endpoint when cached compressed video exists."""
+    client = _setup_app(tmp_path, monkeypatch)
+    mdir = media_dir()
+    
+    # Create uncompressed video file (larger)
+    video_file = mdir / "clips" / "test.mp4"
+    video_file.parent.mkdir(parents=True, exist_ok=True)
+    video_file.write_bytes(b"x" * 100000)  # 100KB uncompressed
+    
+    # Create cached compressed version (smaller)
+    cache_dir = mdir / ".cache" / "compressed"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Calculate cache filename (matching the logic in web.py)
+    import hashlib
+    import os
+    crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
+    preset = os.getenv("HBMON_VIDEO_PRESET", "fast")
+    
+    with session_scope() as db:
+        obs = Observation(
+            species_label="Anna's Hummingbird",
+            species_prob=0.8,
+            snapshot_path="snap.jpg",
+            video_path="clips/test.mp4",
+        )
+        # Add video metadata with duration
+        obs.set_extra({
+            "media": {
+                "video": {
+                    "duration": 2.0,  # 2 seconds
+                    "fps": 30.0,
+                }
+            }
+        })
+        db.add(obs)
+        db.commit()
+        obs_id = obs.id
+    
+    cache_key = f"{obs_id}_{crf}_{preset}"
+    cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
+    cached_file = cache_dir / f"test_{cache_hash}.mp4"
+    cached_file.write_bytes(b"y" * 30000)  # 30KB compressed (~3x compression)
+    
+    r = client.get(f"/api/streaming_bitrate/{obs_id}")
+    assert r.status_code == 200
+    data = r.json()
+    
+    # Should have bitrate info
+    assert data["bitrate_mbps"] is not None
+    assert data["bitrate_mbps"] > 0
+    assert data["compression_ratio"] is not None
+    assert data["compression_ratio"] > 1.0  # Should be compressed
+    assert data["cached_size_kb"] is not None
+    assert data["source_size_kb"] is not None
+    
+    # Verify compression ratio is approximately 3.3x
+    assert 2.5 < data["compression_ratio"] < 4.0
+
+
+def test_streaming_bitrate_not_found(tmp_path, monkeypatch):
+    """Test streaming bitrate endpoint with non-existent observation."""
+    client = _setup_app(tmp_path, monkeypatch)
+    
+    r = client.get("/api/streaming_bitrate/99999")
+    assert r.status_code == 404

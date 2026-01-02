@@ -78,6 +78,10 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
   - Subsequent views: serves from cache instantly
   - Cache auto-refreshes when source video changes
 - **Video metadata**: FPS, resolution, duration, and codec information displayed in observation detail
+- **Streaming bitrate display**: Shows actual streaming bitrate and compression ratio after video loads
+  - Example: "Streaming: 2.45 Mbps (3.2x smaller)"
+  - Only appears after first view when cache exists
+  - Provides transparency about compression efficiency
 - **Configurable quality**: Adjust CRF (18-28) and encoding preset (fast/medium/slow) via environment variables
 - **Cache management**: Automatic cleanup of old cached files based on age (default: 7 days) and size (default: 10GB)
 - **ML training ready**: Pristine uncompressed videos preserve maximum detail for model fine-tuning

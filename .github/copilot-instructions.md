@@ -518,6 +518,17 @@ Videos are stored **uncompressed** on disk to preserve pristine quality for ML t
 2. **Streaming**: `/api/video/{obs_id}` endpoint compresses on first view
 3. **Caching**: Compressed versions cached in `/media/.cache/compressed/`
 4. **Cache Validation**: Auto-refreshes when source video changes (mtime check)
+5. **Bitrate Display**: `/api/streaming_bitrate/{obs_id}` endpoint provides dynamic streaming metrics
+
+### Streaming Bitrate Feature
+
+The observation detail page shows streaming bitrate information after video loads:
+
+- **Endpoint**: `/api/streaming_bitrate/{obs_id}` returns compressed video bitrate and compression ratio
+- **Calculation**: `(cached_file_size * 8) / (duration * 1_000_000)` for Mbps
+- **Display**: Shows "Streaming: X.X Mbps (Yx smaller)" below video metadata
+- **Timing**: Only appears after first view triggers compression (accurate metrics)
+- **Fallback**: Returns `null` if cache doesn't exist or duration unavailable
 
 ### Utilities (`observation_tools.py`)
 
@@ -537,4 +548,5 @@ The `observation_tools` module provides utilities for processing existing observ
 4. **Add tests** for new video processing utilities
 5. **Update README** with new configuration options
 6. **Document performance impact** (compression time, cache size)
+7. **Test streaming bitrate calculation** if modifying compression or caching logic
 
