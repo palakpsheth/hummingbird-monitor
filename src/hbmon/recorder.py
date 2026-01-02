@@ -78,6 +78,13 @@ class BackgroundRecorder:
             if not self.writer or not self.writer.isOpened():
                 self.error = "Failed to initialize any compatible VideoWriter"
                 logger.error(self.error)
+                # Drain queue to prevent blocking the main thread
+                while True:
+                    try:
+                        frame = self.queue.get_nowait()
+                        self.queue.task_done()
+                    except queue.Empty:
+                        break
                 return
 
             # Processing loop - write uncompressed frames

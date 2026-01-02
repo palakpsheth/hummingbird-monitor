@@ -54,7 +54,6 @@ import asyncio
 from collections import deque
 from enum import Enum
 import uuid
-from .recorder import BackgroundRecorder
 import os
 import shutil
 import subprocess
@@ -91,9 +90,11 @@ from hbmon.yolo_utils import resolve_predict_imgsz
 # these packages will raise at runtime.
 try:
     import cv2  # type: ignore
+    from .recorder import BackgroundRecorder
     _CV2_AVAILABLE = True
 except Exception:  # pragma: no cover
     cv2 = None  # type: ignore
+    BackgroundRecorder = None  # type: ignore
     _CV2_AVAILABLE = False
 
 try:
@@ -1166,7 +1167,7 @@ async def processing_dispatcher(queue: asyncio.Queue, clip: ClipModel) -> None:
         queue.task_done()
 
 
-def _load_yolo_model() -> Any:
+def _load_yolo_model() -> tuple[Any, str]:
     """
     Load YOLO model with optional OpenVINO backend for Intel GPU acceleration.
 
@@ -1190,13 +1191,13 @@ def _load_yolo_model() -> Any:
     # PyTorch backend (default)
     if backend == "pytorch":
         logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
-        return YOLO(model_name), "PyTorch"  # type: ignore[misc]
+        return YOLO(model_name, task="detect"), "PyTorch"  # type: ignore[misc]
 
     # OpenVINO backends
     if not is_openvino_available():
         logger.warning("OpenVINO not available, falling back to PyTorch")
         logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
-        return YOLO(model_name), "PyTorch"  # type: ignore[misc]
+        return YOLO(model_name, task="detect"), "PyTorch"  # type: ignore[misc]
 
     # Check GPU for openvino-gpu backend
     if backend == "openvino-gpu":
@@ -1224,7 +1225,7 @@ def _load_yolo_model() -> Any:
 
     if not ov_model_dir.exists():
         logger.info(f"Exporting {model_name} to OpenVINO format...")
-        yolo = YOLO(model_name)  # type: ignore[misc]
+        yolo = YOLO(model_name, task="detect")  # type: ignore[misc]
         try:
             # The export() method returns the path to the exported model directory.
             # Using dynamic=True allows variable input sizes (e.g. 1088x1920) without crashing OpenVINO.
@@ -1247,7 +1248,7 @@ def _load_yolo_model() -> Any:
     except Exception as e:
         logger.warning(f"Failed to load OpenVINO model: {e}")
         logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
-        return YOLO(model_name), "PyTorch"  # type: ignore[misc]
+        return YOLO(model_name, task="detect"), "PyTorch"  # type: ignore[misc]
 
 
 async def run_worker() -> None:
@@ -1532,7 +1533,6 @@ async def run_worker() -> None:
 
         # Restore context from the best frame
         frame = best_entry.frame
-        roi_frame = best_entry.roi_frame
         detections = best_entry.detections
         motion_mask = best_entry.motion_mask
         xoff = best_entry.xoff
@@ -1619,10 +1619,8 @@ async def run_worker() -> None:
                       visit_state = VisitState.RECORDING
                       logger.info("Visit RESUMED")
 
-                 # Update best candidate
-                 score = det.conf * 1000 + det.area # Simple score: prioritizes confidence then area? 
-                 # Actually area is large (e.g. 5000), conf is 0.8.
-                 # Let's use area * conf.
+                 # Update best candidate: prefer large, high-confidence detections
+                 # Score is proportional to bounding-box area scaled by confidence.
                  score = det.area * det.conf
 
                  if score > visit_best_score:
