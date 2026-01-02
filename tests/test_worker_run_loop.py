@@ -131,11 +131,6 @@ async def test_run_worker_single_iteration(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "_load_background_image", lambda: None)
     monkeypatch.setattr(worker, "_write_jpeg", lambda *args, **kwargs: None)
     monkeypatch.setattr(worker, "_draw_bbox", lambda frame, det, **kwargs: frame)
-    monkeypatch.setattr(
-        worker,
-        "_record_clip_from_rtsp",
-        lambda rtsp_url, out_path, seconds, max_fps=20.0: out_path,
-    )
     async def _noop_sleep(*args, **kwargs):
         return None
 
@@ -154,7 +149,6 @@ async def test_run_worker_single_iteration(tmp_path, monkeypatch):
     settings.rtsp_url = ""
     settings.camera_name = "camera"
     settings.fps_limit = 0.0
-    settings.clip_seconds = 0.1
     settings.detect_conf = 0.2
     settings.detect_iou = 0.5
     settings.min_box_area = 1
@@ -164,6 +158,9 @@ async def test_run_worker_single_iteration(tmp_path, monkeypatch):
     settings.ema_alpha = 0.2
     settings.crop_padding = 0.0
     settings.bg_subtraction_enabled = False
+    settings.arrival_buffer_seconds = 5.0
+    settings.departure_timeout_seconds = 2.0
+    settings.post_departure_buffer_seconds = 3.0
     monkeypatch.setattr(worker, "load_settings", lambda apply_env_overrides=False: settings)
 
     with pytest.raises(RuntimeError, match="stop loop"):

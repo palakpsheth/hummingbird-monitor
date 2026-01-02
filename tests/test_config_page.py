@@ -19,9 +19,11 @@ def test_validate_detection_inputs_ok(monkeypatch):
             "bg_min_overlap": "0.20",
             # New fields
             "fps_limit": "10",
-            "clip_seconds": "3.0",
             "crop_padding": "0.10",
             "bg_rejected_cooldown_seconds": "3.0",
+            "arrival_buffer_seconds": "5.0",
+            "departure_timeout_seconds": "2.0",
+            "post_departure_buffer_seconds": "3.0",
         }
     )
     assert errors == []
@@ -38,7 +40,6 @@ def test_validate_detection_inputs_ok(monkeypatch):
     assert parsed["bg_motion_blur"] == 5
     assert parsed["bg_min_overlap"] == 0.20
     assert parsed["fps_limit"] == 10.0
-    assert parsed["clip_seconds"] == 3.0
     assert parsed["crop_padding"] == 0.10
     assert parsed["bg_rejected_cooldown_seconds"] == 3.0
 

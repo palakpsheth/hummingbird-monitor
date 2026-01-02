@@ -512,166 +512,6 @@ def test_video_info_endpoint_not_found(tmp_path, monkeypatch):
     assert r.status_code == 404
 
 
-def test_stream_mjpeg_returns_503_when_rtsp_not_configured(tmp_path, monkeypatch):
-    """Test that /api/stream.mjpeg returns 503 when RTSP URL is not configured."""
-    client = _setup_app(tmp_path, monkeypatch)
-    # Clear RTSP URL to ensure it's not set
-    monkeypatch.delenv("HBMON_RTSP_URL", raising=False)
-    r = client.get("/api/stream.mjpeg")
-    assert r.status_code == 503
-    assert "RTSP URL not configured" in r.json()["detail"]
-
-
-def test_stream_mjpeg_streams_single_frame(tmp_path, monkeypatch):
-    """Test that /api/stream.mjpeg streams at least one frame when RTSP is configured."""
-    import numpy as np
-
-    monkeypatch.setenv("HBMON_RTSP_URL", "rtsp://example")
-
-    class DummyJpeg:
-        def __init__(self, payload: bytes):
-            self._payload = payload
-
-        def tobytes(self) -> bytes:
-            return self._payload
-
-    class DummyCV2:
-        IMWRITE_JPEG_QUALITY = 1
-        CAP_PROP_BUFFERSIZE = 2
-        INTER_AREA = 3
-        _open_calls = 0
-
-        class VideoCapture:
-            def __init__(self, url: str):
-                DummyCV2._open_calls += 1
-                self._opened = DummyCV2._open_calls == 1
-                self._reads = 0
-
-            def isOpened(self) -> bool:
-                return self._opened
-
-            def read(self):
-                self._reads += 1
-                if self._opened and self._reads == 1:
-                    return True, np.zeros((8, 8, 3), dtype=np.uint8)
-                return False, None
-
-            def release(self) -> None:
-                return None
-
-            def set(self, *args, **kwargs) -> None:
-                return None
-
-        @staticmethod
-        def imencode(ext: str, frame, params):
-            return True, DummyJpeg(b"jpeg-bytes")
-
-    monkeypatch.setitem(sys.modules, "cv2", DummyCV2)
-    monkeypatch.setattr("hbmon.web.time.sleep", lambda *args, **kwargs: None)
-
-    client = _setup_app(tmp_path, monkeypatch)
-    with client.stream("GET", "/api/stream.mjpeg") as response:
-        assert response.status_code == 200
-        chunk = next(response.iter_bytes())
-        assert b"--frame" in chunk
-
-
-def test_stream_mjpeg_resizes_before_encoding(tmp_path, monkeypatch):
-    """Test that MJPEG stream downsizes frames that exceed configured max dimensions."""
-    import numpy as np
-    from hbmon.web import MJPEGSettings, _resize_mjpeg_frame
-
-    settings = MJPEGSettings(
-        target_fps=10.0,
-        max_width=4,
-        max_height=4,
-        base_quality=70,
-        adaptive_enabled=False,
-        min_fps=4.0,
-        min_quality=40,
-        fps_step=1.0,
-        quality_step=5,
-    )
-
-    resized_to: list[tuple[int, int]] = []
-
-    class DummyJpeg:
-        def __init__(self, payload: bytes):
-            self._payload = payload
-
-        def tobytes(self) -> bytes:
-            return self._payload
-
-    class DummyCV2:
-        IMWRITE_JPEG_QUALITY = 1
-        CAP_PROP_BUFFERSIZE = 2
-        INTER_AREA = 3
-        _open_calls = 0
-
-        class VideoCapture:
-            def __init__(self, url: str):
-                DummyCV2._open_calls += 1
-                self._opened = DummyCV2._open_calls == 1
-                self._reads = 0
-
-            def isOpened(self) -> bool:
-                return self._opened
-
-            def read(self):
-                self._reads += 1
-                if self._opened and self._reads == 1:
-                    return True, np.zeros((6, 8, 3), dtype=np.uint8)
-                return False, None
-
-            def release(self) -> None:
-                return None
-
-            def set(self, *args, **kwargs) -> None:
-                return None
-
-        @staticmethod
-        def resize(frame, size, interpolation=None):
-            resized_to.append(size)
-            return np.zeros((size[1], size[0], 3), dtype=np.uint8)
-
-        @staticmethod
-        def imencode(ext: str, frame, params):
-            return True, DummyJpeg(b"jpeg-bytes")
-
-    frame = np.zeros((6, 8, 3), dtype=np.uint8)
-    resized = _resize_mjpeg_frame(frame, DummyCV2, settings)
-
-    assert resized.shape[:2] == (3, 4)
-    assert resized_to == [(4, 3)]
-
-
-def test_stream_mjpeg_adaptive_degrades_quality_on_slow_encode(tmp_path, monkeypatch):
-    """Test that adaptive MJPEG mode lowers quality when encoding exceeds budget."""
-    from hbmon.web import MJPEGSettings, _update_mjpeg_adaptive
-
-    settings = MJPEGSettings(
-        target_fps=10.0,
-        max_width=0,
-        max_height=0,
-        base_quality=70,
-        adaptive_enabled=True,
-        min_fps=4.0,
-        min_quality=40,
-        fps_step=1.0,
-        quality_step=5,
-    )
-
-    new_fps, new_quality = _update_mjpeg_adaptive(
-        10.0,
-        70,
-        settings,
-        encode_duration=1.0,
-    )
-
-    assert new_quality == 65
-    assert new_fps == 9.0
-
-
 def test_swagger_docs_endpoint(tmp_path, monkeypatch):
     """Test that the Swagger UI docs endpoint is accessible."""
     client = _setup_app(tmp_path, monkeypatch)
@@ -976,9 +816,11 @@ def test_config_save(tmp_path, monkeypatch):
         "bg_min_overlap": "0.15",
         # New fields
         "fps_limit": "10",
-        "clip_seconds": "3.0",
         "crop_padding": "0.10",
         "bg_rejected_cooldown_seconds": "3.0",
+        "arrival_buffer_seconds": "5.0",
+        "departure_timeout_seconds": "2.0",
+        "post_departure_buffer_seconds": "3.0",
     }, follow_redirects=False)
     assert r.status_code == 303
 
@@ -1790,9 +1632,11 @@ def test_config_save_complete(tmp_path, monkeypatch):
         "bg_min_overlap": "0.15",
         # New fields
         "fps_limit": "15",
-        "clip_seconds": "5.0",
         "crop_padding": "0.10",
         "bg_rejected_cooldown_seconds": "5.0",
+        "arrival_buffer_seconds": "5.0",
+        "departure_timeout_seconds": "2.0",
+        "post_departure_buffer_seconds": "3.0",
     }
     r = client.post("/config", data=data, follow_redirects=False)
     assert r.status_code == 303

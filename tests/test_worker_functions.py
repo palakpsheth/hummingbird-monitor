@@ -493,39 +493,6 @@ class TestConvertToH264:
         assert result is False
 
 
-class TestRecordClipOpencv:
-    """Tests for the _record_clip_opencv function."""
-
-    def test_record_clip_requires_cv2(self, monkeypatch, tmp_path):
-        """Test that _record_clip_opencv raises if cv2 is unavailable."""
-        monkeypatch.setattr(worker, "_CV2_AVAILABLE", False)
-
-        class DummyCap:
-            def read(self):
-                return True, np.zeros((10, 10, 3), dtype=np.uint8)
-
-        with pytest.raises(RuntimeError, match="OpenCV.*not installed"):
-            worker._record_clip_opencv(DummyCap(), tmp_path / "test.mp4", seconds=1.0)
-
-    def test_record_clip_read_failure(self, monkeypatch, tmp_path):
-        """Test that _record_clip_opencv raises on read failure."""
-        monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
-
-        class FailingCap:
-            def read(self):
-                return False, None
-
-        # Need to provide a fake cv2 module
-        fake_cv2 = types.SimpleNamespace(
-            VideoWriter=lambda *args: types.SimpleNamespace(isOpened=lambda: True, write=lambda x: None, release=lambda: None),
-            VideoWriter_fourcc=lambda *chars: 0,
-        )
-        monkeypatch.setattr(worker, "cv2", fake_cv2)
-
-        with pytest.raises(RuntimeError, match="Unable to read frame"):
-            worker._record_clip_opencv(FailingCap(), tmp_path / "test.mp4", seconds=1.0)
-
-
 class TestRunWorkerDependencies:
     """Tests for run_worker dependency checks."""
 

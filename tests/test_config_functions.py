@@ -75,7 +75,6 @@ class TestSettingsWithEnvOverrides:
         monkeypatch.setenv("HBMON_RTSP_URL", "rtsp://test")
         monkeypatch.setenv("HBMON_CAMERA_NAME", "testcam")
         monkeypatch.setenv("HBMON_FPS_LIMIT", "15")
-        monkeypatch.setenv("HBMON_CLIP_SECONDS", "3.5")
         monkeypatch.setenv("HBMON_DETECT_CONF", "0.40")
         monkeypatch.setenv("HBMON_DETECT_IOU", "0.50")
         monkeypatch.setenv("HBMON_MIN_BOX_AREA", "800")
@@ -90,7 +89,6 @@ class TestSettingsWithEnvOverrides:
         assert s.rtsp_url == "rtsp://test"
         assert s.camera_name == "testcam"
         assert s.fps_limit == 15.0
-        assert s.clip_seconds == 3.5
         assert s.detect_conf == 0.40
         assert s.detect_iou == 0.50
         assert s.min_box_area == 800

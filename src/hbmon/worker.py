@@ -46,13 +46,16 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
 import asyncio
 from collections import deque
+from enum import Enum
+import uuid
+from .recorder import BackgroundRecorder
 import os
 import shutil
 import subprocess
 import time
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -110,6 +113,11 @@ except ImportError:  # pragma: no cover
 
     def force_openvino_gpu_override() -> None:
         pass
+
+class VisitState(Enum):
+    IDLE = 0
+    RECORDING = 1
+    FINALIZING = 2
 
 
 # Default COCO class id for 'bird'. We attempt to resolve this from the loaded model
@@ -171,6 +179,19 @@ class CandidateItem:
     s: Settings | None = None
     is_rejected: bool = False
     rejected_reason: str | None = None
+    video_path: Path | None = None
+
+
+@dataclass
+class FrameEntry:
+    """Entry in the temporal voting buffer for multi-frame detection."""
+    frame: np.ndarray
+    roi_frame: np.ndarray
+    timestamp: float
+    detections: list[Det]
+    motion_mask: np.ndarray | None
+    xoff: int
+    yoff: int
 
 
 def _build_observation_media_paths(stamp: str, observation_uuid: str | None = None) -> ObservationMediaPaths:
@@ -768,140 +789,7 @@ def _convert_to_h264(input_path: Path, output_path: Path, *, timeout: float = 60
         return False
 
 
-def _record_clip_opencv(
-    cap: cv2.VideoCapture,
-    out_path: Path,
-    seconds: float,
-    *,
-    max_fps: float = 20.0,
-) -> Path:
-    """
-    Record a short clip from the existing VideoCapture, preferring AVC1 MP4 and
-    falling back to MP4V or AVI. Returns the actual path used for the clip.
 
-    After recording, if the codec used was not browser-compatible (e.g., mp4v),
-    the clip is post-processed with FFmpeg to convert to H.264 for browser playback.
-
-    This blocks while recording (simple + robust for early versions).
-    """
-    if not _CV2_AVAILABLE:
-        raise RuntimeError("OpenCV (cv2) is not installed; cannot record clips")
-    assert cv2 is not None  # for type checkers
-    _safe_mkdir(out_path.parent)
-
-    # Read one frame to get size
-    ok, frame = cap.read()
-    if not ok or frame is None:
-        raise RuntimeError("Unable to read frame for clip start")
-
-    h, w = frame.shape[:2]
-
-    # Prefer H.264/AVC for browser compatibility; fall back to MP4V then AVI.
-    # Track which codec we actually use to decide if FFmpeg conversion is needed.
-    writer = None
-    final_path = out_path
-    used_fourcc = ""
-    needs_conversion = False
-
-    for suffix, fourcc_str in [
-        (".mp4", "avc1"),
-        (".mp4", "H264"),
-        (".mp4", "mp4v"),
-        (".avi", "XVID"),
-    ]:
-        candidate_path = out_path.with_suffix(suffix)
-        fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
-        candidate = cv2.VideoWriter(str(candidate_path), fourcc, float(max_fps), (w, h))
-        if not candidate.isOpened():
-            candidate.release()
-            continue
-
-        writer = candidate
-        final_path = candidate_path
-        used_fourcc = fourcc_str
-        # mp4v (MPEG-4 Part 2) and XVID are not browser-compatible
-        needs_conversion = fourcc_str.lower() in ("mp4v", "xvid")
-        break
-
-    if writer is None:
-        raise RuntimeError("Unable to open VideoWriter for clip")
-
-    start = time.time()
-    writer.write(frame)
-
-    # Best-effort write frames for `seconds`
-    while time.time() - start < seconds:
-        ok, fr = cap.read()
-        if not ok or fr is None:
-            break
-        writer.write(fr)
-
-        # Throttle a bit (don't hammer CPU)
-        time.sleep(max(0.0, (1.0 / max_fps) * 0.2))
-
-    writer.release()
-
-    # Post-process with FFmpeg if we used a non-browser-compatible codec
-    if needs_conversion and final_path.exists():
-        print(f"[worker] Converting {used_fourcc} clip to H.264 for browser compatibility")
-        converted_path = final_path.with_stem(final_path.stem + "_h264").with_suffix(".mp4")
-
-        if _convert_to_h264(final_path, converted_path):
-            # Replace original with converted version
-            # Use the original stem but with .mp4 extension for the final name
-            target_path = final_path.parent / (final_path.stem + ".mp4")
-            try:
-                final_path.unlink()  # Remove original
-                converted_path.rename(target_path)
-                final_path = target_path
-                print(f"[worker] Successfully converted to H.264: {final_path}")
-            except Exception as e:
-                print(f"[worker] Failed to replace original with converted: {e}")
-                # Keep the converted file if rename failed
-                if converted_path.exists():
-                    final_path = converted_path
-        else:
-            print(f"[worker] FFmpeg conversion failed, keeping original {used_fourcc} file")
-            # Clean up partial converted file if it exists
-            if converted_path.exists():
-                try:
-                    converted_path.unlink()
-                except Exception:
-                    pass
-
-    return final_path
-
-
-def _record_clip_from_rtsp(
-    rtsp_url: str,
-    out_path: Path,
-    seconds: float,
-    *,
-    max_fps: float = 20.0,
-) -> Path:
-    if not _CV2_AVAILABLE:
-        raise RuntimeError("OpenCV is not available for clip recording")
-    assert cv2 is not None  # for type checkers
-
-    cap = cv2.VideoCapture(rtsp_url)
-    if not cap.isOpened():
-        try:
-            cap.release()
-        except Exception:
-            pass
-        raise RuntimeError("Unable to open RTSP stream for clip recording")
-
-    try:
-        try:
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
-        except Exception:
-            pass
-        return _record_clip_opencv(cap, out_path, seconds, max_fps=max_fps)
-    finally:
-        try:
-            cap.release()
-        except Exception:
-            pass
 
 
 def _bbox_with_padding(det: Det, frame_shape: tuple[int, int], pad_frac: float = 0.18) -> tuple[int, int, int, int]:
@@ -1023,11 +911,11 @@ async def _prepare_crop_and_clip(
     if clip is None:
         return crop, (None, 0.0), None
 
-    results = await asyncio.gather(
-        asyncio.to_thread(clip.predict_species_label_prob, crop),
-        asyncio.to_thread(clip.encode_embedding, crop)
-    )
-    (species_label, species_prob), emb = results
+    # Run sequentially to avoid OpenVINO "Infer Request is busy" errors
+    # Simultaneous calls to the same compiled model on GPU can cause race conditions
+    (species_label, species_prob) = await asyncio.to_thread(clip.predict_species_label_prob, crop)
+    emb = await asyncio.to_thread(clip.encode_embedding, crop)
+    
     return crop, (species_label, float(species_prob)), emb
 
 
@@ -1140,17 +1028,15 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
         await asyncio.gather(*roi_save_tasks)
 
         clip_rel = ""
-        try:
-            recorded_path = await asyncio.to_thread(
-                _record_clip_from_rtsp,
-                s.rtsp_url,
-                clip_path,
-                float(s.clip_seconds),
-                max_fps=20.0
-            )
-            clip_rel = str(recorded_path.relative_to(media_root))
-        except Exception as e:
-            logger.warning(f"clip record failed: {e}")
+        if item.video_path and item.video_path.exists():
+            # Use pre-recorded video from full visit capture
+            try:
+                clip_rel = str(item.video_path.relative_to(media_root))
+            except Exception as e:
+                logger.warning(f"Failed to resolve video path: {e}")
+        else:
+            # No video available
+            clip_rel = "clips/none.mp4"
 
         if background_img is not None:
             await _write_jpeg_async(snap_background_path, background_img)
@@ -1267,7 +1153,7 @@ def _load_yolo_model() -> Any:
       (overrides HBMON_INFERENCE_BACKEND if set)
 
     Returns:
-        Loaded YOLO model ready for inference.
+        tuple: (Loaded YOLO model, device_label string)
     """
     if not _YOLO_AVAILABLE:
         raise RuntimeError("ultralytics must be installed to load YOLO models")
@@ -1280,13 +1166,13 @@ def _load_yolo_model() -> Any:
     # PyTorch backend (default)
     if backend == "pytorch":
         logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
-        return YOLO(model_name, task="detect")  # type: ignore[misc]
+        return YOLO(model_name), "PyTorch"  # type: ignore[misc]
 
     # OpenVINO backends
     if not is_openvino_available():
         logger.warning("OpenVINO not available, falling back to PyTorch")
         logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
-        return YOLO(model_name, task="detect")  # type: ignore[misc]
+        return YOLO(model_name), "PyTorch"  # type: ignore[misc]
 
     # Check GPU for openvino-gpu backend
     if backend == "openvino-gpu":
@@ -1314,7 +1200,7 @@ def _load_yolo_model() -> Any:
 
     if not ov_model_dir.exists():
         logger.info(f"Exporting {model_name} to OpenVINO format...")
-        yolo = YOLO(model_name, task="detect")  # type: ignore[misc]
+        yolo = YOLO(model_name)  # type: ignore[misc]
         try:
             # The export() method returns the path to the exported model directory.
             # Using dynamic=True allows variable input sizes (e.g. 1088x1920) without crashing OpenVINO.
@@ -1325,7 +1211,7 @@ def _load_yolo_model() -> Any:
         except Exception as e:
             logger.warning(f"OpenVINO export failed: {e}")
             logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
-            return yolo
+            return yolo, "PyTorch"
 
     # Load OpenVINO model
     device = "GPU" if backend == "openvino-gpu" else "CPU"
@@ -1333,11 +1219,11 @@ def _load_yolo_model() -> Any:
 
     try:
         yolo = YOLO(str(ov_model_dir), task="detect")  # type: ignore[misc]
-        return yolo
+        return yolo, f"OpenVINO-{device}"
     except Exception as e:
         logger.warning(f"Failed to load OpenVINO model: {e}")
         logger.info(f"Loading YOLO model: {model_name} (PyTorch backend)")
-        return YOLO(model_name, task="detect")  # type: ignore[misc]
+        return YOLO(model_name), "PyTorch"  # type: ignore[misc]
 
 
 async def run_worker() -> None:
@@ -1361,8 +1247,8 @@ async def run_worker() -> None:
     ensure_dirs()
     await init_async_db()
 
-    # Load YOLO model (supports PyTorch or OpenVINO backends via HBMON_YOLO_BACKEND)
-    yolo = _load_yolo_model()
+    # Load YOLO model
+    yolo, yolo_device_label = _load_yolo_model()
 
     # Resolve the class id for 'bird' from the model's names mapping when possible.
     bird_class_id: int | None = None
@@ -1437,10 +1323,15 @@ async def run_worker() -> None:
     last_settings_load = 0.0
     settings: Settings | None = None
 
-    last_trigger = 0.0
+
     last_debug_log = 0.0
     last_logged_candidate_ts = 0.0
     candidate_log_times: deque[float] = deque()
+
+    # Temporal voting buffer: stores recent frames to catch birds visible for only 1-2 frames
+    temporal_window = int(os.getenv("HBMON_TEMPORAL_WINDOW_FRAMES", "5"))
+    frame_buffer: deque[FrameEntry] = deque(maxlen=temporal_window)
+    logger.info(f"Temporal voting enabled with window size: {temporal_window} frames")
 
     def get_settings() -> Settings:
         nonlocal last_settings_load, settings
@@ -1467,24 +1358,34 @@ async def run_worker() -> None:
         return settings
 
     consecutive_failures = 0
-    # Determine YOLO backend label for logging
-    _bend = (os.getenv("HBMON_YOLO_BACKEND") or os.getenv("HBMON_INFERENCE_BACKEND", "pytorch")).lower()
-    if "openvino" in _bend:
-        if "gpu" in _bend:
-            yolo_device_label = "OpenVINO-GPU"
-        else:
-            yolo_device_label = "OpenVINO-CPU"
-    elif "cuda" in _bend:
-        yolo_device_label = "PyTorch-CUDA"
-    else:
-        yolo_device_label = "PyTorch-CPU"
 
     logger.info(f"Producer loop started. YOLO backend: {yolo_device_label}")
+    
+    # Full Visit Capture State
+    visit_state = VisitState.IDLE
+    visit_recorder: BackgroundRecorder | None = None
+    visit_start_ts = 0.0
+    visit_last_seen_ts = 0.0
+    visit_best_candidate: CandidateItem | None = None
+    visit_best_score = 0.0
+    
+    # Arrival buffer: capture context before detection.
+    # Default 5.0s (e.g. 100 frames at 20fps). Tuning: 5.0s is good for "approach" capture.
+    arr_sec = float(os.getenv("HBMON_ARRIVAL_BUFFER_SECONDS", "5.0"))
+    arrival_window_frames = int(20.0 * arr_sec)
+    arrival_buffer: deque[np.ndarray] = deque(maxlen=arrival_window_frames)
+    logger.info(f"Arrival buffer initialized: {arrival_window_frames} frames ({arr_sec:.1f}s)")
     while True:
         s = get_settings()
         if not s.rtsp_url:
             await asyncio.sleep(2.0)
             continue
+
+        # Dynamic resizing of arrival buffer
+        target_arr_frames = int(20.0 * float(s.arrival_buffer_seconds))
+        if arrival_buffer.maxlen != target_arr_frames:
+             logger.info(f"Resizing arrival buffer: {arrival_buffer.maxlen} -> {target_arr_frames} frames ({s.arrival_buffer_seconds}s)")
+             arrival_buffer = deque(arrival_buffer, maxlen=target_arr_frames)
 
         if cap is None or not cap.isOpened():
             logger.info(f"Opening RTSP: {s.rtsp_url}")
@@ -1555,8 +1456,46 @@ async def run_worker() -> None:
              continue
 
         detections = _collect_bird_detections(results, int(s.min_box_area), bird_class_id)
-        if not detections:
-            continue
+        
+        # Update arrival ring buffer (raw frames for video)
+        arrival_buffer.append(frame.copy())
+
+        # Store frame in temporal buffer
+        frame_buffer.append(FrameEntry(
+            frame=frame.copy(),
+            roi_frame=roi_frame.copy(),
+            timestamp=time.time(),
+            detections=detections,
+            motion_mask=motion_mask.copy() if motion_mask is not None else None,
+            xoff=xoff,
+            yoff=yoff
+        ))
+
+        # Temporal voting: find best detection across recent frames
+        best_entry: FrameEntry | None = None
+        best_det: Det | None = None
+
+        for entry in frame_buffer:
+            for d in entry.detections:
+                if best_det is None or d.conf > best_det.conf:
+                    best_det = d
+                    best_entry = entry
+
+        if best_entry is None:
+            # No detections in window. Use latest frame context to ensure state machine runs.
+            if len(frame_buffer) > 0:
+                best_entry = frame_buffer[-1]
+            else:
+                continue
+
+        # Restore context from the best frame
+        frame = best_entry.frame
+        roi_frame = best_entry.roi_frame
+        detections = best_entry.detections
+        motion_mask = best_entry.motion_mask
+        xoff = best_entry.xoff
+        yoff = best_entry.yoff
+        bg_active = (motion_mask is not None)
 
         if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
              logger.debug(f"Found {len(detections)} bird detections.")
@@ -1583,43 +1522,111 @@ async def run_worker() -> None:
             for d, stats in rejected_entries:
                 logger.debug(f"REJECTED: p={d.conf:.2f} area={d.area} overlap={stats['bbox_overlap_ratio']:.2f} (min={s.bg_min_overlap})")
 
-        timestamp = time.time()
+        # Use timestamp from the selected frame
+        assert best_entry is not None
+        timestamp = best_entry.timestamp
 
         if det:
-            # Cooldown check
-            if (timestamp - last_trigger) >= float(s.cooldown_seconds):
-                # Accepted!
-                det_full = Det(x1=det.x1 + xoff, y1=det.y1 + yoff, x2=det.x2 + xoff, y2=det.y2 + yoff, conf=det.conf)
-                
-                # Snapshot settings
-                settings_snap = {
-                    "detect_conf": float(s.detect_conf),
-                    "bg_motion_threshold": int(s.bg_motion_threshold),
-                    "bg_motion_blur": int(s.bg_motion_blur),
-                    "bg_min_overlap": float(s.bg_min_overlap),
-                }
-                
-                item = CandidateItem(
-                    frame=frame.copy(),
-                    det_full=det_full,
-                    det=det,
-                    timestamp=timestamp,
-                    motion_mask=motion_mask.copy() if motion_mask is not None else None,
-                    background_img=background_img,
-                    settings_snapshot=settings_snap,
-                    roi_stats=_roi_motion_stats(motion_mask) if motion_mask is not None else {},
-                    bbox_stats=det_stats,
-                    bg_active=bg_active,
-                    s=s,
-                    is_rejected=False
-                )
-                queue.put_nowait(item)
-                last_trigger = timestamp
-                
-                if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
-                    print(f"[worker] [DEBUG] ACCEPTED: p={det.conf:.2f} area={det.area} pixels. Overlap: {det_stats.get('bbox_overlap_ratio', 0.0):.2f}")
-                else:
-                    print(f"[worker] Queued candidate (p={det.conf:.2f})")
+            pass # Replaced by logic below
+
+        # Determine if we have a valid bird
+        is_bird_present = (det is not None)
+        
+        # State Machine Logic
+        current_time = timestamp # Use frame timestamp
+        
+        # 1. Transitions & Actions
+        if is_bird_present:
+             visit_last_seen_ts = current_time
+             
+             if visit_state == VisitState.IDLE:
+                 # START RECORDING
+                 visit_state = VisitState.RECORDING
+                 visit_start_ts = current_time
+                 logger.info(f"Visit STARTED. Detection p={det.conf:.2f}")
+                 
+                 # Prepare video path
+                 visit_video_uuid = uuid.uuid4().hex
+                 stamp = time.strftime("%Y%m%d", time.localtime(current_time))
+                 video_dir = media_dir() / "clips" / stamp
+                 video_dir.mkdir(parents=True, exist_ok=True)
+                 visit_video_path = video_dir / f"{visit_video_uuid}.mp4"
+                 
+                 # Start recorder (approx 20fps)
+                 visit_recorder = BackgroundRecorder(visit_video_path, fps=20.0, width=frame.shape[1], height=frame.shape[0])
+                 visit_recorder.start()
+                 
+                 # Dump arrival buffer
+                 for f in arrival_buffer:
+                      visit_recorder.feed(f)
+                 
+                 # Reset best candidate tracking
+                 visit_best_candidate = None
+                 visit_best_score = -1.0
+             
+             if visit_state in (VisitState.RECORDING, VisitState.FINALIZING):
+                 if visit_state == VisitState.FINALIZING:
+                      # Bird returned! Resume recording
+                      visit_state = VisitState.RECORDING
+                      logger.info("Visit RESUMED")
+
+                 # Update best candidate
+                 score = det.conf * 1000 + det.area # Simple score: prioritizes confidence then area? 
+                 # Actually area is large (e.g. 5000), conf is 0.8.
+                 # Let's use area * conf.
+                 score = det.area * det.conf
+
+                 if score > visit_best_score:
+                     visit_best_score = score
+                     det_full = Det(x1=det.x1 + xoff, y1=det.y1 + yoff, x2=det.x2 + xoff, y2=det.y2 + yoff, conf=det.conf)
+                     
+                     visit_best_candidate = CandidateItem(
+                         frame=frame.copy(),
+                         det_full=det_full,
+                         det=det,
+                         timestamp=timestamp,
+                         motion_mask=motion_mask.copy() if motion_mask is not None else None,
+                         background_img=background_img,
+                         settings_snapshot={"detect_conf": float(s.detect_conf)},
+                         roi_stats={}, 
+                         bbox_stats=det_stats,
+                         bg_active=bg_active,
+                         s=s,
+                         is_rejected=False,
+                         video_path=visit_video_path 
+                     )
+
+        # 2. Continuous Actions (Recording) and Timeouts
+        if visit_state in (VisitState.RECORDING, VisitState.FINALIZING):
+             if visit_recorder:
+                 visit_recorder.feed(frame)
+        
+             # Check Departure
+             if visit_state == VisitState.RECORDING:
+                 dep_time = float(s.departure_timeout_seconds)
+                 if (current_time - visit_last_seen_ts) > dep_time:
+                     visit_state = VisitState.FINALIZING
+                     logger.info("Visit FINALIZING (bird left?)")
+            
+             elif visit_state == VisitState.FINALIZING:
+                 dep_time = float(s.departure_timeout_seconds)
+                 post_time = float(s.post_departure_buffer_seconds)
+                 if (current_time - visit_last_seen_ts) > (dep_time + post_time): # Total timeout
+                         # END VISIT
+                         visit_state = VisitState.IDLE
+                         if visit_recorder:
+                              visit_recorder.stop()
+                              visit_recorder = None
+                         
+                         # Process the best candidate
+                         if visit_best_candidate:
+                              queue.put_nowait(visit_best_candidate)
+                              duration = current_time - visit_start_ts
+                              logger.info(f"Visit ENDED. Queued best candidate (p={visit_best_candidate.det.conf:.2f}). Duration: {duration:.1f}s")
+                         else:
+                              logger.warning("Visit ended but no candidate found?")
+                         
+                         frame_buffer.clear()
 
         # Rejected ?
         log_rejected = env_bool("HBMON_BG_LOG_REJECTED", False)

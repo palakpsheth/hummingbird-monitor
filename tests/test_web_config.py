@@ -44,9 +44,11 @@ def _valid_form_data():
         "timezone": "local",
         # New fields
         "fps_limit": "8",
-        "clip_seconds": "2.0",
         "crop_padding": "0.05",
         "bg_rejected_cooldown_seconds": "3.0",
+        "arrival_buffer_seconds": "5.0",
+        "departure_timeout_seconds": "2.0",
+        "post_departure_buffer_seconds": "3.0",
     }
 
 def test_config_page_rendering(tmp_path, monkeypatch):

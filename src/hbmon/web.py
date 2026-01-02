@@ -55,7 +55,6 @@ import atexit
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 import csv
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from functools import partial
 import importlib.util
@@ -69,7 +68,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import threading
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import urlopen, Request as UrllibRequest
 from urllib.error import URLError, HTTPError
@@ -134,9 +132,6 @@ from hbmon.config import (
     background_dir,
     background_image_path,
     data_dir,
-    env_bool,
-    env_float,
-    env_int,
     ensure_dirs,
     load_settings,
     media_dir,
@@ -204,374 +199,13 @@ def _candidate_json_value(expr: Any, path: Sequence[str], dialect: str) -> Any |
     return None
 
 
-@dataclass(frozen=True)
-class MJPEGSettings:
-    target_fps: float
-    max_width: int
-    max_height: int
-    base_quality: int
-    adaptive_enabled: bool
-    min_fps: float
-    min_quality: int
-    fps_step: float
-    quality_step: int
 
 
-def _load_mjpeg_settings() -> MJPEGSettings:
-    target_fps = env_float("HBMON_MJPEG_FPS", 10.0)
-    if target_fps <= 0:
-        target_fps = 10.0
-    max_width = env_int("HBMON_MJPEG_MAX_WIDTH", 1280)
-    max_height = env_int("HBMON_MJPEG_MAX_HEIGHT", 720)
-    base_quality = env_int("HBMON_MJPEG_JPEG_QUALITY", 70)
-    adaptive_enabled = env_bool("HBMON_MJPEG_ADAPTIVE", False)
-    min_fps = env_float("HBMON_MJPEG_MIN_FPS", 4.0)
-    min_quality = env_int("HBMON_MJPEG_MIN_QUALITY", 40)
-    fps_step = env_float("HBMON_MJPEG_FPS_STEP", 1.0)
-    quality_step = env_int("HBMON_MJPEG_QUALITY_STEP", 5)
-
-    target_fps = max(0.5, target_fps)
-    min_fps = max(0.5, min(min_fps, target_fps))
-    fps_step = max(0.1, fps_step)
-    base_quality = max(10, min(base_quality, 100))
-    min_quality = max(10, min(min_quality, base_quality))
-    quality_step = max(1, quality_step)
-
-    return MJPEGSettings(
-        target_fps=target_fps,
-        max_width=max_width,
-        max_height=max_height,
-        base_quality=base_quality,
-        adaptive_enabled=adaptive_enabled,
-        min_fps=min_fps,
-        min_quality=min_quality,
-        fps_step=fps_step,
-        quality_step=quality_step,
-    )
 
 
-def _configure_mjpeg_capture(cap: Any, cv2: Any) -> None:
-    """Configure VideoCapture for low latency MJPEG streaming."""
-    try:
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    except Exception:
-        # Buffer size may not be supported on all backends; ignore silently
-        pass
 
 
-def _resize_mjpeg_frame(frame: Any, cv2: Any, settings: MJPEGSettings) -> Any:
-    if settings.max_width <= 0 and settings.max_height <= 0:
-        return frame
-    height, width = frame.shape[:2]
-    scale_w = (settings.max_width / width) if settings.max_width > 0 else 1.0
-    scale_h = (settings.max_height / height) if settings.max_height > 0 else 1.0
-    scale = min(1.0, scale_w, scale_h)
-    if scale >= 1.0:
-        return frame
-    new_width = max(1, int(width * scale))
-    new_height = max(1, int(height * scale))
-    return cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
 
-
-def _update_mjpeg_adaptive(
-    current_fps: float,
-    current_quality: int,
-    settings: MJPEGSettings,
-    encode_duration: float,
-) -> tuple[float, int]:
-    if not settings.adaptive_enabled or current_fps <= 0:
-        return current_fps, current_quality
-
-    budget = 1.0 / current_fps
-    new_fps = current_fps
-    new_quality = current_quality
-    if encode_duration > budget:
-        if new_quality > settings.min_quality:
-            new_quality = max(settings.min_quality, new_quality - settings.quality_step)
-        if new_fps > settings.min_fps:
-            new_fps = max(settings.min_fps, new_fps - settings.fps_step)
-    elif encode_duration < budget * 0.5:
-        if new_quality < settings.base_quality:
-            new_quality = min(settings.base_quality, new_quality + settings.quality_step)
-        if new_fps < settings.target_fps:
-            new_fps = min(settings.target_fps, new_fps + settings.fps_step)
-    return new_fps, new_quality
-
-
-def _decode_fourcc(raw_value: float | int) -> str:
-    if raw_value is None:
-        return ""
-    code = int(raw_value)
-    if code == 0:
-        return ""
-    chars = [chr((code >> (8 * i)) & 0xFF) for i in range(4)]
-    cleaned = "".join(chars).strip()
-    return cleaned if cleaned.isprintable() else ""
-
-
-class FrameBroadcaster:
-    """Background video capture that keeps a cached JPEG for MJPEG streaming."""
-
-    def __init__(self, rtsp_url: str, settings: MJPEGSettings | None = None) -> None:
-        self._rtsp_url = rtsp_url
-        self._settings = settings or _load_mjpeg_settings()
-        self._current_fps = self._settings.target_fps
-        self._current_quality = self._settings.base_quality
-        self._frame_interval = 1.0 / self._current_fps if self._current_fps > 0 else 0.0
-        self._lock = threading.Lock()
-        self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._clients = 0
-        self._latest_frame: bytes | None = None
-        self._latest_timestamp = 0.0
-        self._last_frame_shape: tuple[int, int] | None = None
-        self._last_frame_size = 0
-        self._last_encode_duration = 0.0
-        self._source_width = 0
-        self._source_height = 0
-        self._source_fps = 0.0
-        self._source_codec = ""
-
-    @property
-    def rtsp_url(self) -> str:
-        return self._rtsp_url
-
-    @property
-    def settings(self) -> MJPEGSettings:
-        return self._settings
-
-    def add_client(self) -> None:
-        thread = None
-        with self._lock:
-            self._clients += 1
-            thread = self._thread
-            if thread is not None and thread.is_alive() and not self._stop_event.is_set():
-                return
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=2.0)
-        with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                return
-            self._stop_event.clear()
-            self._thread = threading.Thread(target=self._run, name="hbmon-mjpeg", daemon=True)
-            self._thread.start()
-
-    def remove_client(self) -> None:
-        thread = None
-        with self._lock:
-            self._clients = max(0, self._clients - 1)
-            if self._clients == 0:
-                self._stop_event.set()
-                thread = self._thread
-        if thread is not None:
-            thread.join(timeout=2.0)
-
-    def shutdown(self) -> None:
-        self._stop_event.set()
-        thread = self._thread
-        if thread is not None:
-            thread.join(timeout=2.0)
-
-    def latest_frame(self) -> tuple[bytes | None, float]:
-        with self._lock:
-            return self._latest_frame, self._latest_timestamp
-
-    def diagnostics(self) -> dict[str, Any]:
-        now = time.monotonic()
-        with self._lock:
-            latest_timestamp = self._latest_timestamp
-            last_frame_size = self._last_frame_size
-            last_frame_shape = self._last_frame_shape
-            current_fps = self._current_fps
-            current_quality = self._current_quality
-            settings = self._settings
-            clients = self._clients
-            source_width = self._source_width
-            source_height = self._source_height
-            source_fps = self._source_fps
-            source_codec = self._source_codec
-            last_encode_duration = self._last_encode_duration
-
-        age_s = None if latest_timestamp <= 0 else max(0.0, now - latest_timestamp)
-        output_resolution = None
-        if last_frame_shape is not None:
-            output_resolution = f"{last_frame_shape[1]}x{last_frame_shape[0]}"
-        source_resolution = None
-        if source_width > 0 and source_height > 0:
-            source_resolution = f"{source_width}x{source_height}"
-
-        return {
-            "clients": clients,
-            "source": {
-                "resolution": source_resolution,
-                "fps": source_fps if source_fps > 0 else None,
-                "codec": source_codec or None,
-            },
-            "frame": {
-                "last_frame_age_s": age_s,
-                "last_frame_timestamp": latest_timestamp if latest_timestamp > 0 else None,
-                "last_frame_size_bytes": last_frame_size if last_frame_size > 0 else None,
-                "encode_ms": round(last_encode_duration * 1000.0, 2) if last_encode_duration > 0 else None,
-                "output_resolution": output_resolution,
-            },
-            "mjpeg": {
-                "adaptive_enabled": settings.adaptive_enabled,
-                "target_fps": settings.target_fps,
-                "current_fps": current_fps,
-                "min_fps": settings.min_fps,
-                "base_quality": settings.base_quality,
-                "current_quality": current_quality,
-                "min_quality": settings.min_quality,
-                "max_width": settings.max_width,
-                "max_height": settings.max_height,
-            },
-        }
-
-    def _open_capture(self, cv2: Any) -> Any | None:
-        cap = cv2.VideoCapture(self._rtsp_url)
-        if not cap.isOpened():
-            cap.release()
-            return None
-        _configure_mjpeg_capture(cap, cv2)
-        source_width = 0
-        source_height = 0
-        source_fps = 0.0
-        source_codec = ""
-        if hasattr(cap, "get"):
-            try:
-                source_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-                source_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-                source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-                source_codec = _decode_fourcc(cap.get(cv2.CAP_PROP_FOURCC) or 0)
-            except Exception:
-                source_width = 0
-                source_height = 0
-                source_fps = 0.0
-                source_codec = ""
-        with self._lock:
-            self._source_width = source_width
-            self._source_height = source_height
-            self._source_fps = source_fps
-            self._source_codec = source_codec
-        return cap
-
-    def _run(self) -> None:
-        cv2 = _load_cv2()
-        cap = None
-        last_frame_time = 0.0
-        # Exponential backoff for reconnection
-        reconnect_delay = 0.5
-        max_reconnect_delay = 10.0
-        consecutive_failures = 0
-        max_consecutive_failures = 5
-        try:
-            while not self._stop_event.is_set():
-                if cap is None:
-                    cap = self._open_capture(cv2)
-                    if cap is None:
-                        # Exponential backoff on connection failure
-                        consecutive_failures += 1
-                        if consecutive_failures >= max_consecutive_failures:
-                            reconnect_delay = min(reconnect_delay * 1.5, max_reconnect_delay)
-                        time.sleep(reconnect_delay)
-                        continue
-                    else:
-                        # Reset on successful connection
-                        consecutive_failures = 0
-                        reconnect_delay = 0.5
-
-                current_time = time.monotonic()
-                if current_time - last_frame_time < self._frame_interval:
-                    time.sleep(0.01)
-                    continue
-
-                try:
-                    ok, frame = cap.read()
-                except Exception:
-                    # Handle read errors gracefully
-                    ok, frame = False, None
-
-                if not ok or frame is None:
-                    try:
-                        cap.release()
-                    except Exception:
-                        pass
-                    cap = None
-                    consecutive_failures += 1
-                    # Brief delay before reconnect attempt
-                    time.sleep(min(0.2 * consecutive_failures, 2.0))
-                    continue
-
-                # Reset failure counter on successful frame read
-                consecutive_failures = 0
-                last_frame_time = current_time
-
-                try:
-                    frame = _resize_mjpeg_frame(frame, cv2, self._settings)
-                    encode_start = time.perf_counter()
-                    ok, jpeg = cv2.imencode(
-                        ".jpg",
-                        frame,
-                        [cv2.IMWRITE_JPEG_QUALITY, self._current_quality],
-                    )
-                    if not ok:
-                        continue
-                    encode_duration = time.perf_counter() - encode_start
-                    self._current_fps, self._current_quality = _update_mjpeg_adaptive(
-                        self._current_fps,
-                        self._current_quality,
-                        self._settings,
-                        encode_duration,
-                    )
-                    self._frame_interval = 1.0 / self._current_fps if self._current_fps > 0 else 0.0
-
-                    frame_bytes = jpeg.tobytes()
-                    with self._lock:
-                        self._latest_frame = frame_bytes
-                        self._latest_timestamp = current_time
-                        self._last_frame_shape = frame.shape[:2]
-                        self._last_frame_size = len(frame_bytes)
-                        self._last_encode_duration = encode_duration
-                except Exception:
-                    # Handle encoding errors gracefully, continue to next frame
-                    continue
-        finally:
-            if cap is not None:
-                try:
-                    cap.release()
-                except Exception:
-                    pass
-            with self._lock:
-                self._thread = None
-
-
-_FRAME_BROADCASTER: FrameBroadcaster | None = None
-_FRAME_BROADCASTER_LOCK = threading.Lock()
-
-
-def _get_frame_broadcaster(rtsp_url: str, settings: MJPEGSettings | None = None) -> FrameBroadcaster:
-    global _FRAME_BROADCASTER
-    with _FRAME_BROADCASTER_LOCK:
-        if (
-            _FRAME_BROADCASTER is None
-            or _FRAME_BROADCASTER.rtsp_url != rtsp_url
-            or (settings is not None and _FRAME_BROADCASTER.settings != settings)
-        ):
-            if _FRAME_BROADCASTER is not None:
-                _FRAME_BROADCASTER.shutdown()
-            _FRAME_BROADCASTER = FrameBroadcaster(rtsp_url, settings=settings)
-    return _FRAME_BROADCASTER
-
-
-def _shutdown_frame_broadcaster() -> None:
-    global _FRAME_BROADCASTER
-    with _FRAME_BROADCASTER_LOCK:
-        if _FRAME_BROADCASTER is not None:
-            _FRAME_BROADCASTER.shutdown()
-            _FRAME_BROADCASTER = None
-
-
-atexit.register(_shutdown_frame_broadcaster)
 
 
 def _normalize_timezone(tz: str | None) -> str:
@@ -1347,10 +981,14 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
     parse_int("bg_motion_threshold", "Background motion threshold", 0, 255)
     parse_odd_int("bg_motion_blur", "Background motion blur", 1, 99)
     parse_float("bg_min_overlap", "Background minimum overlap", 0.0, 1.0)
+    # Full capture
+    parse_float("arrival_buffer_seconds", "Arrival buffer seconds", 0.0, 30.0)
+    parse_float("departure_timeout_seconds", "Departure timeout seconds", 0.5, 60.0)
+    parse_float("post_departure_buffer_seconds", "Post-departure buffer seconds", 0.0, 30.0)
 
     # New fields
     parse_float("fps_limit", "FPS limit", 1.0, 60.0)
-    parse_float("clip_seconds", "Clip duration", 1.0, 30.0)
+
     parse_float("crop_padding", "Crop padding", 0.0, 0.5)
     parse_float("bg_rejected_cooldown_seconds", "Rejected cooldown", 0.0, 60.0)
 
@@ -1533,7 +1171,10 @@ def make_app() -> Any:
             "bg_min_overlap": f"{float(getattr(settings, 'bg_min_overlap', 0.15)):.2f}",
             # New fields
             "fps_limit": f"{float(getattr(settings, 'fps_limit', 8.0)):.1f}",
-            "clip_seconds": f"{float(getattr(settings, 'clip_seconds', 2.0)):.1f}",
+
+            "arrival_buffer_seconds": f"{float(getattr(settings, 'arrival_buffer_seconds', 5.0)):.1f}",
+            "departure_timeout_seconds": f"{float(getattr(settings, 'departure_timeout_seconds', 2.0)):.1f}",
+            "post_departure_buffer_seconds": f"{float(getattr(settings, 'post_departure_buffer_seconds', 3.0)):.1f}",
             "crop_padding": f"{float(getattr(settings, 'crop_padding', 0.05)):.2f}",
             "bg_log_rejected": "1" if getattr(settings, "bg_log_rejected", False) else "0",
             "bg_rejected_cooldown_seconds": f"{float(getattr(settings, 'bg_rejected_cooldown_seconds', 3.0)):.1f}",
@@ -2902,7 +2543,10 @@ def make_app() -> Any:
             "bg_min_overlap",
             # New fields
             "fps_limit",
-            "clip_seconds",
+
+            "arrival_buffer_seconds",
+            "departure_timeout_seconds",
+            "post_departure_buffer_seconds",
             "crop_padding",
             "bg_rejected_cooldown_seconds",
         )
@@ -2948,7 +2592,10 @@ def make_app() -> Any:
         s.bg_min_overlap = parsed["bg_min_overlap"]
         # New fields
         s.fps_limit = parsed["fps_limit"]
-        s.clip_seconds = parsed["clip_seconds"]
+
+        s.arrival_buffer_seconds = parsed["arrival_buffer_seconds"]
+        s.departure_timeout_seconds = parsed["departure_timeout_seconds"]
+        s.post_departure_buffer_seconds = parsed["post_departure_buffer_seconds"]
         s.crop_padding = parsed["crop_padding"]
         s.bg_log_rejected = parsed["bg_log_rejected"]
         s.bg_rejected_cooldown_seconds = parsed["bg_rejected_cooldown_seconds"]
@@ -3463,125 +3110,7 @@ def make_app() -> Any:
         )
 
 
-    @app.get("/api/stream.mjpeg")
-    async def stream_mjpeg() -> Any:
-        """
-        Stream live MJPEG video from the RTSP camera.
 
-        Returns a multipart/x-mixed-replace stream of JPEG frames.
-        This provides a true live video feed from the camera.
-
-        If the RTSP URL is not configured or the camera is unavailable,
-        returns an error response.
-        """
-        s = load_settings()
-        if not s.rtsp_url:
-            raise HTTPException(status_code=503, detail="RTSP URL not configured")
-
-        _load_cv2()
-        mjpeg_settings = _load_mjpeg_settings()
-        broadcaster = _get_frame_broadcaster(s.rtsp_url, mjpeg_settings)
-        broadcaster.add_client()
-        frame_interval = 1.0 / mjpeg_settings.target_fps
-
-        async def _wait_for_frame(timeout: float = 2.0) -> None:
-            start = time.monotonic()
-            while time.monotonic() - start < timeout:
-                frame_bytes, _ = broadcaster.latest_frame()
-                if frame_bytes:
-                    return
-                await anyio.sleep(0.01)
-
-        await _wait_for_frame()
-
-        from starlette.concurrency import iterate_in_threadpool
-
-        initial_frame, initial_timestamp = broadcaster.latest_frame()
-        initial_chunk = None
-        last_seen_timestamp = 0.0
-        last_update = time.monotonic()
-        if initial_frame:
-            initial_chunk = (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n"
-                b"Content-Length: " + str(len(initial_frame)).encode() + b"\r\n"
-                b"\r\n" + initial_frame + b"\r\n"
-            )
-            last_seen_timestamp = initial_timestamp
-            last_update = time.monotonic()
-
-        def _generate_frames() -> Iterator[bytes]:
-            nonlocal last_seen_timestamp, last_update
-            if initial_chunk is not None:
-                yield initial_chunk
-            # Increase timeout to 10s to prevent premature disconnects
-            # Frontend detects stale at 3.5s, so we give more buffer
-            stream_timeout = 10.0
-            last_yielded_frame: bytes | None = None
-            while True:
-                frame_bytes, frame_timestamp = broadcaster.latest_frame()
-                if frame_bytes:
-                    if frame_timestamp and frame_timestamp != last_seen_timestamp:
-                        last_seen_timestamp = frame_timestamp
-                        last_update = time.monotonic()
-                    last_yielded_frame = frame_bytes
-                    yield (
-                        b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n"
-                        b"Content-Length: " + str(len(frame_bytes)).encode() + b"\r\n"
-                        b"\r\n" + frame_bytes + b"\r\n"
-                    )
-                elif last_yielded_frame is not None:
-                    # Keep yielding last frame to maintain connection
-                    yield (
-                        b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n"
-                        b"Content-Length: " + str(len(last_yielded_frame)).encode() + b"\r\n"
-                        b"\r\n" + last_yielded_frame + b"\r\n"
-                    )
-                if time.monotonic() - last_update > stream_timeout:
-                    break
-                time.sleep(frame_interval)
-
-        async def generate_frames() -> AsyncIterator[bytes]:
-            iterator = _generate_frames()
-            try:
-                async for chunk in iterate_in_threadpool(iterator):
-                    yield chunk
-            finally:
-                await anyio.to_thread.run_sync(iterator.close)
-                broadcaster.remove_client()
-
-        return StreamingResponse(
-            generate_frames(),
-            media_type="multipart/x-mixed-replace; boundary=frame",
-        )
-
-    @app.get("/api/stream_diagnostics")
-    async def stream_diagnostics() -> dict[str, Any]:
-        """
-        Return diagnostic information about the live MJPEG stream.
-
-        Includes source stream properties, MJPEG encoding settings, and recent frame stats.
-        """
-        s = load_settings()
-        if not s.rtsp_url:
-            raise HTTPException(status_code=503, detail="RTSP URL not configured")
-
-        mjpeg_settings = _load_mjpeg_settings()
-        broadcaster = _get_frame_broadcaster(s.rtsp_url, mjpeg_settings)
-        data = broadcaster.diagnostics()
-
-        frame_data = data.get("frame", {})
-        mjpeg_data = data.get("mjpeg", {})
-        last_frame_size = frame_data.get("last_frame_size_bytes")
-        current_fps = mjpeg_data.get("current_fps")
-        if last_frame_size and current_fps and current_fps > 0:
-            frame_data["estimated_bitrate_kbps"] = round((last_frame_size * 8 * current_fps) / 1000.0, 2)
-        else:
-            frame_data["estimated_bitrate_kbps"] = None
-        data["frame"] = frame_data
-        return data
 
     @app.get("/api/video_info/{obs_id}")
     async def video_info(
