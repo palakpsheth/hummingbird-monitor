@@ -93,6 +93,8 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
   detector confidence) with compact thumbnails, a per-page selector, column visibility checklist (sensitivity
   fields hidden by default), links to raw/annotated/clip snapshots + video, multi-select + bulk delete, and
   horizontal scrolling for wide metadata + detail page
+- **Annotate**: grouped annotation overview with pipeline state, per-observation frame progress, and quick
+  links into the review workflow (placeholder until the full annotation UI ships)
 - **Candidates**: motion-rejected detections for review (thumbnails, overlap/confidence, label form, bulk delete)
 - **Individuals**: sortable list + detail page with prototypical snapshot and a paginated observations table with a per-page selector
 - **ROI calibration**: draw a box on the latest snapshot
@@ -100,6 +102,17 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Background image**: configure a reference background (select from observations, upload, or capture a live snapshot) with a paginated observation picker
 - **API Docs**: interactive Swagger UI for API exploration (`/docs`)
 - Page headers mirror the footer status line (current time, time zone, version, and commit).
+
+### Annotation workflow (in progress)
+- Frame-level annotation metadata lives in `Observation.extra_json.annotation_summary` and is normalized by
+  helper utilities for UI display and manifest sync.
+- Pipeline states tracked today: `available`, `preprocessing`, `in_review`, `completed`.
+- Helpers can persist summaries to manifests for durability across preprocessing runs.
+- Export layout under `/data/exports/annotations/`:
+  - `frames/{obs_id}/frame_000001.jpg`
+  - `labels/{obs_id}/frame_000001.txt`
+  - `boxes/{obs_id}/frame_000001.json`
+  - `manifest/{obs_id}.json`
 
 ---
 
@@ -140,6 +153,7 @@ This ensures the database is initialized by hbmon-web before the worker starts.
 - `/data/postgres` (volume): PostgreSQL data files
 - `/data/redis` (volume): Redis append-only files
 - `/media` (volume): snapshots (raw, annotated, CLIP crop) + clips
+- `/data/exports/annotations` (volume): extracted frames, labels, box JSON, and manifests
 
 ---
 
@@ -753,6 +767,7 @@ If GPU is unavailable, the worker automatically falls back:
 - **Obs CSV**: observations table
 - **Ind CSV**: individuals table
 - **Bundle tar.gz**: snapshots + clips (generated under `/data/exports/`)
+- **Annotation exports**: frames, labels, box JSON, and manifests under `/data/exports/annotations/`
 
 ### What to back up
 If you want a complete backup, copy:
@@ -1113,6 +1128,8 @@ hummingbird-monitor/
       web.py
       worker.py
       config.py
+      annotation_storage.py
+      annotation_state.py
       db.py
       models.py
       schema.py

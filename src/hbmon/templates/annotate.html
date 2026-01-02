@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Annotate</h1>
+    <div class="muted page-meta">
+      Current time:
+      <span data-current-time="true" data-timezone="{{ tz_value }}">--</span>
+      · TZ: <span>{{ tz_label }}</span>
+      · Version: <span>{{ app_version }}</span>
+      · Commit: <span>{{ git_commit }}</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <form class="inline" method="get" action="/annotate">
+      <label for="annotate-view">View:</label>
+      <select id="annotate-view" name="view">
+        <option value="all" {% if view == "all" %}selected{% endif %}>All observations</option>
+        <option value="active" {% if view == "active" %}selected{% endif %}>Active only</option>
+        <option value="completed" {% if view == "completed" %}selected{% endif %}>Completed only</option>
+      </select>
+
+      <label for="annotate-sort" style="margin-left:8px;">Sort by:</label>
+      <select id="annotate-sort" name="sort">
+        <option value="pending" {% if sort == "pending" %}selected{% endif %}>Pending frames</option>
+        <option value="newest" {% if sort == "newest" %}selected{% endif %}>Most recently updated</option>
+        <option value="stale" {% if sort == "stale" %}selected{% endif %}>Most stale</option>
+      </select>
+
+      <button type="submit">Apply</button>
+    </form>
+  </div>
+
+  {% set total_count = 0 %}
+  {% for state, items in groups.items() %}
+    {% set total_count = total_count + (items | length) %}
+  {% endfor %}
+
+  {% if total_count == 0 %}
+    <div class="card">
+      <p class="muted">No observations are ready for annotation yet.</p>
+    </div>
+  {% endif %}
+
+  {% for state, items in groups.items() %}
+    <section class="card annotate-section">
+      <div class="annotate-section__header">
+        <h2 class="page-subtitle">{{ state_labels[state] }}</h2>
+        <span class="muted">{{ items | length }} observations</span>
+      </div>
+
+      {% if items %}
+        <div class="annotate-list">
+          {% for entry in items %}
+            {% set o = entry.observation %}
+            <article class="annotate-item">
+              <a class="annotate-thumb" href="/annotate/{{ o.id }}">
+                <img
+                  src="/media/{{ o.display_snapshot_path }}"
+                  alt="Observation {{ o.id }}"
+                  loading="lazy"
+                  width="120"
+                  height="90"
+                />
+              </a>
+              <div class="annotate-body">
+                <div class="annotate-title">
+                  Observation #{{ o.id }}
+                  <span class="annotate-state">{{ entry.state_label }}</span>
+                </div>
+                <div class="muted annotate-meta">
+                  Observed:
+                  <span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span>
+                  · Last updated:
+                  {% if entry.last_updated_utc %}
+                    <span data-utc-ts="{{ entry.last_updated_utc }}">{{ entry.last_updated_utc }}</span>
+                  {% else %}
+                    <span class="muted">—</span>
+                  {% endif %}
+                </div>
+                <div class="progress">
+                  <div class="progress__bar" style="width: {{ entry.progress_pct }}%;"></div>
+                </div>
+                <div class="annotate-meta">
+                  Reviewed {{ entry.reviewed_frames }} / {{ entry.total_frames }}
+                  · Pending {{ entry.pending_frames }}
+                </div>
+              </div>
+              <div class="annotate-actions">
+                <a class="button-link" href="/annotate/{{ o.id }}">Review</a>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No observations in this stage.</p>
+      {% endif %}
+    </section>
+  {% endfor %}
+{% endblock %}

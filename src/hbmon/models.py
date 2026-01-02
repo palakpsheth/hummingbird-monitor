@@ -5,6 +5,8 @@ SQLAlchemy ORM models for hbmon.
 Tables:
 - individuals: 1 row per inferred hummingbird individual (cluster)
 - observations: 1 row per detection event (snapshot + clip + labels)
+- annotation_frames: frame-level annotations for per-observation review
+- annotation_boxes: box-level annotations (including false positives)
 - candidates: motion-rejected detections for review/labeling
 - embeddings: optional, stores per-observation embedding vectors (compressed blob)
 
@@ -43,6 +45,7 @@ try:
     # Attempt to import SQLAlchemy.  If it is unavailable this import will
     # raise ImportError and we will fall back to stubs.
     from sqlalchemy import (
+        Boolean,
         DateTime,
         Float,
         ForeignKey,
@@ -57,7 +60,7 @@ try:
     from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship  # type: ignore
     _SQLALCHEMY_AVAILABLE = True
 except Exception:  # pragma: no cover - executed when SQLAlchemy missing
-    DateTime = Float = ForeignKey = Integer = LargeBinary = String = Text = UniqueConstraint = Index = None  # type: ignore
+    Boolean = DateTime = Float = ForeignKey = Integer = LargeBinary = String = Text = UniqueConstraint = Index = None  # type: ignore
     DeclarativeBase = object  # type: ignore
     Mapped = mapped_column = relationship = None  # type: ignore
     _SQLALCHEMY_AVAILABLE = False
@@ -68,6 +71,8 @@ __all__ = [
     "Base",
     "Individual",
     "Observation",
+    "AnnotationFrame",
+    "AnnotationBox",
     "Candidate",
     "Embedding",
     "_pack_embedding",
@@ -270,6 +275,11 @@ if _SQLALCHEMY_AVAILABLE:
 
         # Relationship
         individual: Mapped["Individual | None"] = relationship(back_populates="observations")
+        annotation_frames: Mapped[list["AnnotationFrame"]] = relationship(
+            back_populates="observation",
+            cascade="all, delete-orphan",
+            passive_deletes=True,
+        )
 
         # ---------- Convenience ----------
 
@@ -319,6 +329,60 @@ if _SQLALCHEMY_AVAILABLE:
         @property
         def review_label(self) -> str | None:
             return _extract_review_label(self.get_extra())
+
+
+    class AnnotationFrame(Base):
+        __tablename__ = "annotation_frames"
+        __table_args__ = (
+            Index("ix_annotation_frames_obs_idx", "observation_id", "frame_index"),
+        )
+
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+        observation_id: Mapped[int] = mapped_column(
+            Integer,
+            ForeignKey("observations.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+        frame_index: Mapped[int] = mapped_column(Integer, nullable=False)
+        frame_path: Mapped[str] = mapped_column(String(512), nullable=False)
+        label_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+        bird_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+        status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+        reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+        updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+        reviewer: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+        observation: Mapped["Observation"] = relationship(back_populates="annotation_frames")
+        boxes: Mapped[list["AnnotationBox"]] = relationship(
+            back_populates="frame",
+            cascade="all, delete-orphan",
+            passive_deletes=True,
+        )
+
+
+    class AnnotationBox(Base):
+        __tablename__ = "annotation_boxes"
+        __table_args__ = (
+            Index("ix_annotation_boxes_frame", "frame_id"),
+        )
+
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+        frame_id: Mapped[int] = mapped_column(
+            Integer,
+            ForeignKey("annotation_frames.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+        class_id: Mapped[int] = mapped_column(Integer, nullable=False)
+        x: Mapped[float] = mapped_column(Float, nullable=False)
+        y: Mapped[float] = mapped_column(Float, nullable=False)
+        w: Mapped[float] = mapped_column(Float, nullable=False)
+        h: Mapped[float] = mapped_column(Float, nullable=False)
+        is_false_positive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+        source: Mapped[str] = mapped_column(String(32), nullable=False, default="auto")
+
+        frame: Mapped["AnnotationFrame"] = relationship(back_populates="boxes")
 
 
     class Candidate(Base):
@@ -482,6 +546,7 @@ else:
         video_path: str = ""
         extra_json: Optional[str] = None
         individual: Optional[Individual] = None
+        annotation_frames: List["AnnotationFrame"] = field(default_factory=list)
 
         @property
         def ts_utc(self) -> str:
@@ -529,6 +594,44 @@ else:
         @property
         def review_label(self) -> str | None:
             return _extract_review_label(self.get_extra())
+
+
+    @dataclass
+    class AnnotationFrame(Base):
+        """
+        Lightweight stand-in for the ``AnnotationFrame`` model used when SQLAlchemy
+        is unavailable.
+        """
+        id: int
+        observation_id: int
+        frame_index: int
+        frame_path: str
+        label_path: Optional[str] = None
+        bird_present: bool = False
+        status: str = "queued"
+        reviewed_at: Optional[datetime] = None
+        updated_at: datetime = field(default_factory=utcnow)
+        reviewer: Optional[str] = None
+        observation: Optional[Observation] = None
+        boxes: List["AnnotationBox"] = field(default_factory=list)
+
+
+    @dataclass
+    class AnnotationBox(Base):
+        """
+        Lightweight stand-in for the ``AnnotationBox`` model used when SQLAlchemy
+        is unavailable.
+        """
+        id: int
+        frame_id: int
+        class_id: int
+        x: float
+        y: float
+        w: float
+        h: float
+        is_false_positive: bool = False
+        source: str = "auto"
+        frame: Optional[AnnotationFrame] = None
 
 
     @dataclass

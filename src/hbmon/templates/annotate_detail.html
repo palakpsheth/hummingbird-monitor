@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Annotate #{{ observation.id }}</h1>
+    <div class="muted page-meta">
+      Observed:
+      <span data-utc-ts="{{ observation.ts_utc }}">{{ observation.ts_utc }}</span>
+      · TZ: <span>{{ tz_label }}</span>
+      · Version: <span>{{ app_version }}</span>
+      · Commit: <span>{{ git_commit }}</span>
+    </div>
+  </div>
+
+  <div class="card annotate-placeholder">
+    <div class="annotate-placeholder__preview">
+      <img
+        src="/media/{{ observation.display_snapshot_path }}"
+        alt="Observation {{ observation.id }}"
+        loading="lazy"
+        width="320"
+        height="240"
+      />
+    </div>
+    <div class="annotate-placeholder__copy">
+      <h2 class="page-subtitle">Annotation workspace coming soon</h2>
+      <p class="muted">
+        The full frame-by-frame annotation experience is under construction. For now,
+        you can review the observation details and media.
+      </p>
+      <a class="button-link" href="/observations/{{ observation.id }}">View observation detail</a>
+    </div>
+  </div>
+{% endblock %}
