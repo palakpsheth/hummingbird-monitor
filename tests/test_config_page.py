@@ -1,8 +1,8 @@
 from .test_web_helpers import _import_web
 
 
-def test_validate_detection_inputs_ok(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_validate_detection_inputs_ok(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     parsed, errors = web._validate_detection_inputs(
         {
             "detect_conf": "0.35",
@@ -45,8 +45,8 @@ def test_validate_detection_inputs_ok(monkeypatch):
     assert parsed["bg_rejected_cooldown_seconds"] == 3.0
 
 
-def test_validate_detection_inputs_errors(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_validate_detection_inputs_errors(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     _, errors = web._validate_detection_inputs(
         {
             "detect_conf": "1.5",
