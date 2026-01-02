@@ -1084,7 +1084,9 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
                 detection={
                     "box_confidence": float(det_full.conf),
                     "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
-                    "bbox_area": int(det_full.area)
+                    "bbox_area": int(det_full.area),
+                    "nms_iou_threshold": float(s.detect_iou),
+                    "background_subtraction_enabled": item.bg_active,
                 },
                 identification={
                     "individual_id": individual_id,
@@ -1553,7 +1555,15 @@ async def run_worker() -> None:
                  visit_video_path = video_dir / f"{visit_video_uuid}.mp4"
                  
                  # Start recorder (approx 20fps)
-                 visit_recorder = BackgroundRecorder(visit_video_path, fps=20.0, width=frame.shape[1], height=frame.shape[0])
+                 # Enable FFmpeg compression by default (can be disabled via env var)
+                 enable_compression = os.getenv("HBMON_VIDEO_COMPRESSION", "1") in ("1", "true", "yes", "on")
+                 visit_recorder = BackgroundRecorder(
+                     visit_video_path, 
+                     fps=20.0, 
+                     width=frame.shape[1], 
+                     height=frame.shape[0],
+                     compress=enable_compression
+                 )
                  visit_recorder.start()
                  
                  # Dump arrival buffer
@@ -1587,7 +1597,16 @@ async def run_worker() -> None:
                          timestamp=timestamp,
                          motion_mask=motion_mask.copy() if motion_mask is not None else None,
                          background_img=background_img,
-                         settings_snapshot={"detect_conf": float(s.detect_conf)},
+                         settings_snapshot={
+                              "detect_conf": float(s.detect_conf),
+                              "detect_iou": float(s.detect_iou),
+                              "min_box_area": int(s.min_box_area),
+                              "fps_limit": float(s.fps_limit),
+                              "cooldown_seconds": float(s.cooldown_seconds),
+                              "bg_subtraction_enabled": bool(s.bg_subtraction_enabled),
+                              "bg_subtraction_configured": bool(s.background_image),
+                              "background_image_available": background_img is not None,
+                          },
                          roi_stats={}, 
                          bbox_stats=det_stats,
                          bg_active=bg_active,
