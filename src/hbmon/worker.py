@@ -178,6 +178,7 @@ class CandidateItem:
     motion_mask: np.ndarray | None = None
     background_img: np.ndarray | None = None
     settings_snapshot: dict[str, Any] | None = None
+    temporal_stats: dict[str, Any] | None = None
     roi_stats: dict[str, Any] | None = None
     bbox_stats: dict[str, Any] | None = None
     bg_active: bool = False
@@ -1108,6 +1109,7 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
                     "bbox_area": int(det_full.area),
                     "nms_iou_threshold": float(s.detect_iou),
                     "background_subtraction_enabled": item.bg_active,
+                    "temporal_voting": item.temporal_stats or {},
                 },
                 identification={
                     "individual_id": individual_id,
@@ -1534,6 +1536,11 @@ async def run_worker() -> None:
         best_det: Det | None = None
         detection_frame_count = sum(1 for entry in frame_buffer if entry.detections)
         min_required = max(1, min(int(s.temporal_min_detections), frame_buffer.maxlen or 1))
+        temporal_stats = {
+            "window_frames": int(frame_buffer.maxlen or 1),
+            "positive_frames": int(detection_frame_count),
+            "min_required": int(min_required),
+        }
         if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
             logger.debug(
                 "Temporal voting: %s/%s frames with detections (min required: %s)",
@@ -1688,6 +1695,7 @@ async def run_worker() -> None:
                               "bg_subtraction_configured": bool(s.background_image),
                               "background_image_available": background_img is not None,
                           },
+                         temporal_stats=temporal_stats,
                          roi_stats={}, 
                          bbox_stats=det_stats,
                          bg_active=bg_active,
@@ -1764,6 +1772,7 @@ async def run_worker() -> None:
                               "bg_subtraction_configured": bool(s.background_image),
                               "background_image_available": background_img is not None,
                           },
+                          temporal_stats=temporal_stats,
                           roi_stats=_roi_motion_stats(motion_mask) if motion_mask is not None else {},
                           bbox_stats=rej_stats,
                           bg_active=bg_active,
