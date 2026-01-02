@@ -77,6 +77,7 @@ from hbmon.config import (
 )
 from hbmon.db import async_session_scope, init_async_db
 from hbmon.models import Candidate, Embedding, Individual, Observation
+from hbmon.observation_tools import extract_video_metadata
 from hbmon.yolo_utils import resolve_predict_imgsz
 
 # ---------------------------------------------------------------------------
@@ -1086,6 +1087,14 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
                 "background_path": media_paths.snapshot_background_rel if background_img is not None else ""
             }
             
+            # Extract video metadata if video exists
+            video_metadata = None
+            if item.video_path and item.video_path.exists():
+                try:
+                    video_metadata = extract_video_metadata(item.video_path)
+                except Exception as e:
+                    logger.warning(f"Failed to extract video metadata: {e}")
+            
             extra_data = _build_observation_extra_data(
                 observation_uuid=snap_id,
                 sensitivity=item.settings_snapshot or {},
@@ -1104,7 +1113,8 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
                     "species_label_final": species_label
                 },
                 snapshots=snapshots_data,
-                models=item.model_metadata or {}
+                models=item.model_metadata or {},
+                video=video_metadata
             )
             if item.roi_stats or item.bbox_stats:
                 extra_data["motion"] = {**(item.roi_stats or {}), **(item.bbox_stats or {})}
