@@ -66,6 +66,15 @@
 
       <label class="stack">
         <span>
+          <strong>Arrival buffer (seconds):</strong>
+          <span class="muted">(0–30). Pre-trigger buffer to capture frames before the first detection.</span>
+        </span>
+        <input type="number" name="arrival_buffer_seconds" step="0.1" min="0" max="30"
+          value="{{ form_values.arrival_buffer_seconds }}" required />
+      </label>
+
+      <label class="stack">
+        <span>
           <strong>Departure timeout (seconds):</strong>
           <span class="muted">(0.5–30). Time to wait with no detection before considering bird has left.</span>
         </span>
@@ -80,6 +89,15 @@
         </span>
         <input type="number" name="post_departure_buffer_seconds" step="0.1" min="0" max="30"
           value="{{ form_values.post_departure_buffer_seconds }}" required />
+      </label>
+
+      <label class="stack">
+        <span>
+          <strong>Temporal window (frames):</strong>
+          <span class="muted">(1–120). Frames kept for temporal voting to smooth detections.</span>
+        </span>
+        <input type="number" name="temporal_window_frames" step="1" min="1" max="120"
+          value="{{ form_values.temporal_window_frames }}" required />
       </label>
     </fieldset>
 

@@ -224,6 +224,109 @@ SQLite fallback/testing:
 - `HBMON_DB_URL`: sync SQLite/Postgres URL for local tooling/tests (default: SQLite path)
 - `HBMON_SQLITE_BUSY_TIMEOUT_MS`: SQLite busy timeout in milliseconds (default: 5000)
 
+### Environment variables and hot reload
+
+The table below maps `.env.example` variables to their defaults and whether they can be changed live through the **Config UI** (hot reloadable). A restart is required for variables marked **No**.
+
+**Wyze bridge**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `WYZE_EMAIL` | `you@example.com` | No |
+| `WYZE_PASSWORD` | `your_password` | No |
+| `WYZE_API_KEY` | `` | No |
+| `WYZE_API_ID` | `` | No |
+| `WYZE_MFA_TYPE` | `` | No |
+| `WYZE_MFA_CODE` | `` | No |
+| `WYZE_REGION` | `` | No |
+| `WYZE_CAMERA_NAME` | `hummingbirdcam` | No |
+| `WYZE_QUALITY` | `HD30` | No |
+
+**Core app & paths**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_TITLE` | `Hummingbird Monitor` | No |
+| `HBMON_RTSP_URL` | (set in `.env`) | No |
+| `HBMON_RTSP_SNAPSHOT_URL` | (set in `.env`) | No |
+| `HBMON_CAMERA_NAME` | `hummingbirdcam` | No |
+| `GIT_COMMIT` | `unknown` | No |
+| `HBMON_DATA_DIR` | `/data` | No |
+| `HBMON_MEDIA_DIR` | `/data/media` | No |
+| `HBMON_CONFIG_PATH` | `/data/config.json` | No |
+
+**Database & cache**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_DB_ASYNC_URL` | `postgresql+asyncpg://hbmon:hbmon@hbmon-db:5432/hbmon` | No |
+| `HBMON_DB_URL` | (empty) | No |
+| `HBMON_DB_POOL_SIZE` | `5` | No |
+| `HBMON_DB_MAX_OVERFLOW` | `10` | No |
+| `HBMON_DB_POOL_TIMEOUT` | `30` | No |
+| `HBMON_DB_POOL_RECYCLE` | `1800` | No |
+| `HBMON_REDIS_URL` | `redis://hbmon-redis:6379/0` | No |
+| `HBMON_REDIS_TTL_SECONDS` | `5` | No |
+| `HBMON_WEB_WORKERS` | `4` | No |
+| `HBMON_SQLITE_BUSY_TIMEOUT_MS` | `5000` | No |
+
+**Performance, detection, and visit recording** (all hot reloadable)
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_FPS_LIMIT` | `25` | Yes |
+| `HBMON_TEMPORAL_WINDOW_FRAMES` | `5` | Yes |
+| `HBMON_ARRIVAL_BUFFER_SECONDS` | `5.0` | Yes |
+| `HBMON_DEPARTURE_TIMEOUT_SECONDS` | `2.0` | Yes |
+| `HBMON_POST_DEPARTURE_BUFFER_SECONDS` | `3.0` | Yes |
+| `HBMON_DETECT_CONF` | `0.30` | Yes |
+| `HBMON_DETECT_IOU` | `0.45` | Yes |
+| `HBMON_MIN_BOX_AREA` | `600` | Yes |
+| `HBMON_COOLDOWN_SECONDS` | `4` | Yes |
+| `HBMON_SNAPSHOT_TIMEOUT` | `10.0` | No |
+| `HBMON_SNAPSHOT_RETRIES` | `10` | No |
+
+**Classification & re-ID** (hot reloadable)
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_MIN_SPECIES_PROB` | `0.35` | Yes |
+| `HBMON_MATCH_THRESHOLD` | `0.25` | Yes |
+| `HBMON_EMA_ALPHA` | `0.10` | Yes |
+| `HBMON_CROP_PADDING` | `0.05` | Yes |
+| `HBMON_SPECIES_LIST` | (see `.env.example`) | No |
+| `HBMON_INFERENCE_BACKEND` | `cpu` | No |
+
+**Background subtraction**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_BG_SUBTRACTION` | `1` | Yes |
+| `HBMON_BG_MOTION_THRESHOLD` | `30` | Yes |
+| `HBMON_BG_MOTION_BLUR` | `5` | Yes |
+| `HBMON_BG_MIN_OVERLAP` | `0.15` | Yes |
+| `HBMON_BG_LOG_REJECTED` | `1` | Yes |
+| `HBMON_BG_REJECTED_COOLDOWN_SECONDS` | `3` | Yes |
+| `HBMON_BG_REJECTED_SAVE_CLIP` | `1` | Yes |
+| `HBMON_BG_REJECTED_MAX_PER_MINUTE` | `30` | No |
+| `HBMON_BG_SAVE_MASKS` | `1` | Yes |
+| `HBMON_BG_SAVE_MASK_OVERLAY` | `1` | Yes |
+| `HBMON_BG_MASK_FORMAT` | `png` | No |
+| `HBMON_BG_MASK_DOWNSCALE_MAX` | `0` | No |
+| `HBMON_DEBUG_BG` | `1` | No |
+| `HBMON_DEBUG_VERBOSE` | `1` | No |
+
+**Video streaming**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_VIDEO_STREAM_COMPRESSION` | `1` | No |
+| `HBMON_VIDEO_CRF` | `23` | No |
+| `HBMON_VIDEO_PRESET` | `fast` | No |
+| `HBMON_VIDEO_CACHE_MAX_AGE_DAYS` | `7` | No |
+| `HBMON_VIDEO_CACHE_MAX_SIZE_GB` | `10.0` | No |
+| `HBMON_FFMPEG_PATH` | `ffmpeg` | No |
+
 ---
 
 ## Developer shortcuts (Makefile)
@@ -337,9 +440,6 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
   - `HBMON_DEPARTURE_TIMEOUT_SECONDS` (default 2.0): Wait after last detection before marking departure
   - `HBMON_POST_DEPARTURE_BUFFER_SECONDS` (default 3.0): Continue recording after departure to capture the full exit
   - Visit videos stored uncompressed for ML training, compressed on-the-fly for browser streaming
-- **Legacy observation clips**:
-  - `HBMON_CLIP_SECONDS` (default ~2.0): Short clips for individual observations
-  - Post-trigger only (starts after detection)
 
 ### Video storage and streaming
 - Videos are stored **uncompressed** on disk to preserve pristine quality for ML training

@@ -44,6 +44,7 @@ def _valid_form_data():
         "timezone": "local",
         # New fields
         "fps_limit": "8",
+        "temporal_window_frames": "5",
         "crop_padding": "0.05",
         "bg_rejected_cooldown_seconds": "3.0",
         "arrival_buffer_seconds": "5.0",

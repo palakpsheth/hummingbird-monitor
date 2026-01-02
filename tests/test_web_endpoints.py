@@ -816,6 +816,7 @@ def test_config_save(tmp_path, monkeypatch):
         "bg_min_overlap": "0.15",
         # New fields
         "fps_limit": "10",
+        "temporal_window_frames": "5",
         "crop_padding": "0.10",
         "bg_rejected_cooldown_seconds": "3.0",
         "arrival_buffer_seconds": "5.0",
@@ -1632,6 +1633,7 @@ def test_config_save_complete(tmp_path, monkeypatch):
         "bg_min_overlap": "0.15",
         # New fields
         "fps_limit": "15",
+        "temporal_window_frames": "5",
         "crop_padding": "0.10",
         "bg_rejected_cooldown_seconds": "5.0",
         "arrival_buffer_seconds": "5.0",

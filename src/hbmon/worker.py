@@ -19,7 +19,10 @@ Expected env vars (common):
 - HBMON_RTSP_URL=rtsp://...
 - HBMON_CAMERA_NAME=hummingbirdcam
 - HBMON_FPS_LIMIT=8
-- HBMON_CLIP_SECONDS=2.0
+- HBMON_TEMPORAL_WINDOW_FRAMES=5
+- HBMON_ARRIVAL_BUFFER_SECONDS=5.0
+- HBMON_DEPARTURE_TIMEOUT_SECONDS=2.0
+- HBMON_POST_DEPARTURE_BUFFER_SECONDS=3.0
 - HBMON_CROP_PADDING=0.05 (padding fraction around bird bbox for CLIP; lower = tighter crop)
 
 Background subtraction extras:
@@ -1360,16 +1363,15 @@ async def run_worker() -> None:
             pass
 
     cap: cv2.VideoCapture | None = None  # type: ignore
-    last_settings_load = 0.0
-    settings: Settings | None = None
-
+    settings: Settings | None = load_settings(apply_env_overrides=False)
+    last_settings_load = time.time()
 
     last_debug_log = 0.0
     last_logged_candidate_ts = 0.0
     candidate_log_times: deque[float] = deque()
 
     # Temporal voting buffer: stores recent frames to catch birds visible for only 1-2 frames
-    temporal_window = int(os.getenv("HBMON_TEMPORAL_WINDOW_FRAMES", "5"))
+    temporal_window = int(settings.temporal_window_frames if settings else 5)
     frame_buffer: deque[FrameEntry] = deque(maxlen=temporal_window)
     logger.info(f"Temporal voting enabled with window size: {temporal_window} frames")
 
