@@ -203,7 +203,7 @@ def test_force_openvino_gpu_override_patches_compile(monkeypatch, caplog):
     patched_compile = FakeCore.compile_model
     openvino_utils.force_openvino_gpu_override()
     assert FakeCore.compile_model is patched_compile
-    assert getattr(FakeCore, "_is_hbmon_patched", False) is True
+    assert getattr(FakeCore, "_is_hbmon_patched", False)
 
 
 def test_force_openvino_gpu_override_passthrough_other_devices(monkeypatch):
@@ -246,6 +246,9 @@ def test_force_openvino_gpu_override_patches_runtime_core(monkeypatch):
     from hbmon import openvino_utils
 
     class FakeCore:
+        def __init__(self):
+            pass
+
         def compile_model(self, model, device_name=None, config=None):
             return device_name
 
@@ -261,7 +264,7 @@ def test_force_openvino_gpu_override_patches_runtime_core(monkeypatch):
 
     # Verify that both module locations are patched
     assert hasattr(FakeCore, "_is_hbmon_patched")
-    assert FakeCore._is_hbmon_patched is True
+    assert FakeCore._is_hbmon_patched
     
     # Verify runtime.Core also has the patched method
     assert openvino_runtime.Core.compile_model == FakeCore.compile_model
