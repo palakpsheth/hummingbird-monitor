@@ -61,6 +61,7 @@ import importlib.util
 import io
 import json
 from json import JSONDecodeError
+import logging
 import math
 import os
 import re
@@ -79,6 +80,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import anyio
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 """
 FastAPI web application for hbmon.
@@ -3178,14 +3181,19 @@ def make_app() -> Any:
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> Any:
         """
-        Stream a video file with proper HTTP range request support for browser playback.
+        Stream a video file with on-the-fly H.264 compression for browser playback.
         
-        This endpoint serves video files with:
+        Videos are stored uncompressed on disk to preserve quality for ML training.
+        When streaming to browsers, they are compressed on-the-fly using FFmpeg with:
         - HTTP 206 Partial Content support for seeking
+        - H.264 codec with configurable CRF (quality)
+        - Browser-compatible baseline profile
         - Proper Content-Type headers for MP4 files
-        - Content-Length and Accept-Ranges headers
         
-        This ensures videos can be streamed in the browser's <video> element.
+        This approach provides:
+        - Pristine uncompressed videos for ML training/export
+        - Efficient compressed streaming for browser playback
+        - No duplicate storage (only uncompressed on disk)
         """
         o = await db.get(Observation, obs_id)
         if o is None:
@@ -3199,10 +3207,95 @@ def make_app() -> Any:
         if not await _run_blocking(full_path.exists):
             raise HTTPException(status_code=404, detail="Video file not found")
         
-        # FileResponse in Starlette 0.50+ automatically handles range requests
-        # and returns 206 Partial Content when appropriate
+        # Check if on-the-fly compression is enabled
+        enable_compression = os.getenv("HBMON_VIDEO_STREAM_COMPRESSION", "1") in ("1", "true", "yes", "on")
+        
+        if not enable_compression:
+            # Serve uncompressed video directly
+            return FileResponse(
+                str(full_path),
+                media_type="video/mp4",
+                filename=full_path.name,
+            )
+        
+        # Compress on-the-fly using FFmpeg
+        # For range requests, we need to pre-compress to a temp file to support seeking
+        # (FFmpeg streaming output doesn't support random access)
+        
+        import hashlib
+        
+        # Create cache key from observation ID and compression settings
+        crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
+        preset = os.getenv("HBMON_VIDEO_PRESET", "fast")  # Use "fast" for on-the-fly to reduce latency
+        cache_key = f"{obs_id}_{crf}_{preset}"
+        cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
+        
+        # Use temp directory for compressed cache
+        temp_dir = media_dir() / ".cache" / "compressed"
+        await _run_blocking(temp_dir.mkdir, parents=True, exist_ok=True)
+        
+        cached_path = temp_dir / f"{full_path.stem}_{cache_hash}.mp4"
+        
+        # Check if cached compressed version exists and is newer than source
+        needs_compression = True
+        if await _run_blocking(cached_path.exists):
+            try:
+                source_mtime = (await _run_blocking(full_path.stat)).st_mtime
+                cache_mtime = (await _run_blocking(cached_path.stat)).st_mtime
+                if cache_mtime >= source_mtime:
+                    needs_compression = False
+            except OSError:
+                pass
+        
+        if needs_compression:
+            # Compress to cache using FFmpeg
+            def _compress_for_streaming(input_path: Path, output_path: Path) -> bool:
+                """Compress video for browser streaming."""
+                import subprocess
+                
+                ffmpeg_path = os.getenv("HBMON_FFMPEG_PATH", "ffmpeg")
+                
+                try:
+                    cmd = [
+                        ffmpeg_path,
+                        "-i", str(input_path),
+                        "-c:v", "libx264",
+                        "-crf", str(crf),
+                        "-preset", preset,
+                        "-profile:v", "baseline",
+                        "-pix_fmt", "yuv420p",
+                        "-movflags", "+faststart",
+                        "-y",
+                        str(output_path)
+                    ]
+                    
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=120
+                    )
+                    
+                    return result.returncode == 0
+                except Exception as e:
+                    logger.error(f"FFmpeg compression error: {e}")
+                    return False
+            
+            # Compress in background thread
+            success = await _run_blocking(_compress_for_streaming, full_path, cached_path)
+            
+            if not success:
+                # Fall back to uncompressed if compression fails
+                logger.warning(f"FFmpeg compression failed for observation {obs_id}, serving uncompressed")
+                return FileResponse(
+                    str(full_path),
+                    media_type="video/mp4",
+                    filename=full_path.name,
+                )
+        
+        # Serve compressed cached version
         return FileResponse(
-            str(full_path),
+            str(cached_path),
             media_type="video/mp4",
             filename=full_path.name,
         )

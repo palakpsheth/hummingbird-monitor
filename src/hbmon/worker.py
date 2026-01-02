@@ -1555,14 +1555,13 @@ async def run_worker() -> None:
                  visit_video_path = video_dir / f"{visit_video_uuid}.mp4"
                  
                  # Start recorder (approx 20fps)
-                 # Enable FFmpeg compression by default (can be disabled via env var)
-                 enable_compression = os.getenv("HBMON_VIDEO_COMPRESSION", "1") in ("1", "true", "yes", "on")
+                 # Videos are stored uncompressed for ML training quality
+                 # Compression happens on-the-fly during browser streaming
                  visit_recorder = BackgroundRecorder(
                      visit_video_path, 
                      fps=20.0, 
                      width=frame.shape[1], 
-                     height=frame.shape[0],
-                     compress=enable_compression
+                     height=frame.shape[0]
                  )
                  visit_recorder.start()
                  
