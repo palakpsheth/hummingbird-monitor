@@ -34,7 +34,7 @@ jobs:
         run: uv pip install -e ".[dev]"
 
       - name: Install Playwright browsers
-        run: uv run playwright install chromium
+        run: uv run playwright install --with-deps chromium
 
       - name: Ruff
         run: uv run ruff check .

@@ -32,6 +32,7 @@ def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line("markers", "integration: marks tests as integration tests")
     config.addinivalue_line("markers", "unit: marks tests as unit tests")
+    config.addinivalue_line("markers", "ui: marks tests as UI tests (requires Playwright)")
 
 
 def _playwright_browsers_installed() -> bool:
@@ -105,15 +106,23 @@ def _get_free_port() -> int:
         return sock.getsockname()[1]
 
 
-def _wait_for_port(host: str, port: int, timeout: float = 5.0) -> None:
+def _wait_for_port(host: str, port: int, timeout: float = 5.0, thread: threading.Thread | None = None) -> None:
     deadline = time.monotonic() + timeout
+    last_error = None
     while time.monotonic() < deadline:
         try:
             with socket.create_connection((host, port), timeout=0.2):
                 return
-        except OSError:
+        except OSError as e:
+            last_error = e
             time.sleep(0.05)
-    raise RuntimeError(f"Timed out waiting for server on {host}:{port}")
+    
+    error_msg = f"Timed out waiting for server on {host}:{port}"
+    if thread and not thread.is_alive():
+        error_msg += " (server thread died)"
+    if last_error:
+        error_msg += f" (last error: {last_error})"
+    raise RuntimeError(error_msg)
 
 
 @pytest.fixture(scope="session")
@@ -123,28 +132,12 @@ def browser_type_launch_args() -> dict[str, bool]:
 
 
 @pytest.fixture
-def playwright_ready() -> None:
-    """
-    Skip UI tests when Playwright browsers are not installed.
-
-    Install browsers with: uv run playwright install chromium
-    """
-    if importlib.util.find_spec("playwright") is None:
-        pytest.skip("Playwright is not installed.")
-    sync_playwright = importlib.import_module("playwright.sync_api").sync_playwright
-    with sync_playwright() as p:
-        executable = Path(p.chromium.executable_path)
-        if not executable.exists():
-            pytest.skip("Playwright browsers are not installed.")
-
-
-@pytest.fixture
-def ui_page(playwright_ready, page: Any) -> Any:
-    """Provide a Playwright page that is safe to use in UI tests."""
+def ui_page(page: Any) -> Any:
+    """Provide a Playwright page for UI tests."""
     return page
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def live_server_url() -> str:
     """Start a live FastAPI server for UI tests and return its base URL."""
     host = "127.0.0.1"
@@ -153,7 +146,11 @@ def live_server_url() -> str:
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
-    _wait_for_port(host, port)
+    _wait_for_port(host, port, thread=thread)
     yield f"http://{host}:{port}"
     server.should_exit = True
-    thread.join(timeout=5)
+    if thread.is_alive():
+        thread.join(timeout=5)
+        if thread.is_alive():
+            import logging
+            logging.warning("Server thread did not exit cleanly within timeout")

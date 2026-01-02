@@ -4,9 +4,11 @@ UI smoke tests for the dashboard page.
 
 from __future__ import annotations
 
+import pytest
 from playwright.sync_api import expect
 
 
+@pytest.mark.ui
 def test_dashboard_loads(live_server_url: str, ui_page) -> None:
     ui_page.goto(f"{live_server_url}/", wait_until="domcontentloaded")
 
