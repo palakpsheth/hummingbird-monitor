@@ -10,6 +10,9 @@ class BackgroundRecorder:
     """
     Writes video frames to disk in a background thread to avoid blocking
     the main processing loop.
+    
+    Videos are stored uncompressed to preserve quality for ML training.
+    Compression is applied on-the-fly during streaming (see web.py).
     """
     def __init__(self, out_path: Path, fps: float, width: int, height: int):
         self.out_path = out_path
@@ -52,15 +55,8 @@ class BackgroundRecorder:
                 ("XVID", ".avi"), # Last resort
             ]
             
-            
-            # Ensure out_path has correct suffix for the codec (though calling code usually handles this)
-            # We strictly respect the out_path suffix if provided, but we iterate codecs compatible with it?
-            # Actually, let's just try to open the writer.
-            
             for codec, ext in codecs:
                 fourcc = cv2.VideoWriter_fourcc(*codec)
-                # Note: If out_path suffix conflicts, the writer might fail or produce invalid file.
-                # Assuming out_path is .mp4 for now.
                 
                 logger.debug(f"Attempting to open VideoWriter with codec: {codec}")
                 try:
@@ -84,18 +80,18 @@ class BackgroundRecorder:
                 logger.error(self.error)
                 return
 
-            # Processing loop
+            # Processing loop - write uncompressed frames
             while True:
                 frame = self.queue.get()
                 if frame is None:
-                    # Sentinel received, draining done (implicit since we consume strictly FIFO)
+                    # Sentinel received, draining done
                     break
                 
                 self.writer.write(frame)
                 self.queue.task_done()
                 
             self.writer.release()
-            logger.info(f"Video saved to {self.out_path}")
+            logger.info(f"Uncompressed video saved to {self.out_path}")
 
         except Exception as e:
             self.error = str(e)

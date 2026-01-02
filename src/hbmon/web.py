@@ -20,6 +20,8 @@ API:
 - /api/frame.jpg          Latest snapshot (or placeholder)
 - /api/live_frame.jpg     Single snapshot from live RTSP feed
 - /api/roi  (GET/POST)    Get/set ROI (POST accepts form)
+- /api/video/{id}         Stream video with HTTP range request support
+- /api/streaming_bitrate/{id}  Get compressed video bitrate metrics
 - /api/video_info/{id}    Video file diagnostics for troubleshooting
 
 API Documentation:
@@ -35,17 +37,7 @@ Exports:
 Notes:
 - Media is served from HBMON_MEDIA_DIR (default /media)
 - DB is served from HBMON_DATA_DIR (default /data)
-
-MJPEG streaming environment variables:
-- HBMON_MJPEG_FPS: target MJPEG frame rate (default: 10)
-- HBMON_MJPEG_MAX_WIDTH: maximum MJPEG frame width (default: 1280, 0 disables)
-- HBMON_MJPEG_MAX_HEIGHT: maximum MJPEG frame height (default: 720, 0 disables)
-- HBMON_MJPEG_JPEG_QUALITY: JPEG quality for MJPEG stream (default: 70)
-- HBMON_MJPEG_ADAPTIVE: enable adaptive degradation (default: 0)
-- HBMON_MJPEG_MIN_FPS: lowest adaptive FPS floor (default: 4)
-- HBMON_MJPEG_MIN_QUALITY: lowest adaptive JPEG quality (default: 40)
-- HBMON_MJPEG_FPS_STEP: FPS step for adaptive changes (default: 1)
-- HBMON_MJPEG_QUALITY_STEP: quality step for adaptive changes (default: 5)
+- Videos stored uncompressed, compressed on-the-fly for browser streaming
 """
 
 from __future__ import annotations
@@ -61,6 +53,7 @@ import importlib.util
 import io
 import json
 from json import JSONDecodeError
+import logging
 import math
 import os
 import re
@@ -79,6 +72,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import anyio
 import numpy as np
+
+from hbmon.observation_tools import extract_video_metadata
+
+logger = logging.getLogger(__name__)
 
 """
 FastAPI web application for hbmon.
@@ -1429,13 +1426,40 @@ def make_app() -> Any:
             exists = await _run_blocking(video_file.exists)
             size_kb = 0.0
             suffix = ""
+            fps = None
+            width = None
+            height = None
+            duration = None
+            fourcc = None
+            
             if exists:
                 try:
                     size_kb = round((await _run_blocking(video_file.stat)).st_size / 1024, 2)
                 except OSError:
                     pass
                 suffix = video_file.suffix.lower()
-            video_info = {"exists": exists, "size_kb": size_kb, "suffix": suffix}
+                
+                # Extract video metadata using OpenCV
+                try:
+                    video_metadata = await _run_blocking(extract_video_metadata, video_file)
+                    fps = video_metadata.get("fps")
+                    width = video_metadata.get("width")
+                    height = video_metadata.get("height")
+                    duration = video_metadata.get("duration")
+                    fourcc = video_metadata.get("fourcc")
+                except Exception:
+                    logger.exception("Failed to extract video metadata for %s", video_file)
+            
+            video_info = {
+                "exists": exists,
+                "size_kb": size_kb,
+                "suffix": suffix,
+                "fps": fps,
+                "width": width,
+                "height": height,
+                "duration": duration,
+                "fourcc": fourcc,
+            }
 
         return templates.TemplateResponse(
             request,
@@ -3109,7 +3133,229 @@ def make_app() -> Any:
             },
         )
 
+    @app.get("/api/video/{obs_id}")
+    async def stream_video(
+        obs_id: int,
+        request: Request,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Any:
+        """
+        Stream a video file with on-the-fly H.264 compression for browser playback.
+        
+        Videos are stored uncompressed on disk to preserve quality for ML training.
+        When streaming to browsers, they are compressed on-the-fly using FFmpeg with:
+        - HTTP 206 Partial Content support for seeking
+        - H.264 codec with configurable CRF (quality)
+        - Browser-compatible baseline profile
+        - Proper Content-Type headers for MP4 files
+        
+        This approach provides:
+        - Pristine uncompressed videos for ML training/export
+        - Efficient compressed streaming for browser playback
+        - No duplicate storage (only uncompressed on disk)
+        """
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+        
+        video_path = o.video_path or ""
+        if not video_path:
+            raise HTTPException(status_code=404, detail="No video path for this observation")
+        
+        full_path = media_dir() / video_path
+        if not await _run_blocking(full_path.exists):
+            raise HTTPException(status_code=404, detail="Video file not found")
+        
+        # Check if on-the-fly compression is enabled
+        enable_compression = os.getenv("HBMON_VIDEO_STREAM_COMPRESSION", "1") in ("1", "true", "yes", "on")
+        
+        if not enable_compression:
+            # Serve uncompressed video directly
+            return FileResponse(
+                str(full_path),
+                media_type="video/mp4",
+                filename=full_path.name,
+            )
+        
+        # Compress on-the-fly using FFmpeg
+        # For range requests, we need to pre-compress to a temp file to support seeking
+        # (FFmpeg streaming output doesn't support random access)
+        
+        import hashlib
+        
+        # Create cache key from observation ID and compression settings
+        crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
+        preset = os.getenv("HBMON_VIDEO_PRESET", "fast")  # Use "fast" for on-the-fly to reduce latency
+        cache_key = f"{obs_id}_{crf}_{preset}"
+        cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
+        
+        # Use temp directory for compressed cache
+        temp_dir = media_dir() / ".cache" / "compressed"
+        await _run_blocking(temp_dir.mkdir, parents=True, exist_ok=True)
+        
+        cached_path = temp_dir / f"{full_path.stem}_{cache_hash}.mp4"
+        
+        # Check if cached compressed version exists and is newer than source
+        needs_compression = True
+        if await _run_blocking(cached_path.exists):
+            try:
+                source_mtime = (await _run_blocking(full_path.stat)).st_mtime
+                cache_mtime = (await _run_blocking(cached_path.stat)).st_mtime
+                if cache_mtime >= source_mtime:
+                    needs_compression = False
+            except OSError as exc:
+                logger.warning(
+                    "Failed to stat source or cached video for observation %s; recompressing. Error: %s",
+                    obs_id,
+                    exc,
+                )
+        
+        if needs_compression:
+            # Compress to cache using FFmpeg
+            def _compress_for_streaming(input_path: Path, output_path: Path) -> bool:
+                """Compress video for browser streaming."""
+                import subprocess
+                
+                ffmpeg_path = os.getenv("HBMON_FFMPEG_PATH", "ffmpeg")
+                
+                try:
+                    cmd = [
+                        ffmpeg_path,
+                        "-i", str(input_path),
+                        "-c:v", "libx264",
+                        "-crf", str(crf),
+                        "-preset", preset,
+                        "-profile:v", "baseline",
+                        "-pix_fmt", "yuv420p",
+                        "-movflags", "+faststart",
+                        "-y",
+                        str(output_path)
+                    ]
+                    
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=120
+                    )
+                    
+                    return result.returncode == 0
+                except Exception as e:
+                    logger.error(f"FFmpeg compression error: {e}")
+                    return False
+            
+            # Compress in background thread
+            success = await _run_blocking(_compress_for_streaming, full_path, cached_path)
+            
+            if not success:
+                # Fall back to uncompressed if compression fails
+                logger.warning(f"FFmpeg compression failed for observation {obs_id}, serving uncompressed")
+                return FileResponse(
+                    str(full_path),
+                    media_type="video/mp4",
+                    filename=full_path.name,
+                )
+        
+        # Serve compressed cached version
+        return FileResponse(
+            str(cached_path),
+            media_type="video/mp4",
+            filename=full_path.name,
+        )
 
+
+    @app.get("/api/streaming_bitrate/{obs_id}")
+    async def streaming_bitrate(
+        obs_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> dict[str, Any]:
+        """
+        Get streaming bitrate information for a cached compressed video.
+        
+        Returns bitrate and compression ratio if cached version exists.
+        This is called by the UI after video loads to show streaming efficiency.
+        """
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+        
+        video_path = o.video_path or ""
+        if not video_path:
+            return {"bitrate_mbps": None}
+        
+        full_path = media_dir() / video_path
+        if not await _run_blocking(full_path.exists):
+            return {"bitrate_mbps": None}
+        
+        # Get cached compressed video path
+        import hashlib
+        crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
+        preset = os.getenv("HBMON_VIDEO_PRESET", "fast")
+        cache_key = f"{obs_id}_{crf}_{preset}"
+        cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
+        
+        temp_dir = media_dir() / ".cache" / "compressed"
+        cached_path = temp_dir / f"{full_path.stem}_{cache_hash}.mp4"
+        
+        # Check if cached version exists
+        if not await _run_blocking(cached_path.exists):
+            return {"bitrate_mbps": None}
+        
+        try:
+            # Get file sizes
+            source_size = (await _run_blocking(full_path.stat)).st_size
+            cached_size = (await _run_blocking(cached_path.stat)).st_size
+            
+            # Extract duration from metadata in extra_json if available
+            duration = None
+            if o.extra_json:
+                extra = o.get_extra()
+                if isinstance(extra, dict) and "media" in extra:
+                    media = extra.get("media", {})
+                    if isinstance(media, dict) and "video" in media:
+                        video_meta = media.get("video", {})
+                        if isinstance(video_meta, dict):
+                            duration = video_meta.get("duration")
+            
+            # If duration not in metadata, extract from video using OpenCV
+            if not duration:
+                def _get_duration(path: Path) -> float | None:
+                    try:
+                        cv2 = _load_cv2()
+                        cap = cv2.VideoCapture(str(path))
+                        if cap.isOpened():
+                            fps = cap.get(cv2.CAP_PROP_FPS)
+                            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                            cap.release()
+                            if fps > 0 and frame_count > 0:
+                                return frame_count / fps
+                    except Exception:
+                        logger.debug(
+                            "Failed to extract video duration via OpenCV for %s; returning None",
+                            path,
+                            exc_info=True,
+                        )
+                    return None
+                
+                duration = await _run_blocking(_get_duration, full_path)
+            
+            if duration and duration > 0:
+                # Calculate bitrate in Mbps: (file_size_bytes * 8) / (duration_seconds * 1_000_000)
+                bitrate_mbps = (cached_size * 8) / (duration * 1_000_000)
+                compression_ratio = source_size / cached_size if cached_size > 0 else 1.0
+                
+                return {
+                    "bitrate_mbps": bitrate_mbps,
+                    "compression_ratio": compression_ratio,
+                    "cached_size_kb": round(cached_size / 1024, 2),
+                    "source_size_kb": round(source_size / 1024, 2),
+                }
+            
+            return {"bitrate_mbps": None}
+            
+        except Exception as e:
+            logger.error(f"Error calculating streaming bitrate: {e}")
+            return {"bitrate_mbps": None}
 
 
     @app.get("/api/video_info/{obs_id}")
@@ -3160,6 +3406,29 @@ def make_app() -> Any:
             except OSError as e:
                 result["stat_error"] = str(e)
             result["file_suffix"] = full_path.suffix.lower()
+
+            # Extract video metadata using OpenCV (FPS, resolution, codec)
+            try:
+                video_metadata = await _run_blocking(extract_video_metadata, full_path)
+                # Map observation_tools keys to API response keys
+                if "fps" in video_metadata:
+                    result["fps"] = video_metadata["fps"]
+                if "width" in video_metadata and "height" in video_metadata:
+                    result["width"] = video_metadata["width"]
+                    result["height"] = video_metadata["height"]
+                    result["resolution"] = f"{video_metadata['width']}×{video_metadata['height']}"
+                if "duration" in video_metadata:
+                    result["frame_count"] = video_metadata.get("frame_count")
+                    result["duration_seconds"] = video_metadata["duration"]
+                if "fourcc" in video_metadata:
+                    result["fourcc"] = video_metadata["fourcc"]
+            except Exception as exc:
+                logger.warning(
+                    "Failed to extract video metadata for observation %s at %s: %s",
+                    obs_id,
+                    full_path,
+                    exc,
+                )
 
             # Try to detect codec from file header
             codec_hint = "unknown"

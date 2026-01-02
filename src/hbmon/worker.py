@@ -77,6 +77,7 @@ from hbmon.config import (
 )
 from hbmon.db import async_session_scope, init_async_db
 from hbmon.models import Candidate, Embedding, Individual, Observation
+from hbmon.observation_tools import extract_video_metadata
 from hbmon.yolo_utils import resolve_predict_imgsz
 
 # ---------------------------------------------------------------------------
@@ -180,6 +181,7 @@ class CandidateItem:
     is_rejected: bool = False
     rejected_reason: str | None = None
     video_path: Path | None = None
+    model_metadata: dict[str, Any] | None = None  # YOLO and CLIP model information
 
 
 @dataclass
@@ -240,11 +242,13 @@ def _build_observation_extra_data(
     detection: dict[str, Any],
     identification: dict[str, Any],
     snapshots: dict[str, Any],
+    models: dict[str, Any] | None = None,
+    video: dict[str, Any] | None = None,
     review: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the extra metadata payload for an observation."""
 
-    return {
+    data: dict[str, Any] = {
         "observation_uuid": observation_uuid,
         "sensitivity": sensitivity,
         "detection": detection,
@@ -252,6 +256,11 @@ def _build_observation_extra_data(
         "snapshots": snapshots,
         "review": review if review is not None else {"label": None},
     }
+    if models is not None:
+        data["models"] = models
+    if video is not None:
+        data["video"] = video
+    return data
 
 
 def utcnow() -> datetime:
@@ -1078,13 +1087,23 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
                 "background_path": media_paths.snapshot_background_rel if background_img is not None else ""
             }
             
+            # Extract video metadata if video exists
+            video_metadata = None
+            if item.video_path and item.video_path.exists():
+                try:
+                    video_metadata = extract_video_metadata(item.video_path)
+                except Exception as e:
+                    logger.warning(f"Failed to extract video metadata: {e}")
+            
             extra_data = _build_observation_extra_data(
                 observation_uuid=snap_id,
                 sensitivity=item.settings_snapshot or {},
                 detection={
                     "box_confidence": float(det_full.conf),
                     "bbox_xyxy": [int(det_full.x1), int(det_full.y1), int(det_full.x2), int(det_full.y2)],
-                    "bbox_area": int(det_full.area)
+                    "bbox_area": int(det_full.area),
+                    "nms_iou_threshold": float(s.detect_iou),
+                    "background_subtraction_enabled": item.bg_active,
                 },
                 identification={
                     "individual_id": individual_id,
@@ -1093,7 +1112,9 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
                     "species_prob": species_prob,
                     "species_label_final": species_label
                 },
-                snapshots=snapshots_data
+                snapshots=snapshots_data,
+                models=item.model_metadata or {},
+                video=video_metadata
             )
             if item.roi_stats or item.bbox_stats:
                 extra_data["motion"] = {**(item.roi_stats or {}), **(item.bbox_stats or {})}
@@ -1249,6 +1270,10 @@ async def run_worker() -> None:
 
     # Load YOLO model
     yolo, yolo_device_label = _load_yolo_model()
+    
+    # Capture YOLO model metadata
+    yolo_model_name = os.getenv("HBMON_YOLO_MODEL", "yolo11n.pt")
+    yolo_backend = os.getenv("HBMON_YOLO_BACKEND") or os.getenv("HBMON_INFERENCE_BACKEND", "pytorch")
 
     # Resolve the class id for 'bird' from the model's names mapping when possible.
     bird_class_id: int | None = None
@@ -1276,10 +1301,25 @@ async def run_worker() -> None:
     # Start dispatcher
     queue: asyncio.Queue = asyncio.Queue()
     # Initialize CLIP model with backend selection
-    # Initialize CLIP model with backend selection
     # Priority: HBMON_DEVICE > HBMON_INFERENCE_BACKEND > "cpu"
     clip_backend = os.getenv("HBMON_DEVICE") or os.getenv("HBMON_INFERENCE_BACKEND", "cpu")
     clip = ClipModel(backend=clip_backend)
+    
+    # Capture CLIP model metadata
+    clip_model_name = clip.model_name
+    clip_pretrained = clip.pretrained
+    clip_backend_label = clip.backend
+    
+    # Prepare model metadata dict for all observations
+    model_metadata = {
+        "yolo_model": yolo_model_name,
+        "yolo_backend": yolo_backend,
+        "yolo_backend_label": yolo_device_label,
+        "clip_model": clip_model_name,
+        "clip_pretrained": clip_pretrained if clip_pretrained else "",
+        "clip_backend": clip_backend_label,
+    }
+    
     asyncio.create_task(processing_dispatcher(queue, clip))
 
     env = os.getenv("HBMON_SPECIES_LIST", "").strip()
@@ -1553,7 +1593,14 @@ async def run_worker() -> None:
                  visit_video_path = video_dir / f"{visit_video_uuid}.mp4"
                  
                  # Start recorder (approx 20fps)
-                 visit_recorder = BackgroundRecorder(visit_video_path, fps=20.0, width=frame.shape[1], height=frame.shape[0])
+                 # Videos are stored uncompressed for ML training quality
+                 # Compression happens on-the-fly during browser streaming
+                 visit_recorder = BackgroundRecorder(
+                     visit_video_path, 
+                     fps=20.0, 
+                     width=frame.shape[1], 
+                     height=frame.shape[0]
+                 )
                  visit_recorder.start()
                  
                  # Dump arrival buffer
@@ -1587,13 +1634,23 @@ async def run_worker() -> None:
                          timestamp=timestamp,
                          motion_mask=motion_mask.copy() if motion_mask is not None else None,
                          background_img=background_img,
-                         settings_snapshot={"detect_conf": float(s.detect_conf)},
+                         settings_snapshot={
+                              "detect_conf": float(s.detect_conf),
+                              "detect_iou": float(s.detect_iou),
+                              "min_box_area": int(s.min_box_area),
+                              "fps_limit": float(s.fps_limit),
+                              "cooldown_seconds": float(s.cooldown_seconds),
+                              "bg_subtraction_enabled": bool(s.bg_subtraction_enabled),
+                              "bg_subtraction_configured": bool(s.background_image),
+                              "background_image_available": background_img is not None,
+                          },
                          roi_stats={}, 
                          bbox_stats=det_stats,
                          bg_active=bg_active,
                          s=s,
                          is_rejected=False,
-                         video_path=visit_video_path 
+                         video_path=visit_video_path,
+                         model_metadata=model_metadata
                      )
 
         # 2. Continuous Actions (Recording) and Timeouts
@@ -1656,7 +1713,8 @@ async def run_worker() -> None:
                           bg_active=bg_active,
                           s=s,
                           is_rejected=True,
-                          rejected_reason="motion_rejected"
+                          rejected_reason="motion_rejected",
+                          model_metadata=model_metadata
                       )
                       queue.put_nowait(item)
                       last_logged_candidate_ts = timestamp

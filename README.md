@@ -71,6 +71,22 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
   - Candidate detail pages can export a similar bundle for motion-rejected detections.
   - Missing sensitivity/identification fields are backfilled with current defaults when exporting older observations.
 
+### Video storage and streaming
+- **Uncompressed storage**: Videos stored in pristine uncompressed format on disk for ML training and future use
+- **On-the-fly compression**: When streaming to browsers, videos are compressed using FFmpeg with intelligent caching
+  - First view: compresses to `/media/.cache/compressed/` (3-5 seconds)
+  - Subsequent views: serves from cache instantly
+  - Cache auto-refreshes when source video changes
+- **Video metadata**: FPS, resolution, duration, and codec information displayed in observation detail
+- **Streaming bitrate display**: Shows actual streaming bitrate and compression ratio after video loads
+  - Example: "Streaming: 2.45 Mbps (3.2x smaller)"
+  - Only appears after first view when cache exists
+  - Provides transparency about compression efficiency
+- **Configurable quality**: Adjust CRF (18-28) and encoding preset (fast/medium/slow) via environment variables
+- **Cache management**: Automatic cleanup of old cached files based on age (default: 7 days) and size (default: 10GB)
+- **ML training ready**: Pristine uncompressed videos preserve maximum detail for model fine-tuning
+- **Utilities**: Batch processing tools in `observation_tools.py` for extracting and updating video metadata
+
 ### Web UI pages
 - **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for auto-refresh with configurable refresh rate (1s, 2s, 5s, 10s), a live/fallback source indicator, and a detection health indicator); recent observations are paginated with a per-page selector
 - **Observations**: filterable, sortable table (including dynamic extra metadata fields such as
@@ -311,12 +327,28 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
   - Increase if one visit creates many events
   - Decrease if you want finer-grained logging per visit
 
-### Clips
-- `HBMON_CLIP_SECONDS` (default ~2.0)
-  - Increase if you want more “arrival + feeding + departure” context
+### Clips and Visit Recording
+- **Full visit recording** (captures entire bird visit):
+  - Records from arrival to departure with pre and post-trigger buffers
+  - `HBMON_ARRIVAL_BUFFER_SECONDS` (default 5.0): Pre-trigger buffer capturing frames before first detection
+  - Post-departure buffer: Continues recording after bird leaves to capture full departure
+  - Visit videos stored uncompressed for ML training, compressed on-the-fly for browser streaming
+- **Legacy observation clips**:
+  - `HBMON_CLIP_SECONDS` (default ~2.0): Short clips for individual observations
+  - Post-trigger only (starts after detection)
 
-> Note: the current worker records a **post-trigger** clip (starting right after the detection).
-> A true **pre-trigger buffer** (ring buffer of frames) is a great next upgrade; see “Ideas for improvement”.
+### Video storage and streaming
+- Videos are stored **uncompressed** on disk to preserve pristine quality for ML training
+- **On-the-fly compression** when streaming to browsers using FFmpeg
+- Configuration options:
+  - `HBMON_VIDEO_STREAM_COMPRESSION` (default `1`): Enable/disable streaming compression
+  - `HBMON_VIDEO_CRF` (default `23`): Quality setting (18=high quality, 23=balanced, 28=smaller files)
+  - `HBMON_VIDEO_PRESET` (default `fast`): Encoding speed (fast, medium, slow)
+  - `HBMON_VIDEO_CACHE_MAX_AGE_DAYS` (default `7`): Remove cached compressed files older than this
+  - `HBMON_VIDEO_CACHE_MAX_SIZE_GB` (default `10.0`): Maximum cache size (oldest files removed first)
+- First view compresses the video (~3-5 seconds), subsequent views use cached compressed version
+- Cache automatically refreshes when source video changes
+- Use `observation_tools.py` utilities for batch metadata extraction on existing observations
 
 ### Species classification (BioCLIP)
 - **Default Model**: `hf-hub:imageomics/bioclip` (BioCLIP).
