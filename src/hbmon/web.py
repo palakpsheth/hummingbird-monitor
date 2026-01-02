@@ -1447,7 +1447,7 @@ def make_app() -> Any:
                     duration = video_metadata.get("duration")
                     fourcc = video_metadata.get("fourcc")
                 except Exception:
-                    pass
+                    logger.exception("Failed to extract video metadata for %s", video_file)
             
             video_info = {
                 "exists": exists,
@@ -3202,8 +3202,12 @@ def make_app() -> Any:
                 cache_mtime = (await _run_blocking(cached_path.stat)).st_mtime
                 if cache_mtime >= source_mtime:
                     needs_compression = False
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning(
+                    "Failed to stat source or cached video for observation %s; recompressing. Error: %s",
+                    obs_id,
+                    exc,
+                )
         
         if needs_compression:
             # Compress to cache using FFmpeg
@@ -3325,7 +3329,11 @@ def make_app() -> Any:
                             if fps > 0 and frame_count > 0:
                                 return frame_count / fps
                     except Exception:
-                        pass
+                        logger.debug(
+                            "Failed to extract video duration via OpenCV for %s; returning None",
+                            path,
+                            exc_info=True,
+                        )
                     return None
                 
                 duration = await _run_blocking(_get_duration, full_path)
@@ -3399,46 +3407,21 @@ def make_app() -> Any:
             result["file_suffix"] = full_path.suffix.lower()
 
             # Extract video metadata using OpenCV (FPS, resolution, codec)
-            def _extract_video_metadata(path: Path) -> dict[str, Any]:
-                """Extract video metadata using OpenCV."""
-                metadata: dict[str, Any] = {}
-                try:
-                    cv2 = _load_cv2()
-                    cap = cv2.VideoCapture(str(path))
-                    if cap.isOpened():
-                        # Get FPS
-                        fps = cap.get(cv2.CAP_PROP_FPS)
-                        if fps > 0:
-                            metadata["fps"] = round(fps, 2)
-                        
-                        # Get resolution
-                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        if width > 0 and height > 0:
-                            metadata["width"] = width
-                            metadata["height"] = height
-                            metadata["resolution"] = f"{width}×{height}"
-                        
-                        # Get frame count and duration
-                        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                        if frame_count > 0 and fps > 0:
-                            metadata["frame_count"] = frame_count
-                            metadata["duration_seconds"] = round(frame_count / fps, 2)
-                        
-                        # Get codec (fourcc)
-                        fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
-                        if fourcc != 0:
-                            # Convert fourcc int to string
-                            codec_str = "".join([chr((fourcc >> 8 * i) & 0xFF) for i in range(4)])
-                            metadata["fourcc"] = codec_str
-                        
-                        cap.release()
-                except Exception as e:
-                    metadata["extraction_error"] = str(e)
-                return metadata
+            from hbmon.observation_tools import extract_video_metadata
             
-            video_metadata = await _run_blocking(_extract_video_metadata, full_path)
-            result.update(video_metadata)
+            video_metadata = await _run_blocking(extract_video_metadata, full_path)
+            # Map observation_tools keys to API response keys
+            if "fps" in video_metadata:
+                result["fps"] = video_metadata["fps"]
+            if "width" in video_metadata and "height" in video_metadata:
+                result["width"] = video_metadata["width"]
+                result["height"] = video_metadata["height"]
+                result["resolution"] = f"{video_metadata['width']}×{video_metadata['height']}"
+            if "duration" in video_metadata:
+                result["frame_count"] = video_metadata.get("frame_count")
+                result["duration_seconds"] = video_metadata["duration"]
+            if "fourcc" in video_metadata:
+                result["fourcc"] = video_metadata["fourcc"]
 
             # Try to detect codec from file header
             codec_hint = "unknown"
