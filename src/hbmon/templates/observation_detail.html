@@ -438,6 +438,29 @@
     </div>
     {% endif %}
 
+    {% if extra.models %}
+    <h3>Model information</h3>
+    <div class="stack">
+      {% if extra.models.yolo_model is defined %}
+      <div class="muted">YOLO model: <strong>{{ extra.models.yolo_model }}</strong></div>
+      {% endif %}
+      {% if extra.models.yolo_backend_label is defined %}
+      <div class="muted">YOLO backend: {{ extra.models.yolo_backend_label }}</div>
+      {% elif extra.models.yolo_backend is defined %}
+      <div class="muted">YOLO backend: {{ extra.models.yolo_backend }}</div>
+      {% endif %}
+      {% if extra.models.clip_model is defined %}
+      <div class="muted">CLIP model: <strong>{{ extra.models.clip_model }}</strong></div>
+      {% endif %}
+      {% if extra.models.clip_pretrained is defined and extra.models.clip_pretrained %}
+      <div class="muted">CLIP pretrained: {{ extra.models.clip_pretrained }}</div>
+      {% endif %}
+      {% if extra.models.clip_backend is defined %}
+      <div class="muted">CLIP backend: {{ extra.models.clip_backend }}</div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     {% if o.original_observation_pretty %}
     <div class="inline" style="gap:6px; align-items:center;">
       <h3 style="margin:0;">Raw metadata (original_observation)</h3>

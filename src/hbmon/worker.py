@@ -180,6 +180,7 @@ class CandidateItem:
     is_rejected: bool = False
     rejected_reason: str | None = None
     video_path: Path | None = None
+    model_metadata: dict[str, Any] | None = None  # YOLO and CLIP model information
 
 
 @dataclass
@@ -240,11 +241,13 @@ def _build_observation_extra_data(
     detection: dict[str, Any],
     identification: dict[str, Any],
     snapshots: dict[str, Any],
+    models: dict[str, Any] | None = None,
+    video: dict[str, Any] | None = None,
     review: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the extra metadata payload for an observation."""
 
-    return {
+    data: dict[str, Any] = {
         "observation_uuid": observation_uuid,
         "sensitivity": sensitivity,
         "detection": detection,
@@ -252,6 +255,11 @@ def _build_observation_extra_data(
         "snapshots": snapshots,
         "review": review if review is not None else {"label": None},
     }
+    if models is not None:
+        data["models"] = models
+    if video is not None:
+        data["video"] = video
+    return data
 
 
 def utcnow() -> datetime:
@@ -1095,7 +1103,8 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
                     "species_prob": species_prob,
                     "species_label_final": species_label
                 },
-                snapshots=snapshots_data
+                snapshots=snapshots_data,
+                models=item.model_metadata or {}
             )
             if item.roi_stats or item.bbox_stats:
                 extra_data["motion"] = {**(item.roi_stats or {}), **(item.bbox_stats or {})}
@@ -1251,6 +1260,10 @@ async def run_worker() -> None:
 
     # Load YOLO model
     yolo, yolo_device_label = _load_yolo_model()
+    
+    # Capture YOLO model metadata
+    yolo_model_name = os.getenv("HBMON_YOLO_MODEL", "yolo11n.pt")
+    yolo_backend = os.getenv("HBMON_YOLO_BACKEND") or os.getenv("HBMON_INFERENCE_BACKEND", "pytorch")
 
     # Resolve the class id for 'bird' from the model's names mapping when possible.
     bird_class_id: int | None = None
@@ -1278,10 +1291,25 @@ async def run_worker() -> None:
     # Start dispatcher
     queue: asyncio.Queue = asyncio.Queue()
     # Initialize CLIP model with backend selection
-    # Initialize CLIP model with backend selection
     # Priority: HBMON_DEVICE > HBMON_INFERENCE_BACKEND > "cpu"
     clip_backend = os.getenv("HBMON_DEVICE") or os.getenv("HBMON_INFERENCE_BACKEND", "cpu")
     clip = ClipModel(backend=clip_backend)
+    
+    # Capture CLIP model metadata
+    clip_model_name = clip.model_name
+    clip_pretrained = clip.pretrained
+    clip_backend_label = clip.backend
+    
+    # Prepare model metadata dict for all observations
+    model_metadata = {
+        "yolo_model": yolo_model_name,
+        "yolo_backend": yolo_backend,
+        "yolo_backend_label": yolo_device_label,
+        "clip_model": clip_model_name,
+        "clip_pretrained": clip_pretrained if clip_pretrained else "",
+        "clip_backend": clip_backend_label,
+    }
+    
     asyncio.create_task(processing_dispatcher(queue, clip))
 
     env = os.getenv("HBMON_SPECIES_LIST", "").strip()
@@ -1611,7 +1639,8 @@ async def run_worker() -> None:
                          bg_active=bg_active,
                          s=s,
                          is_rejected=False,
-                         video_path=visit_video_path 
+                         video_path=visit_video_path,
+                         model_metadata=model_metadata
                      )
 
         # 2. Continuous Actions (Recording) and Timeouts
@@ -1674,7 +1703,8 @@ async def run_worker() -> None:
                           bg_active=bg_active,
                           s=s,
                           is_rejected=True,
-                          rejected_reason="motion_rejected"
+                          rejected_reason="motion_rejected",
+                          model_metadata=model_metadata
                       )
                       queue.put_nowait(item)
                       last_logged_candidate_ts = timestamp
