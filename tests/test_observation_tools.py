@@ -41,9 +41,9 @@ def test_extract_video_metadata_file_not_found():
             observation_tools.extract_video_metadata(fake_path)
 
 
-def test_extract_video_metadata_file_not_found_with_stubbed_cv2(monkeypatch):
+def test_extract_video_metadata_file_not_found_with_stubbed_cv2(monkeypatch, tmp_path):
     """Test that extract_video_metadata raises FileNotFoundError when using a stubbed cv2."""
-    fake_path = Path("/tmp/missing_video.mp4")
+    fake_path = tmp_path / "missing_video.mp4"
 
     class FakeCv2:
         CAP_PROP_FPS = 5
@@ -448,9 +448,9 @@ async def test_clean_compressed_cache_age_and_size(tmp_path):
         tmp_path, max_age_days=7, max_cache_size_gb=0.001
     )
 
-    assert stats["files_removed"] >= 1
+    assert stats["files_removed"] == 3
     remaining = {path.name for path in cache_dir.glob("*.mp4")}
-    assert "old.mp4" not in remaining
+    assert not remaining
 
 
 @pytest.mark.asyncio
@@ -507,7 +507,7 @@ async def test_process_observations_batch_paths(monkeypatch, tmp_path):
                 return self
         return FakeQuery()
 
-    fake_models_module = __import__("types").ModuleType("hbmon.models")
+    fake_models_module = types.ModuleType("hbmon.models")
     fake_models_module.Observation = ObservationStub
 
     async def fake_update(_db: FakeSession, obs_id: int, _metadata: dict[str, object]) -> bool:
@@ -517,7 +517,7 @@ async def test_process_observations_batch_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(observation_tools, "select", fake_select)
     monkeypatch.setattr(observation_tools, "extract_video_metadata", lambda _path: {"fps": 30.0})
     monkeypatch.setattr(observation_tools, "update_observation_video_metadata", fake_update)
-    monkeypatch.setitem(__import__("sys").modules, "hbmon.models", fake_models_module)
+    monkeypatch.setitem(sys.modules, "hbmon.models", fake_models_module)
 
     stats = await observation_tools.process_observations_batch(FakeSession(), tmp_path)
 
