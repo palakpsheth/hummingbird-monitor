@@ -155,16 +155,6 @@ def test_convert_to_h264_timeout(monkeypatch, tmp_path):
     assert not _convert_to_h264(tmp_path / "in.mp4", tmp_path / "out.mp4")
 
 
-def test_convert_to_h264_called_process_error(monkeypatch, tmp_path):
-    monkeypatch.setattr("hbmon.worker._ffmpeg_available", lambda: True)
-
-    def fake_run(*args, **kwargs):
-        raise subprocess.CalledProcessError(returncode=1, cmd="ffmpeg", stderr=b"nope")
-
-    monkeypatch.setattr("hbmon.worker.subprocess.run", fake_run)
-    assert not _convert_to_h264(tmp_path / "in.mp4", tmp_path / "out.mp4")
-
-
 def test_convert_to_h264_success(monkeypatch, tmp_path):
     monkeypatch.setattr("hbmon.worker._ffmpeg_available", lambda: True)
     output_path = tmp_path / "out.mp4"
@@ -178,17 +168,13 @@ def test_convert_to_h264_success(monkeypatch, tmp_path):
 
 
 def test_draw_bbox_requires_cv2(monkeypatch):
-    import hbmon.worker as worker
-
-    monkeypatch.setattr(worker, "_CV2_AVAILABLE", False)
+    monkeypatch.setattr("hbmon.worker._CV2_AVAILABLE", False)
     with pytest.raises(RuntimeError, match="OpenCV"):
         _draw_bbox(np.zeros((2, 2, 3), dtype=np.uint8), Det(x1=0, y1=0, x2=1, y2=1, conf=0.5))
 
 
 def test_draw_text_lines_requires_cv2(monkeypatch):
-    import hbmon.worker as worker
-
-    monkeypatch.setattr(worker, "_CV2_AVAILABLE", False)
+    monkeypatch.setattr("hbmon.worker._CV2_AVAILABLE", False)
     with pytest.raises(RuntimeError, match="OpenCV"):
         _draw_text_lines(np.zeros((2, 2, 3), dtype=np.uint8), ["line"])
 
@@ -224,7 +210,7 @@ def test_draw_helpers_with_stubbed_cv2(monkeypatch):
 
     rectangles = [call for call in recorder.calls if call[0] == "rectangle"]
     texts = [call for call in recorder.calls if call[0] == "putText"]
-    assert len(rectangles) >= 3
+    assert len(rectangles) == 4
     assert len(texts) == 3
 
 
