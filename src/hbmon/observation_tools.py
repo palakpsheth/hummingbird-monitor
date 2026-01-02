@@ -17,7 +17,21 @@ from typing import Any
 try:
     import cv2
     _CV2_AVAILABLE = True
-except ImportError:
+except Exception:  # pragma: no cover - handles missing system deps (e.g., libGL)
+    class _StubVideoCapture:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            """Stub VideoCapture that fails immediately when OpenCV is unavailable."""
+            raise RuntimeError("OpenCV not available")
+
+    class _Cv2Stub:
+        CAP_PROP_FPS = 5
+        CAP_PROP_FRAME_WIDTH = 3
+        CAP_PROP_FRAME_HEIGHT = 4
+        CAP_PROP_FRAME_COUNT = 7
+        CAP_PROP_FOURCC = 6
+        VideoCapture = _StubVideoCapture
+
+    cv2 = _Cv2Stub()
     _CV2_AVAILABLE = False
 
 try:

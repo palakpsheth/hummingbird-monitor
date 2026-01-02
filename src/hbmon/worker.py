@@ -1180,7 +1180,7 @@ def _load_yolo_model() -> tuple[Any, str]:
     Returns:
         tuple: (Loaded YOLO model, device_label string)
     """
-    if not _YOLO_AVAILABLE:
+    if YOLO is None or not _YOLO_AVAILABLE:
         raise RuntimeError("ultralytics must be installed to load YOLO models")
 
     model_name = os.getenv("HBMON_YOLO_MODEL", "yolo11n.pt")
@@ -1411,6 +1411,7 @@ async def run_worker() -> None:
     visit_last_seen_ts = 0.0
     visit_best_candidate: CandidateItem | None = None
     visit_best_score = 0.0
+    last_observation_ts: float | None = None
     
     # Arrival buffer: capture context before detection.
     # Default 5.0s (e.g. 100 frames at 20fps). Tuning: 5.0s is good for "approach" capture.
@@ -1578,10 +1579,21 @@ async def run_worker() -> None:
         current_time = timestamp # Use frame timestamp
         
         # 1. Transitions & Actions
+        cooldown_seconds = float(s.cooldown_seconds)
+        cooldown_active = (
+            last_observation_ts is not None
+            and cooldown_seconds > 0.0
+            and (current_time - last_observation_ts) < cooldown_seconds
+        )
+
         if is_bird_present:
              visit_last_seen_ts = current_time
              
              if visit_state == VisitState.IDLE:
+                 if cooldown_active:
+                     if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+                         logger.debug("Cooldown active; skipping visit start")
+                     continue
                  # START RECORDING
                  visit_state = VisitState.RECORDING
                  visit_start_ts = current_time
@@ -1680,6 +1692,7 @@ async def run_worker() -> None:
                               queue.put_nowait(visit_best_candidate)
                               duration = current_time - visit_start_ts
                               logger.info(f"Visit ENDED. Queued best candidate (p={visit_best_candidate.det.conf:.2f}). Duration: {duration:.1f}s")
+                              last_observation_ts = current_time
                          else:
                               logger.warning("Visit ended but no candidate found?")
                          
