@@ -41,6 +41,49 @@ def _install_openclip_stub(monkeypatch):
     return torch
 
 
+def _install_openvino_stubs(monkeypatch, *, text_output: np.ndarray, image_output: np.ndarray) -> None:
+    if clip.torch is None or clip.Image is None:
+        pytest.skip("clip model dependencies missing")
+    torch = clip.torch
+
+    class FakeCompiledModel:
+        def __init__(self, output: np.ndarray) -> None:
+            self._output = np.asarray(output, dtype=np.float32)
+
+        def __call__(self, inputs: np.ndarray):
+            output = self._output
+            if output.ndim == 2:
+                batch = inputs.shape[0]
+                if output.shape[0] != batch:
+                    output = np.repeat(output, batch, axis=0)
+            return [output]
+
+    import hbmon.openvino_utils as openvino_utils
+
+    monkeypatch.setattr(openvino_utils, "is_openvino_available", lambda: True)
+    monkeypatch.setattr(openvino_utils, "select_clip_device", lambda backend: "CPU")
+    monkeypatch.setattr(
+        openvino_utils,
+        "load_openvino_clip",
+        lambda model_name, pretrained, ov_device: (
+            FakeCompiledModel(image_output),
+            FakeCompiledModel(text_output),
+        ),
+    )
+
+    def fake_load_openclip(model_name: str, pretrained: str, device: str):
+        def preprocess(pil):
+            return torch.ones((3, 2, 2), dtype=torch.float32)
+
+        def tokenizer(prompts):
+            return torch.ones((len(prompts), 4), dtype=torch.float32)
+
+        return SimpleNamespace(), preprocess, tokenizer
+
+    monkeypatch.setattr(clip, "_load_openclip", fake_load_openclip)
+    monkeypatch.setattr(clip, "open_clip", SimpleNamespace())
+
+
 def test_load_openclip_quickgelu_adjustment(monkeypatch):
     if clip.torch is None:
         pytest.skip("torch not available")
@@ -115,3 +158,98 @@ def test_clipmodel_predictions_and_embeddings(monkeypatch):
 
     sims = cm.debug_similarity(image)
     assert list(sims.keys()) == ["Beta"]
+
+
+def test_init_openvino_backend_falls_back_to_pytorch_cpu(monkeypatch):
+    if clip.torch is None or clip.Image is None:
+        pytest.skip("clip model dependencies missing")
+
+    import hbmon.openvino_utils as openvino_utils
+
+    monkeypatch.setattr(openvino_utils, "is_openvino_available", lambda: False)
+    monkeypatch.setattr(clip, "open_clip", SimpleNamespace())
+
+    def fake_load_openclip(model_name: str, pretrained: str, device: str):
+        class DummyModel:
+            def encode_text(self, tokens):
+                return clip.torch.ones((tokens.shape[0], 4), dtype=clip.torch.float32)
+
+            def encode_image(self, inp):
+                return clip.torch.ones((inp.shape[0], 4), dtype=clip.torch.float32)
+
+        def preprocess(pil):
+            return clip.torch.ones((3, 2, 2), dtype=clip.torch.float32)
+
+        def tokenizer(prompts):
+            return clip.torch.ones((len(prompts), 4), dtype=clip.torch.float32)
+
+        return DummyModel(), preprocess, tokenizer
+
+    monkeypatch.setattr(clip, "_load_openclip", fake_load_openclip)
+
+    cm = clip.ClipModel(
+        backend="openvino-cpu",
+        labels=["Alpha"],
+        prompts={"Alpha": ["alpha"]},
+        prompt_prefix="",
+    )
+
+    assert cm.backend == "cpu"
+    assert cm.use_openvino is False
+
+
+def test_openvino_features_are_unit_normalized(monkeypatch):
+    if clip.torch is None or clip.Image is None:
+        pytest.skip("clip model dependencies missing")
+
+    _install_openvino_stubs(
+        monkeypatch,
+        text_output=np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32),
+        image_output=np.array([[2.0, 1.0, 0.0, 0.0]], dtype=np.float32),
+    )
+
+    cm = clip.ClipModel(
+        backend="openvino-cpu",
+        labels=["Alpha"],
+        prompts={"Alpha": ["alpha", "alpha two"]},
+        prompt_prefix="",
+    )
+
+    text_features = cm._build_text_features_openvino(["Alpha"], {"Alpha": ["alpha"]})
+    assert np.isclose(np.linalg.norm(text_features[0].numpy()), 1.0, atol=1e-6)
+
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    embedding = cm._encode_embedding_openvino(image)
+    assert np.isclose(np.linalg.norm(embedding), 1.0, atol=1e-6)
+
+
+def test_predict_species_openvino_topk(monkeypatch):
+    if clip.torch is None or clip.Image is None:
+        pytest.skip("clip model dependencies missing")
+
+    _install_openvino_stubs(
+        monkeypatch,
+        text_output=np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+        image_output=np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+    )
+
+    cm = clip.ClipModel(
+        backend="openvino-cpu",
+        labels=["Alpha", "Beta", "Gamma"],
+        prompts={"Alpha": ["alpha"], "Beta": ["beta"], "Gamma": ["gamma"]},
+        prompt_prefix="",
+    )
+
+    monkeypatch.setattr(
+        cm,
+        "_predict_logits_openvino",
+        lambda image, bbox_xyxy: np.array([0.5, 3.0, 1.5], dtype=np.float64),
+    )
+
+    image = np.zeros((4, 4, 3), dtype=np.uint8)
+    pred = cm.predict_species(image, topk=1)
+    assert pred.label == "Beta"
+
+    preds = cm.predict_species(image, topk=2)
+    assert [p.label for p in preds] == ["Beta", "Gamma"]
+    assert preds[0].probability >= preds[1].probability
