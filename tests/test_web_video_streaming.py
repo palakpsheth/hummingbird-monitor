@@ -7,12 +7,10 @@ from typing import Any
 from fastapi.testclient import TestClient
 import pytest
 
-import hbmon.config as config
-import hbmon.web as web
-from hbmon.config import ensure_dirs, media_dir
+import hbmon.config
+import hbmon.web
 from hbmon.db import init_db, reset_db_state, session_scope
 from hbmon.models import Observation, utcnow
-from hbmon.web import make_app
 
 
 _TEST_CLIENTS: list[TestClient] = []
@@ -34,14 +32,14 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setenv("HBMON_MEDIA_DIR", str(media))
     monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
     monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
-    monkeypatch.setattr(config, "data_dir", lambda: data_dir)
-    monkeypatch.setattr(config, "media_dir", lambda: media)
-    monkeypatch.setattr(web, "data_dir", lambda: data_dir)
-    monkeypatch.setattr(web, "media_dir", lambda: media)
+    monkeypatch.setattr(hbmon.config, "data_dir", lambda: data_dir)
+    monkeypatch.setattr(hbmon.config, "media_dir", lambda: media)
+    monkeypatch.setattr(hbmon.web, "data_dir", lambda: data_dir)
+    monkeypatch.setattr(hbmon.web, "media_dir", lambda: media)
     reset_db_state()
-    ensure_dirs()
+    hbmon.config.ensure_dirs()
     init_db()
-    app = make_app()
+    app = hbmon.web.make_app()
     client = TestClient(app)
     _TEST_CLIENTS.append(client)
     return client
@@ -68,7 +66,7 @@ def test_video_stream_range_uncompressed(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HBMON_VIDEO_STREAM_COMPRESSION", "0")
     client = _setup_app(tmp_path, monkeypatch)
 
-    clips_dir = media_dir() / "clips"
+    clips_dir = hbmon.config.media_dir() / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     video_path = clips_dir / "sample.mp4"
     video_content = b"0123456789ABCDEFGHIJ"
@@ -134,7 +132,7 @@ def test_video_stream_full_file_without_range(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HBMON_VIDEO_STREAM_COMPRESSION", "0")
     client = _setup_app(tmp_path, monkeypatch)
 
-    clips_dir = media_dir() / "clips"
+    clips_dir = hbmon.config.media_dir() / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     video_path = clips_dir / "sample.mp4"
     video_content = b"0123456789ABCDEFGHIJ"
@@ -154,7 +152,7 @@ def test_video_stream_range_from_offset(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HBMON_VIDEO_STREAM_COMPRESSION", "0")
     client = _setup_app(tmp_path, monkeypatch)
 
-    clips_dir = media_dir() / "clips"
+    clips_dir = hbmon.config.media_dir() / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     video_path = clips_dir / "sample.mp4"
     video_content = b"0123456789ABCDEFGHIJ"
@@ -175,7 +173,7 @@ def test_video_stream_range_suffix(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HBMON_VIDEO_STREAM_COMPRESSION", "0")
     client = _setup_app(tmp_path, monkeypatch)
 
-    clips_dir = media_dir() / "clips"
+    clips_dir = hbmon.config.media_dir() / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     video_path = clips_dir / "sample.mp4"
     video_content = b"0123456789ABCDEFGHIJ"
@@ -196,7 +194,7 @@ def test_video_stream_range_middle_section(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HBMON_VIDEO_STREAM_COMPRESSION", "0")
     client = _setup_app(tmp_path, monkeypatch)
 
-    clips_dir = media_dir() / "clips"
+    clips_dir = hbmon.config.media_dir() / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     video_path = clips_dir / "sample.mp4"
     video_content = b"0123456789ABCDEFGHIJ"
@@ -215,7 +213,7 @@ def test_video_stream_range_middle_section(tmp_path, monkeypatch) -> None:
 def test_streaming_bitrate_returns_null_when_cache_missing(tmp_path, monkeypatch) -> None:
     client = _setup_app(tmp_path, monkeypatch)
 
-    clips_dir = media_dir() / "clips"
+    clips_dir = hbmon.config.media_dir() / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     video_path = clips_dir / "sample.mp4"
     video_path.write_bytes(b"1234567890")
@@ -234,7 +232,7 @@ def test_streaming_bitrate_returns_null_when_cache_missing(tmp_path, monkeypatch
 def test_streaming_bitrate_returns_metrics_when_cached(tmp_path, monkeypatch) -> None:
     client = _setup_app(tmp_path, monkeypatch)
 
-    clips_dir = media_dir() / "clips"
+    clips_dir = hbmon.config.media_dir() / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     video_path = clips_dir / "sample.mp4"
     video_path.write_bytes(b"0" * 2000)
@@ -246,7 +244,7 @@ def test_streaming_bitrate_returns_metrics_when_cached(tmp_path, monkeypatch) ->
 
     cache_key = f"{obs_id}_23_fast"
     cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
-    cached_path = media_dir() / ".cache" / "compressed" / f"{video_path.stem}_{cache_hash}.mp4"
+    cached_path = hbmon.config.media_dir() / ".cache" / "compressed" / f"{video_path.stem}_{cache_hash}.mp4"
     cached_path.parent.mkdir(parents=True, exist_ok=True)
     cached_path.write_bytes(b"1" * 500)
 

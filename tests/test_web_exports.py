@@ -7,12 +7,10 @@ import tarfile
 
 import pytest
 
-import hbmon.config as config
-import hbmon.web as web
-from hbmon.config import snapshots_dir, clips_dir
+import hbmon.config
+import hbmon.web
 from hbmon.db import init_db, reset_db_state, get_async_session_factory
 from hbmon.models import Individual, Observation
-from hbmon.web import get_roi_snapshot_path, make_app
 
 def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     data_dir = tmp_path / "data"
@@ -23,10 +21,10 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setenv("HBMON_MEDIA_DIR", str(media))
     monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
     monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
-    monkeypatch.setattr(config, "data_dir", lambda: data_dir)
-    monkeypatch.setattr(config, "media_dir", lambda: media)
-    monkeypatch.setattr(web, "data_dir", lambda: data_dir)
-    monkeypatch.setattr(web, "media_dir", lambda: media)
+    monkeypatch.setattr(hbmon.config, "data_dir", lambda: data_dir)
+    monkeypatch.setattr(hbmon.config, "media_dir", lambda: media)
+    monkeypatch.setattr(hbmon.web, "data_dir", lambda: data_dir)
+    monkeypatch.setattr(hbmon.web, "media_dir", lambda: media)
     
     reset_db_state()
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -36,7 +34,7 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     
     init_db()
     
-    app = make_app()
+    app = hbmon.web.make_app()
     return TestClient(app)
 
 @pytest.mark.anyio
@@ -66,18 +64,18 @@ async def test_export_individuals_csv(tmp_path, monkeypatch):
 def test_get_roi_snapshot_path_presence_and_absence() -> None:
     obs = Observation(species_label="Bird", species_prob=0.7, snapshot_path="snap.jpg", video_path="clip.mp4")
 
-    assert get_roi_snapshot_path(obs) is None
+    assert hbmon.web.get_roi_snapshot_path(obs) is None
 
     obs.set_extra({"snapshots": {"roi_path": "snapshots/roi.jpg"}})
-    assert get_roi_snapshot_path(obs) == "snapshots/roi.jpg"
+    assert hbmon.web.get_roi_snapshot_path(obs) == "snapshots/roi.jpg"
 
 @pytest.mark.anyio
 async def test_export_media_bundle(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     
     # Create dummy media files
-    sdir = snapshots_dir()
-    cdir = clips_dir()
+    sdir = hbmon.config.snapshots_dir()
+    cdir = hbmon.config.clips_dir()
     sdir.mkdir(parents=True, exist_ok=True)
     cdir.mkdir(parents=True, exist_ok=True)
     (sdir / "test.jpg").write_text("fake image")
@@ -92,7 +90,7 @@ async def test_export_media_bundle(tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_export_observation_integration_bundle_includes_media(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
-    media_root = config.media_dir()
+    media_root = hbmon.config.media_dir()
 
     snapshot_path = media_root / "snapshots" / "snapshot.jpg"
     video_path = media_root / "clips" / "clip.mp4"
