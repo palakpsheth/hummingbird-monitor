@@ -21,6 +21,7 @@ except ImportError:
 
 
 pytestmark = pytest.mark.skipif(not _MODULE_AVAILABLE, reason="observation_tools module not available")
+_HAS_CV2 = _MODULE_AVAILABLE and observation_tools._CV2_AVAILABLE and hasattr(observation_tools, "cv2")
 
 
 def test_extract_video_metadata_no_cv2():
@@ -32,6 +33,8 @@ def test_extract_video_metadata_no_cv2():
 
 def test_extract_video_metadata_file_not_found():
     """Test that extract_video_metadata raises FileNotFoundError for missing files."""
+    if not _HAS_CV2:
+        pytest.skip("OpenCV not available")
     with tempfile.TemporaryDirectory() as tmpdir:
         fake_path = Path(tmpdir) / "nonexistent.mp4"
         with pytest.raises(FileNotFoundError):
@@ -40,6 +43,8 @@ def test_extract_video_metadata_file_not_found():
 
 def test_extract_video_metadata_mock():
     """Test video metadata extraction with mocked OpenCV."""
+    if not _HAS_CV2:
+        pytest.skip("OpenCV not available")
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
         video_path = Path(tf.name)
         # Write some dummy data
@@ -116,6 +121,8 @@ def test_validate_video_file_not_found():
 
 def test_validate_video_file_mock():
     """Test video file validation with mocked OpenCV."""
+    if not _HAS_CV2:
+        pytest.skip("OpenCV not available")
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
         video_path = Path(tf.name)
         tf.write(b"fake video data")
@@ -138,6 +145,8 @@ def test_validate_video_file_mock():
 
 def test_validate_video_file_cannot_open():
     """Test validation when video can't be opened."""
+    if not _HAS_CV2:
+        pytest.skip("OpenCV not available")
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
         video_path = Path(tf.name)
         tf.write(b"fake video data")
