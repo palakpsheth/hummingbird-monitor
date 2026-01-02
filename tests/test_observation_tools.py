@@ -7,8 +7,10 @@ batch processing, and cache management functionality.
 
 from pathlib import Path
 from unittest.mock import Mock, patch
+import sys
 import tempfile
 import time
+import types
 
 import pytest
 
