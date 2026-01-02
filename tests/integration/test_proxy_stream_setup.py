@@ -1,8 +1,8 @@
 """
-Integration tests for proxy and stream service wiring.
+Integration tests for proxy service wiring.
 
 These tests validate that the docker-compose and nginx configuration
-keep the MJPEG stream isolated on its dedicated service.
+are correctly set up for the web service.
 """
 
 from __future__ import annotations
@@ -58,25 +58,18 @@ def _extract_nginx_location_blocks(nginx: str) -> dict[str, str]:
 
 
 @pytest.mark.integration
-def test_docker_compose_defines_stream_service() -> None:
+def test_docker_compose_does_not_have_stream_service() -> None:
+    """Verify that hbmon-stream service has been removed."""
     compose = _load_compose()
     services = compose.get("services", {})
 
     assert isinstance(services, dict)
-    assert "hbmon-stream" in services
-
-    stream_service = services["hbmon-stream"]
-    assert isinstance(stream_service, dict)
-    assert stream_service.get("container_name") == "hbmon-stream"
-
-    command = stream_service.get("command") or []
-    assert isinstance(command, list)
-    assert "--bind" in command
-    assert "0.0.0.0:8001" in command
+    assert "hbmon-stream" not in services, "hbmon-stream service should be removed"
 
 
 @pytest.mark.integration
-def test_docker_compose_proxy_depends_on_stream() -> None:
+def test_docker_compose_proxy_depends_on_web_only() -> None:
+    """Verify that hbmon-proxy only depends on hbmon-web."""
     compose = _load_compose()
     services = compose.get("services", {})
 
@@ -85,24 +78,40 @@ def test_docker_compose_proxy_depends_on_stream() -> None:
 
     assert isinstance(proxy_service, dict)
     depends_on = proxy_service.get("depends_on") or {}
-    assert "hbmon-stream" in depends_on, "hbmon-proxy should depend on hbmon-stream"
-
-
-@pytest.mark.integration
-def test_nginx_routes_stream_to_stream_service() -> None:
-    nginx = _read_repo_file("nginx.conf")
-    locations = _extract_nginx_location_blocks(nginx)
-    stream_block = locations.get("/api/stream.mjpeg")
-
-    assert stream_block is not None, "nginx should define /api/stream.mjpeg location"
-    assert "proxy_pass http://hbmon-stream:8001;" in stream_block
+    assert "hbmon-web" in depends_on, "hbmon-proxy should depend on hbmon-web"
+    assert "hbmon-stream" not in depends_on, "hbmon-proxy should not depend on hbmon-stream"
 
 
 @pytest.mark.integration
 def test_nginx_routes_root_to_web_service() -> None:
+    """Verify that nginx routes root to hbmon-web."""
     nginx = _read_repo_file("nginx.conf")
     locations = _extract_nginx_location_blocks(nginx)
     root_block = locations.get("/")
 
     assert root_block is not None, "nginx should define / location"
     assert "proxy_pass http://hbmon-web:8000;" in root_block
+
+
+@pytest.mark.integration
+def test_nginx_does_not_route_stream_mjpeg() -> None:
+    """Verify that nginx does not have a separate stream.mjpeg route."""
+    nginx = _read_repo_file("nginx.conf")
+    locations = _extract_nginx_location_blocks(nginx)
+    stream_block = locations.get("/api/stream.mjpeg")
+
+    assert stream_block is None, "nginx should not define /api/stream.mjpeg location"
+
+
+@pytest.mark.integration
+def test_docker_compose_uses_yaml_anchors() -> None:
+    """Verify that docker-compose.yml uses YAML anchors to reduce duplication."""
+    compose_text = _read_repo_file("docker-compose.yml")
+    
+    # Check for anchor definitions
+    assert "x-common-env:" in compose_text, "Should define x-common-env anchor"
+    assert "x-bg-subtraction-env:" in compose_text, "Should define x-bg-subtraction-env anchor"
+    assert "x-rtsp-env:" in compose_text, "Should define x-rtsp-env anchor"
+    
+    # Check for anchor usage (using array syntax for merging multiple anchors)
+    assert "<<: [*common-env, *rtsp-env, *bg-subtraction-env]" in compose_text, "Services should use anchor array merge syntax"
