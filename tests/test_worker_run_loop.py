@@ -65,6 +65,9 @@ class _DummyClip:
         self.backend = backend or device or "cpu"
         self.device = self.backend
         self.labels: list[str] | None = None
+        # Add model metadata attributes expected by worker
+        self.model_name = "dummy-clip-model"
+        self.pretrained = None
 
     def set_label_space(self, labels: list[str]) -> None:
         self.labels = labels

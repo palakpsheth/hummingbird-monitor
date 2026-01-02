@@ -1716,7 +1716,7 @@ def test_export_observation_includes_roi(tmp_path, monkeypatch):
 
 
 def test_streaming_bitrate_no_video(tmp_path, monkeypatch):
-    """Test streaming bitrate endpoint when observation has no video."""
+    """Test streaming bitrate endpoint when observation has no video file on disk."""
     client = _setup_app(tmp_path, monkeypatch)
     
     with session_scope() as db:
@@ -1724,7 +1724,7 @@ def test_streaming_bitrate_no_video(tmp_path, monkeypatch):
             species_label="Anna's Hummingbird",
             species_prob=0.8,
             snapshot_path="snap.jpg",
-            video_path=None,  # No video
+            video_path="nonexistent.mp4",  # Video path exists but file doesn't
         )
         db.add(obs)
         db.commit()
