@@ -323,12 +323,15 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
   - Increase if one visit creates many events
   - Decrease if you want finer-grained logging per visit
 
-### Clips
-- `HBMON_CLIP_SECONDS` (default ~2.0)
-  - Increase if you want more “arrival + feeding + departure” context
-
-> Note: the current worker records a **post-trigger** clip (starting right after the detection).
-> A true **pre-trigger buffer** (ring buffer of frames) is a great next upgrade; see “Ideas for improvement”.
+### Clips and Visit Recording
+- **Full visit recording** (captures entire bird visit):
+  - Records from arrival to departure with pre and post-trigger buffers
+  - `HBMON_ARRIVAL_BUFFER_SECONDS` (default 5.0): Pre-trigger buffer capturing frames before first detection
+  - Post-departure buffer: Continues recording after bird leaves to capture full departure
+  - Visit videos stored uncompressed for ML training, compressed on-the-fly for browser streaming
+- **Legacy observation clips**:
+  - `HBMON_CLIP_SECONDS` (default ~2.0): Short clips for individual observations
+  - Post-trigger only (starts after detection)
 
 ### Video storage and streaming
 - Videos are stored **uncompressed** on disk to preserve pristine quality for ML training

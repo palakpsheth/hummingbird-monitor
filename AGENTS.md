@@ -1,8 +1,6 @@
-# Copilot Instructions for hummingbird-monitor
+# Agent Instructions
 
-This repository contains **hbmon** (`hummingbird-monitor`), a LAN-only hummingbird monitoring system using YOLO for detection, CLIP for species classification, and embedding-based re-identification for tracking individual birds.
-
-## Project Overview
+Please follow the instructions in [`.github/copilot-instructions.md`](.github/copilot-instructions.md).
 
 - **Language**: Python 3.11+
 - **Package Manager**: `uv` (primary), `pip` (fallback)
