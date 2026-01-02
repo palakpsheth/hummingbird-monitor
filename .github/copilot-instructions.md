@@ -507,3 +507,34 @@ When in doubt:
 - **ALWAYS run `UV_INDEX_URL=https://download.pytorch.org/whl/cpu UV_EXTRA_INDEX_URL=https://pypi.org/simple uv run ruff check .` before committing**
 - **ALWAYS run `UV_INDEX_URL=https://download.pytorch.org/whl/cpu UV_EXTRA_INDEX_URL=https://pypi.org/simple uv run pytest -n auto --verbose --cov=hbmon` before committing**
 - Use these commands to ensure changes don't break tests or violate code style
+
+## Video Storage and Streaming
+
+### Architecture
+
+Videos are stored **uncompressed** on disk to preserve pristine quality for ML training. When streaming to browsers, they are compressed **on-the-fly** using FFmpeg with intelligent caching:
+
+1. **Storage**: Videos recorded by `recorder.py` in uncompressed format
+2. **Streaming**: `/api/video/{obs_id}` endpoint compresses on first view
+3. **Caching**: Compressed versions cached in `/media/.cache/compressed/`
+4. **Cache Validation**: Auto-refreshes when source video changes (mtime check)
+
+### Utilities (`observation_tools.py`)
+
+The `observation_tools` module provides utilities for processing existing observations:
+
+- `extract_video_metadata()` - Extract FPS, resolution, duration, codec from video files
+- `update_observation_video_metadata()` - Update observation extra_json with video metadata
+- `process_observations_batch()` - Batch process all observations to extract/update metadata
+- `clean_compressed_cache()` - Clean up old cached compressed files (age + size limits)
+- `validate_video_file()` - Check if video file is valid and readable
+
+### When Adding Video-Related Features
+
+1. **Test both uncompressed and compressed paths**
+2. **Consider ML training use case** - avoid degrading uncompressed source
+3. **Update cache management** if adding new compression parameters
+4. **Add tests** for new video processing utilities
+5. **Update README** with new configuration options
+6. **Document performance impact** (compression time, cache size)
+
