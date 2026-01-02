@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import importlib
-import sys
 import types
-
-import pytest
+from unittest.mock import patch
 
 
 def _make_cv2_stub(
@@ -51,71 +48,71 @@ def _make_cv2_stub(
     return cv2_stub
 
 
-def _load_recorder(monkeypatch: pytest.MonkeyPatch, cv2_stub: types.ModuleType):
-    monkeypatch.setitem(sys.modules, "cv2", cv2_stub)
-    import hbmon.recorder as recorder
-
-    importlib.reload(recorder)
-    return recorder.BackgroundRecorder
-
-
-def test_recorder_writes_frames_with_first_codec(monkeypatch: pytest.MonkeyPatch, tmp_path):
+def test_recorder_writes_frames_with_first_codec(tmp_path):
     cv2_stub = _make_cv2_stub(open_results={"avc1": True})
-    recorder_cls = _load_recorder(monkeypatch, cv2_stub)
 
-    recorder = recorder_cls(tmp_path / "out.mp4", fps=30.0, width=640, height=480)
-    recorder.start()
-    recorder.feed({"frame": 1})
-    recorder.feed({"frame": 2})
-    recorder.stop()
+    with patch("hbmon.recorder.cv2", cv2_stub):
+        from hbmon.recorder import BackgroundRecorder
 
-    assert recorder.error is None
-    assert not recorder.thread.is_alive()
-    assert len(cv2_stub.instances) == 1
-    writer = cv2_stub.instances[0]
-    assert writer.writes == [{"frame": 1}, {"frame": 2}]
-    assert writer.released is True
+        recorder = BackgroundRecorder(tmp_path / "out.mp4", fps=30.0, width=640, height=480)
+        recorder.start()
+        recorder.feed({"frame": 1})
+        recorder.feed({"frame": 2})
+        recorder.stop()
+
+        assert recorder.error is None
+        assert not recorder.thread.is_alive()
+        assert len(cv2_stub.instances) == 1
+        writer = cv2_stub.instances[0]
+        assert writer.writes == [{"frame": 1}, {"frame": 2}]
+        assert writer.released is True
 
 
-def test_recorder_fallbacks_across_codecs(monkeypatch: pytest.MonkeyPatch, tmp_path):
+def test_recorder_fallbacks_across_codecs(tmp_path):
     cv2_stub = _make_cv2_stub(open_results={"avc1": False, "H264": True})
-    recorder_cls = _load_recorder(monkeypatch, cv2_stub)
 
-    recorder = recorder_cls(tmp_path / "out.mp4", fps=24.0, width=320, height=240)
-    recorder.start()
-    recorder.feed("frame")
-    recorder.stop()
+    with patch("hbmon.recorder.cv2", cv2_stub):
+        from hbmon.recorder import BackgroundRecorder
 
-    assert recorder.error is None
-    assert not recorder.thread.is_alive()
-    assert len(cv2_stub.instances) == 2
-    assert cv2_stub.instances[0].released is True
-    assert cv2_stub.instances[1].writes == ["frame"]
+        recorder = BackgroundRecorder(tmp_path / "out.mp4", fps=24.0, width=320, height=240)
+        recorder.start()
+        recorder.feed("frame")
+        recorder.stop()
+
+        assert recorder.error is None
+        assert not recorder.thread.is_alive()
+        assert len(cv2_stub.instances) == 2
+        assert cv2_stub.instances[0].released is True
+        assert cv2_stub.instances[1].writes == ["frame"]
 
 
-def test_recorder_failure_sets_error_and_drains_queue(monkeypatch: pytest.MonkeyPatch, tmp_path):
+def test_recorder_failure_sets_error_and_drains_queue(tmp_path):
     cv2_stub = _make_cv2_stub(open_results={"avc1": False, "H264": False, "mp4v": False, "XVID": False})
-    recorder_cls = _load_recorder(monkeypatch, cv2_stub)
 
-    recorder = recorder_cls(tmp_path / "out.mp4", fps=15.0, width=100, height=100)
-    recorder.feed("frame")
-    recorder.feed("frame2")
-    recorder.start()
-    recorder.thread.join(timeout=1)
+    with patch("hbmon.recorder.cv2", cv2_stub):
+        from hbmon.recorder import BackgroundRecorder
 
-    assert recorder.error == "Failed to initialize any compatible VideoWriter"
-    assert not recorder.thread.is_alive()
-    assert recorder.queue.empty()
+        recorder = BackgroundRecorder(tmp_path / "out.mp4", fps=15.0, width=100, height=100)
+        recorder.feed("frame")
+        recorder.feed("frame2")
+        recorder.start()
+        recorder.thread.join(timeout=1)
+
+        assert recorder.error == "Failed to initialize any compatible VideoWriter"
+        assert not recorder.thread.is_alive()
+        assert recorder.queue.empty()
 
 
-def test_recorder_sets_error_on_write_exception(monkeypatch: pytest.MonkeyPatch, tmp_path):
+def test_recorder_sets_error_on_write_exception(tmp_path):
     cv2_stub = _make_cv2_stub(open_results={"avc1": True}, raise_on_write=True)
-    recorder_cls = _load_recorder(monkeypatch, cv2_stub)
 
-    recorder = recorder_cls(tmp_path / "out.mp4", fps=30.0, width=640, height=480)
-    recorder.start()
-    recorder.feed("frame")
-    recorder.stop()
+    with patch("hbmon.recorder.cv2", cv2_stub):
+        from hbmon.recorder import BackgroundRecorder
 
-    assert recorder.error == "write failed"
-    assert not recorder.thread.is_alive()
+        recorder = BackgroundRecorder(tmp_path / "out.mp4", fps=30.0, width=640, height=480)
+        recorder.start()
+        recorder.feed("frame")
+        recorder.stop()
+
+        assert recorder.error == "write failed"
+        assert not recorder.thread.is_alive()
