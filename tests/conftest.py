@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import logging
 from pathlib import Path
 import socket
 import threading
@@ -152,5 +153,4 @@ def live_server_url() -> str:
     if thread.is_alive():
         thread.join(timeout=5)
         if thread.is_alive():
-            import logging
             logging.warning("Server thread did not exit cleanly within timeout")
