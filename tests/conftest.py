@@ -79,10 +79,16 @@ def safe_dirs(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def isolate_test_dirs(tmp_path, monkeypatch):
+def isolate_test_dirs(request, tmp_path, monkeypatch):
     """
     Ensure tests do not create data/media directories in the repository root.
+    
+    Skipped for UI tests which use session-scoped ui_test_dirs instead.
     """
+    # Skip for UI tests - they use session-scoped ui_test_dirs
+    if "ui_page" in request.fixturenames or "live_server_url" in request.fixturenames:
+        return
+    
     data_dir = tmp_path / "data"
     media_dir = tmp_path / "media"
     data_dir.mkdir(parents=True, exist_ok=True)
