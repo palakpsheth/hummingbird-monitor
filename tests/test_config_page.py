@@ -1,6 +1,3 @@
-from .test_web_helpers import _import_web
-
-
 def test_validate_detection_inputs_ok(import_web, monkeypatch):
     web = import_web(monkeypatch)
     parsed, errors = web._validate_detection_inputs(

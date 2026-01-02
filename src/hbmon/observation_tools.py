@@ -362,8 +362,10 @@ def validate_video_file(video_path: Path) -> tuple[bool, str]:
         Tuple of (is_valid, error_message)
     """
     if not _CV2_AVAILABLE:
+        if not video_path.exists():
+            return False, f"OpenCV not available; file not found: {video_path}"
         return False, "OpenCV not available"
-    
+
     if not video_path.exists():
         return False, f"File not found: {video_path}"
     
