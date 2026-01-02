@@ -1,8 +1,6 @@
 # Agent Instructions
 
 Please follow the instructions in [`.github/copilot-instructions.md`](.github/copilot-instructions.md).
-
-- **Language**: Python 3.11+
 - **Package Manager**: `uv` (primary), `pip` (fallback)
 - **Framework**: FastAPI + Jinja2 for web UI
 - **ML Stack**: PyTorch, Ultralytics YOLO, OpenCLIP

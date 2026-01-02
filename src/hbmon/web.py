@@ -3301,6 +3301,96 @@ def make_app() -> Any:
         )
 
 
+    @app.get("/api/streaming_bitrate/{obs_id}")
+    async def streaming_bitrate(
+        obs_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> dict[str, Any]:
+        """
+        Get streaming bitrate information for a cached compressed video.
+        
+        Returns bitrate and compression ratio if cached version exists.
+        This is called by the UI after video loads to show streaming efficiency.
+        """
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+        
+        video_path = o.video_path or ""
+        if not video_path:
+            return {"bitrate_mbps": None}
+        
+        full_path = media_dir() / video_path
+        if not await _run_blocking(full_path.exists):
+            return {"bitrate_mbps": None}
+        
+        # Get cached compressed video path
+        import hashlib
+        crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
+        preset = os.getenv("HBMON_VIDEO_PRESET", "fast")
+        cache_key = f"{obs_id}_{crf}_{preset}"
+        cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
+        
+        temp_dir = media_dir() / ".cache" / "compressed"
+        cached_path = temp_dir / f"{full_path.stem}_{cache_hash}.mp4"
+        
+        # Check if cached version exists
+        if not await _run_blocking(cached_path.exists):
+            return {"bitrate_mbps": None}
+        
+        try:
+            # Get file sizes
+            source_size = (await _run_blocking(full_path.stat)).st_size
+            cached_size = (await _run_blocking(cached_path.stat)).st_size
+            
+            # Extract duration from metadata in extra_json if available
+            duration = None
+            if o.extra_json:
+                extra = o.get_extra()
+                if isinstance(extra, dict) and "media" in extra:
+                    media = extra.get("media", {})
+                    if isinstance(media, dict) and "video" in media:
+                        video_meta = media.get("video", {})
+                        if isinstance(video_meta, dict):
+                            duration = video_meta.get("duration")
+            
+            # If duration not in metadata, extract from video using OpenCV
+            if not duration:
+                def _get_duration(path: Path) -> float | None:
+                    try:
+                        cv2 = _load_cv2()
+                        cap = cv2.VideoCapture(str(path))
+                        if cap.isOpened():
+                            fps = cap.get(cv2.CAP_PROP_FPS)
+                            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                            cap.release()
+                            if fps > 0 and frame_count > 0:
+                                return frame_count / fps
+                    except Exception:
+                        pass
+                    return None
+                
+                duration = await _run_blocking(_get_duration, full_path)
+            
+            if duration and duration > 0:
+                # Calculate bitrate in Mbps: (file_size_bytes * 8) / (duration_seconds * 1_000_000)
+                bitrate_mbps = (cached_size * 8) / (duration * 1_000_000)
+                compression_ratio = source_size / cached_size if cached_size > 0 else 1.0
+                
+                return {
+                    "bitrate_mbps": bitrate_mbps,
+                    "compression_ratio": compression_ratio,
+                    "cached_size_kb": round(cached_size / 1024, 2),
+                    "source_size_kb": round(source_size / 1024, 2),
+                }
+            
+            return {"bitrate_mbps": None}
+            
+        except Exception as e:
+            logger.error(f"Error calculating streaming bitrate: {e}")
+            return {"bitrate_mbps": None}
+
+
     @app.get("/api/video_info/{obs_id}")
     async def video_info(
         obs_id: int,

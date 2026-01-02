@@ -222,6 +222,9 @@
         {% if video_info.fourcc %} · Codec: {{ video_info.fourcc }}{% endif %}
         · <a href="/media/{{ o.video_path }}" download>Download video</a>
       </div>
+      <div id="streaming-bitrate-{{ o.id }}" class="muted" style="margin-top:4px; display:none;">
+        <span class="streaming-bitrate-value"></span>
+      </div>
       <script>
         (function () {
           var video = document.getElementById('clip-player');
@@ -240,6 +243,22 @@
             }
             errorMsg.textContent = msg;
             errorDiv.style.display = 'block';
+          });
+
+          // Fetch and display streaming bitrate after video loads
+          video.addEventListener('loadedmetadata', function () {
+            fetch('/api/streaming_bitrate/{{ o.id }}')
+              .then(response => response.json())
+              .then(data => {
+                if (data.bitrate_mbps) {
+                  var bitrateDiv = document.getElementById('streaming-bitrate-{{ o.id }}');
+                  var bitrateValue = bitrateDiv.querySelector('.streaming-bitrate-value');
+                  bitrateValue.textContent = 'Streaming: ' + data.bitrate_mbps.toFixed(2) + ' Mbps (' + 
+                    data.compression_ratio.toFixed(1) + 'x smaller)';
+                  bitrateDiv.style.display = 'block';
+                }
+              })
+              .catch(err => console.log('Bitrate fetch failed:', err));
           });
         })();
       </script>
