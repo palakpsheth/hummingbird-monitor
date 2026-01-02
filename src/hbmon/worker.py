@@ -1534,6 +1534,13 @@ async def run_worker() -> None:
         best_det: Det | None = None
         detection_frame_count = sum(1 for entry in frame_buffer if entry.detections)
         min_required = max(1, min(int(s.temporal_min_detections), frame_buffer.maxlen or 1))
+        if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+            logger.debug(
+                "Temporal voting: %s/%s frames with detections (min required: %s)",
+                detection_frame_count,
+                frame_buffer.maxlen,
+                min_required,
+            )
 
         if detection_frame_count >= min_required:
             for entry in frame_buffer:
