@@ -991,6 +991,13 @@ Before running them locally, install the Playwright browser binaries:
 uv run playwright install chromium
 ```
 
+To run UI tests selectively:
+
+```bash
+uv run pytest tests/ui/          # Run all UI tests
+uv run pytest -m ui              # Run tests marked with @pytest.mark.ui
+```
+
 ### Test Data Structure
 
 Integration test data is located in `tests/integration/test_data/`. Each test case folder contains:

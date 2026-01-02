@@ -4,9 +4,11 @@ UI checks for the configuration form.
 
 from __future__ import annotations
 
+import pytest
 from playwright.sync_api import expect
 
 
+@pytest.mark.ui
 def test_config_form_save(live_server_url: str, ui_page) -> None:
     ui_page.goto(f"{live_server_url}/config", wait_until="domcontentloaded")
 

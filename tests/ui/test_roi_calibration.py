@@ -4,13 +4,16 @@ UI flow checks for ROI calibration.
 
 from __future__ import annotations
 
+import pytest
 from playwright.sync_api import expect
 
 
+@pytest.mark.ui
 def test_roi_save_flow(live_server_url: str, ui_page) -> None:
     ui_page.goto(f"{live_server_url}/calibrate", wait_until="domcontentloaded")
 
     expect(ui_page.get_by_role("heading", name="Calibrate ROI")).to_be_visible()
+    # Hidden inputs cannot be filled with .fill() - must use .evaluate()
     ui_page.evaluate(
         """
         () => {
