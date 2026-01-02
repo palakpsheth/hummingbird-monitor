@@ -77,6 +77,7 @@ def test_get_core_uses_openvino_cache_dir(monkeypatch, tmp_path):
         def set_property(self, payload):
             self.set_property_calls.append(payload)
 
+    # Reset singleton for clean test
     openvino_utils._CORE = None
     monkeypatch.setattr(openvino_utils, "_OPENVINO_AVAILABLE", True)
     monkeypatch.setattr(openvino_utils, "Core", FakeCore)
@@ -145,10 +146,10 @@ def test_validate_openvino_gpu_devices(monkeypatch, devices):
 
     monkeypatch.setattr(openvino_utils, "get_available_openvino_devices", lambda: devices)
 
-    assert openvino_utils.validate_openvino_gpu() is True
+    assert openvino_utils.validate_openvino_gpu()
 
 
-def test_force_openvino_gpu_override_patches_compile(monkeypatch):
+def test_force_openvino_gpu_override_patches_compile(monkeypatch, caplog):
     from hbmon import openvino_utils
 
     class FakeCore:
@@ -168,17 +169,109 @@ def test_force_openvino_gpu_override_patches_compile(monkeypatch):
 
     monkeypatch.setattr(openvino_utils, "_OPENVINO_AVAILABLE", True)
 
-    openvino_utils.force_openvino_gpu_override()
+    with caplog.at_level("INFO"):
+        openvino_utils.force_openvino_gpu_override()
 
+    # Verify patch application logging
+    assert "Patched OpenVINO to force GPU execution" in caplog.text
+
+    # Verify that original compile_model is called and device coercion logging occurs
     core = FakeCore()
-    assert core.compile_model("model", None, None) == "GPU"
-    assert core.compile_model("model", "AUTO", None) == "GPU"
-    assert core.compile_model("model", "CPU", None) == "GPU"
+    caplog.clear()
+    
+    with caplog.at_level("INFO"):
+        result = core.compile_model("model", None, None)
+    assert result == "GPU"
+    assert "Intercepting device='None' -> forcing 'GPU'" in caplog.text
+    assert core.calls[-1] == ("model", "GPU", None)
+    
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        result = core.compile_model("model", "AUTO", None)
+    assert result == "GPU"
+    assert "Intercepting device='AUTO' -> forcing 'GPU'" in caplog.text
+    assert core.calls[-1] == ("model", "GPU", None)
+    
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        result = core.compile_model("model", "CPU", None)
+    assert result == "GPU"
+    assert "Intercepting device='CPU' -> forcing 'GPU'" in caplog.text
+    assert core.calls[-1] == ("model", "GPU", None)
 
+    # Verify idempotence
     patched_compile = FakeCore.compile_model
     openvino_utils.force_openvino_gpu_override()
     assert FakeCore.compile_model is patched_compile
-    assert getattr(FakeCore, "_is_hbmon_patched", False) is True
+    assert getattr(FakeCore, "_is_hbmon_patched", False)
+
+
+def test_force_openvino_gpu_override_passthrough_other_devices(monkeypatch):
+    """Test that devices other than None/AUTO/CPU are passed through unchanged."""
+    from hbmon import openvino_utils
+
+    class FakeCore:
+        def __init__(self):
+            self.calls = []
+
+        def compile_model(self, model, device_name=None, config=None):
+            self.calls.append((model, device_name, config))
+            return device_name
+
+    openvino_module = types.ModuleType("openvino")
+    openvino_runtime = types.ModuleType("openvino.runtime")
+    openvino_runtime.Core = FakeCore
+    openvino_module.runtime = openvino_runtime
+    monkeypatch.setitem(sys.modules, "openvino", openvino_module)
+    monkeypatch.setitem(sys.modules, "openvino.runtime", openvino_runtime)
+
+    monkeypatch.setattr(openvino_utils, "_OPENVINO_AVAILABLE", True)
+    openvino_utils.force_openvino_gpu_override()
+
+    core = FakeCore()
+    
+    # Verify that non-coerced devices are passed through unchanged
+    assert core.compile_model("model", "GPU.1", None) == "GPU.1"
+    assert core.calls[-1] == ("model", "GPU.1", None)
+    
+    assert core.compile_model("model", "MYRIAD", None) == "MYRIAD"
+    assert core.calls[-1] == ("model", "MYRIAD", None)
+    
+    assert core.compile_model("model", "GPU.0", None) == "GPU.0"
+    assert core.calls[-1] == ("model", "GPU.0", None)
+
+
+def test_force_openvino_gpu_override_patches_runtime_core(monkeypatch):
+    """Test that openvino.runtime.Core is also patched."""
+    from hbmon import openvino_utils
+
+    class FakeCore:
+        def __init__(self):
+            pass
+
+        def compile_model(self, model, device_name=None, config=None):
+            return device_name
+
+    openvino_module = types.ModuleType("openvino")
+    openvino_runtime = types.ModuleType("openvino.runtime")
+    openvino_runtime.Core = FakeCore
+    openvino_module.runtime = openvino_runtime
+    monkeypatch.setitem(sys.modules, "openvino", openvino_module)
+    monkeypatch.setitem(sys.modules, "openvino.runtime", openvino_runtime)
+
+    monkeypatch.setattr(openvino_utils, "_OPENVINO_AVAILABLE", True)
+    openvino_utils.force_openvino_gpu_override()
+
+    # Verify that both module locations are patched
+    assert hasattr(FakeCore, "_is_hbmon_patched")
+    assert FakeCore._is_hbmon_patched
+    
+    # Verify runtime.Core also has the patched method
+    assert openvino_runtime.Core.compile_model == FakeCore.compile_model
+    
+    # Test the patched behavior through runtime.Core
+    core = openvino_runtime.Core()
+    assert core.compile_model("model", "CPU", None) == "GPU"
 
 
 def test_select_clip_device_gpu_available(monkeypatch):
