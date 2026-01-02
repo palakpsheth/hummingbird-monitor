@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 
 import numpy as np
 import pytest
@@ -9,22 +8,10 @@ from hbmon import db as db_module
 from hbmon.models import Embedding, Individual, Observation, utcnow
 
 
-def _import_web(monkeypatch, tmp_path):
-    data_dir = tmp_path / "data"
-    media_dir = tmp_path / "media"
-    db_path = tmp_path / "db.sqlite"
-    monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
-    monkeypatch.setenv("HBMON_MEDIA_DIR", str(media_dir))
-    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
-    monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
-    if "hbmon.web" in importlib.sys.modules:
-        importlib.sys.modules.pop("hbmon.web")
-    return importlib.import_module("hbmon.web")
-
 
 @pytest.mark.anyio
-async def test_select_prototype_observations_prefers_embeddings(tmp_path, monkeypatch):
-    web = _import_web(monkeypatch, tmp_path)
+async def test_select_prototype_observations_prefers_embeddings(import_web, tmp_path, monkeypatch):
+    web = import_web(monkeypatch, tmp_path=tmp_path, with_db=True)
     db_module.reset_db_state()
     await db_module.init_async_db()
 

@@ -11,7 +11,6 @@ appropriate settings and that any fallback directory creation happens
 in a writable location.
 """
 
-import importlib
 import os
 import time
 from datetime import datetime
@@ -19,29 +18,10 @@ from datetime import datetime
 import pytest
 
 
-def _import_web(monkeypatch):
-    """Import ``hbmon.web`` after setting safe directories via monkeypatch.
 
-    FastAPI and SQLAlchemy are not required for these helpers; however,
-    ``hbmon.web`` attempts to create directories at import time.  We
-    therefore set ``HBMON_DATA_DIR`` and ``HBMON_MEDIA_DIR`` to
-    writable locations (the current working directory) before importing.
-    """
-    from pathlib import Path
-    # Use current working directory names to avoid permission issues
-    cwd = Path.cwd().resolve()
-    monkeypatch.setenv("HBMON_DATA_DIR", str(cwd / "data"))
-    monkeypatch.setenv("HBMON_MEDIA_DIR", str(cwd / "media"))
-    # Remove module from sys.modules if already loaded to force re-import
-    if 'hbmon.web' in importlib.sys.modules:
-        importlib.sys.modules.pop('hbmon.web')
-    web = importlib.import_module('hbmon.web')
-    return web
-
-
-def test_species_to_css_variants(monkeypatch):
+def test_species_to_css_variants(import_web, monkeypatch):
     """Verify that various species names map to the correct CSS classes."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     assert web.species_to_css("Anna's hummingbird") == "species-anna"
     assert web.species_to_css("Anna’s Hummingbird") == "species-anna"
     assert web.species_to_css("Allen's hummingbird") == "species-allens"
@@ -54,9 +34,9 @@ def test_species_to_css_variants(monkeypatch):
     assert web.species_to_css("mystery bird") == "species-unknown"
 
 
-def test_paginate_bounds(monkeypatch):
+def test_paginate_bounds(import_web, monkeypatch):
     """Pagination should clamp page and page_size and compute offsets safely."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
 
     page, size, total_pages, offset = web.paginate(total_count=0, page=3, page_size=500, max_page_size=50)
     assert (page, size, total_pages, offset) == (1, 50, 1, 0)
@@ -69,7 +49,7 @@ def test_paginate_bounds(monkeypatch):
     assert (page, size, total_pages, offset) == (4, 4, 4, 12)
 
 
-def test_build_hour_heatmap_levels(monkeypatch):
+def test_build_hour_heatmap_levels(import_web, monkeypatch):
     """
     Construct a simple heatmap and verify level assignments based on counts.
     The heatmap function divides counts into 5 buckets based on the maximum.
@@ -80,7 +60,7 @@ def test_build_hour_heatmap_levels(monkeypatch):
     Level 4: 0.60 < frac <= 0.80
     Level 5: 0.80 < frac <= 1.0
     """
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     # Provide counts for a few hours.  Max count is 10.
     hours = [(0, 0), (1, 2), (2, 3), (3, 5), (4, 8), (5, 10)]
     heat = web.build_hour_heatmap(hours)
@@ -102,8 +82,8 @@ def test_build_hour_heatmap_levels(monkeypatch):
         assert level_map[h] == 0
 
 
-def test_pretty_json(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_pretty_json(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     pretty = web.pretty_json('{"b":2,"a":1}')
     assert pretty is not None
     assert "\n" in pretty
@@ -115,8 +95,8 @@ def test_pretty_json(monkeypatch):
     assert bad == "{not-json}"
 
 
-def test_timezone_helpers(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_timezone_helpers(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     assert web._normalize_timezone(None) == "local"
     assert web._normalize_timezone("") == "local"
     assert web._normalize_timezone(" local ") == "local"
@@ -127,11 +107,11 @@ def test_timezone_helpers(monkeypatch):
     assert web._timezone_label("Europe/Paris") == "Europe/Paris"
 
 
-def test_as_utc_str_treats_naive_as_utc(monkeypatch):
+def test_as_utc_str_treats_naive_as_utc(import_web, monkeypatch):
     if not hasattr(time, "tzset"):  # pragma: no cover - platform guard
         pytest.skip("tzset not available on this platform")
 
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
 
     old_tz = os.environ.get("TZ")
     monkeypatch.setenv("TZ", "US/Pacific")
@@ -147,8 +127,8 @@ def test_as_utc_str_treats_naive_as_utc(monkeypatch):
         time.tzset()
 
 
-def test_get_git_commit_without_git(monkeypatch, tmp_path):
-    web = _import_web(monkeypatch)
+def test_get_git_commit_without_git(import_web, monkeypatch, tmp_path):
+    web = import_web(monkeypatch)
     monkeypatch.setattr(web, "_GIT_PATH", None)
     repo_root = tmp_path / "nogit"
     repo_root.mkdir()
@@ -156,8 +136,8 @@ def test_get_git_commit_without_git(monkeypatch, tmp_path):
     assert web._get_git_commit() == "unknown"
 
 
-def test_get_git_commit_from_head(monkeypatch, tmp_path):
-    web = _import_web(monkeypatch)
+def test_get_git_commit_from_head(import_web, monkeypatch, tmp_path):
+    web = import_web(monkeypatch)
     repo_root = tmp_path / "repo"
     git_dir = repo_root / ".git" / "refs" / "heads"
     git_dir.mkdir(parents=True, exist_ok=True)
@@ -168,8 +148,8 @@ def test_get_git_commit_from_head(monkeypatch, tmp_path):
     assert web._get_git_commit() == "abc1234"
 
 
-def test_get_git_commit_from_gitdir_file(monkeypatch, tmp_path):
-    web = _import_web(monkeypatch)
+def test_get_git_commit_from_gitdir_file(import_web, monkeypatch, tmp_path):
+    web = import_web(monkeypatch)
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     actual_git = tmp_path / "actual_git"
@@ -183,8 +163,8 @@ def test_get_git_commit_from_gitdir_file(monkeypatch, tmp_path):
     assert web._get_git_commit() == "deadbee"
 
 
-def test_get_git_commit_detached_head(monkeypatch, tmp_path):
-    web = _import_web(monkeypatch)
+def test_get_git_commit_detached_head(import_web, monkeypatch, tmp_path):
+    web = import_web(monkeypatch)
     repo_root = tmp_path / "repo"
     git_dir = repo_root / ".git"
     git_dir.mkdir(parents=True, exist_ok=True)
@@ -194,8 +174,8 @@ def test_get_git_commit_detached_head(monkeypatch, tmp_path):
     assert web._get_git_commit() == "cafebab"
 
 
-def test_get_git_commit_from_packed_refs(monkeypatch, tmp_path):
-    web = _import_web(monkeypatch)
+def test_get_git_commit_from_packed_refs(import_web, monkeypatch, tmp_path):
+    web = import_web(monkeypatch)
     repo_root = tmp_path / "repo"
     git_dir = repo_root / ".git"
     refs_dir = git_dir / "refs" / "heads"
@@ -207,8 +187,8 @@ def test_get_git_commit_from_packed_refs(monkeypatch, tmp_path):
     assert web._get_git_commit() == "deadbee"
 
 
-def test_get_git_commit_from_env(monkeypatch, tmp_path):
-    web = _import_web(monkeypatch)
+def test_get_git_commit_from_env(import_web, monkeypatch, tmp_path):
+    web = import_web(monkeypatch)
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     monkeypatch.setattr(web, "_GIT_PATH", None)
@@ -217,9 +197,9 @@ def test_get_git_commit_from_env(monkeypatch, tmp_path):
     assert web._get_git_commit() == "envhash123"
 
 
-def test_get_git_commit_env_unknown_falls_back_to_git(monkeypatch, tmp_path):
+def test_get_git_commit_env_unknown_falls_back_to_git(import_web, monkeypatch, tmp_path):
     """When HBMON_GIT_COMMIT=unknown, fallback to git metadata instead."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     repo_root = tmp_path / "repo"
     git_dir = repo_root / ".git" / "refs" / "heads"
     git_dir.mkdir(parents=True, exist_ok=True)
@@ -249,96 +229,96 @@ class MockObservationWithExtras:
         return self._extra
 
 
-def test_get_annotated_snapshot_path_with_valid_path(monkeypatch):
+def test_get_annotated_snapshot_path_with_valid_path(import_web, monkeypatch):
     """Test that get_annotated_snapshot_path returns path when present."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     obs = MockObservation(extra={"snapshots": {"annotated_path": "snapshots/2024-01-01/abc123_annotated.jpg"}})
     result = web.get_annotated_snapshot_path(obs)
     assert result == "snapshots/2024-01-01/abc123_annotated.jpg"
 
 
-def test_get_annotated_snapshot_path_with_none_extra(monkeypatch):
+def test_get_annotated_snapshot_path_with_none_extra(import_web, monkeypatch):
     """Test that get_annotated_snapshot_path returns None when extra_json is None."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     obs = MockObservation(extra=None)
     result = web.get_annotated_snapshot_path(obs)
     assert result is None
 
 
-def test_get_annotated_snapshot_path_with_empty_extra(monkeypatch):
+def test_get_annotated_snapshot_path_with_empty_extra(import_web, monkeypatch):
     """Test that get_annotated_snapshot_path returns None when extra_json is empty dict."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     obs = MockObservation(extra={})
     result = web.get_annotated_snapshot_path(obs)
     assert result is None
 
 
-def test_get_annotated_snapshot_path_with_missing_snapshots_key(monkeypatch):
+def test_get_annotated_snapshot_path_with_missing_snapshots_key(import_web, monkeypatch):
     """Test that get_annotated_snapshot_path returns None when snapshots key is missing."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     obs = MockObservation(extra={"detection": {"box_confidence": 0.85}})
     result = web.get_annotated_snapshot_path(obs)
     assert result is None
 
 
-def test_get_annotated_snapshot_path_with_snapshots_not_dict(monkeypatch):
+def test_get_annotated_snapshot_path_with_snapshots_not_dict(import_web, monkeypatch):
     """Test that get_annotated_snapshot_path returns None when snapshots is not a dict."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     obs = MockObservation(extra={"snapshots": "invalid_string"})
     result = web.get_annotated_snapshot_path(obs)
     assert result is None
 
 
-def test_get_annotated_snapshot_path_with_missing_annotated_path(monkeypatch):
+def test_get_annotated_snapshot_path_with_missing_annotated_path(import_web, monkeypatch):
     """Test that get_annotated_snapshot_path returns None when annotated_path key is missing."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     obs = MockObservation(extra={"snapshots": {"some_other_key": "value"}})
     result = web.get_annotated_snapshot_path(obs)
     assert result is None
 
 
-def test_get_clip_snapshot_path_with_valid_path(monkeypatch):
+def test_get_clip_snapshot_path_with_valid_path(import_web, monkeypatch):
     """Test that get_clip_snapshot_path returns path when present."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     obs = MockObservation(extra={"snapshots": {"clip_path": "snapshots/2024-01-01/abc123_clip.jpg"}})
     result = web.get_clip_snapshot_path(obs)
     assert result == "snapshots/2024-01-01/abc123_clip.jpg"
 
 
-def test_get_clip_snapshot_path_with_none_extra(monkeypatch):
+def test_get_clip_snapshot_path_with_none_extra(import_web, monkeypatch):
     """Test that get_clip_snapshot_path returns None when extra_json is None."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     obs = MockObservation(extra=None)
     result = web.get_clip_snapshot_path(obs)
     assert result is None
 
 
-def test_get_clip_snapshot_path_with_snapshots_not_dict(monkeypatch):
+def test_get_clip_snapshot_path_with_snapshots_not_dict(import_web, monkeypatch):
     """Test that get_clip_snapshot_path returns None when snapshots is not a dict."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     obs = MockObservation(extra={"snapshots": ["nope"]})
     result = web.get_clip_snapshot_path(obs)
     assert result is None
 
 
-def test_get_clip_snapshot_path_with_missing_snapshots_key(monkeypatch):
+def test_get_clip_snapshot_path_with_missing_snapshots_key(import_web, monkeypatch):
     """Test that get_clip_snapshot_path returns None when snapshots key is missing."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     obs = MockObservation(extra={"detection": {"box_confidence": 0.85}})
     result = web.get_clip_snapshot_path(obs)
     assert result is None
 
 
-def test_get_clip_snapshot_path_with_missing_clip_path(monkeypatch):
+def test_get_clip_snapshot_path_with_missing_clip_path(import_web, monkeypatch):
     """Test that get_clip_snapshot_path returns None when clip_path key is missing."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     obs = MockObservation(extra={"snapshots": {"annotated_path": "snapshots/2024-01-01/abc123_annotated.jpg"}})
     result = web.get_clip_snapshot_path(obs)
     assert result is None
 
 
-def test_flatten_extra_metadata(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_flatten_extra_metadata(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     extra = {
         "detection": {"box_confidence": 0.8756, "extra": {"foo": "bar"}},
         "identification": {
@@ -363,8 +343,8 @@ def test_flatten_extra_metadata(monkeypatch):
     assert flattened["score"] == 2
 
 
-def test_prepare_observation_extras_formats_values(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_prepare_observation_extras_formats_values(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     obs = [
         MockObservationWithExtras(
             extra={
@@ -390,8 +370,8 @@ def test_prepare_observation_extras_formats_values(monkeypatch):
     assert obs[2].extra_display["review.label"] == ""
 
 
-def test_default_extra_column_visibility_hides_sensitivity(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_default_extra_column_visibility_hides_sensitivity(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     columns = [
         "detection.box_confidence",
         "sensitivity.bg_motion_threshold",
@@ -405,8 +385,8 @@ def test_default_extra_column_visibility_hides_sensitivity(monkeypatch):
     assert defaults["identification.match_score"] is True
 
 
-def test_sanitize_redirect_path(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_sanitize_redirect_path(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     # Basic cases
     assert web._sanitize_redirect_path(None) == "/observations"
     assert web._sanitize_redirect_path("") == "/observations"
@@ -451,9 +431,9 @@ def test_sanitize_redirect_path(monkeypatch):
     assert web._sanitize_redirect_path("/path\nInjected: header") == "/observations"
 
 
-def test_safe_internal_url(monkeypatch):
+def test_safe_internal_url(import_web, monkeypatch):
     """Test _safe_internal_url helper for constructing safe redirect URLs."""
-    web = _import_web(monkeypatch)
+    web = import_web(monkeypatch)
     
     # Valid path without resource_id
     assert web._safe_internal_url("/observations") == "/observations"
@@ -501,16 +481,16 @@ def test_safe_internal_url(monkeypatch):
     assert web._safe_internal_url("/observations", 123.9) == "/observations/123"
 
 
-def test_sanitize_case_name(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_sanitize_case_name(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     assert web._sanitize_case_name(None, "fallback") == "fallback"
     assert web._sanitize_case_name("", "fallback") == "fallback"
     assert web._sanitize_case_name("  My Case!  ", "fallback") == "My-Case"
     assert web._sanitize_case_name("___", "fallback") == "fallback"
 
 
-def test_format_extra_label_and_value(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_format_extra_label_and_value(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     assert web._format_extra_label("sensitivity.detect_conf") == "Sensitivity · Detect Conf"
     assert web._format_extra_value(None) == ""
     assert web._format_extra_value(1.23456) == "1.235"
@@ -522,8 +502,8 @@ def test_format_extra_label_and_value(monkeypatch):
     assert web._format_extra_value("ok") == "ok"
 
 
-def test_extra_sort_helpers(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_extra_sort_helpers(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     assert web._extra_sort_type([]) == "text"
     assert web._extra_sort_type([None, 1, 2.5]) == "number"
     assert web._extra_sort_type([True, False]) == "text"
@@ -537,8 +517,8 @@ def test_extra_sort_helpers(monkeypatch):
     assert web._format_sort_value([1, "A"], "text") == "[1, \"a\"]"
 
 
-def test_order_extra_columns(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_order_extra_columns(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     ordered = web._order_extra_columns(
         iter(["foo", "detection.box_confidence", "bar", "alpha"])
     )
@@ -546,8 +526,8 @@ def test_order_extra_columns(monkeypatch):
     assert ordered[1:] == ["alpha", "bar", "foo"]
 
 
-def test_candidate_json_value_helpers(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_candidate_json_value_helpers(import_web, monkeypatch):
+    web = import_web(monkeypatch)
 
     assert web._candidate_json_value("extra_json", [], "sqlite") is None
 

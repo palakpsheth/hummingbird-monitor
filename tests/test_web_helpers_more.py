@@ -5,25 +5,13 @@ These tests focus on internal helpers that do not require running the
 FastAPI application but do depend on safe import-time configuration.
 """
 
-import importlib
 
 import pytest
 
 
-def _import_web(monkeypatch):
-    """Import ``hbmon.web`` after setting safe directories via monkeypatch."""
-    from pathlib import Path
 
-    cwd = Path.cwd().resolve()
-    monkeypatch.setenv("HBMON_DATA_DIR", str(cwd / "data"))
-    monkeypatch.setenv("HBMON_MEDIA_DIR", str(cwd / "media"))
-    if "hbmon.web" in importlib.sys.modules:
-        importlib.sys.modules.pop("hbmon.web")
-    return importlib.import_module("hbmon.web")
-
-
-def test_read_git_head_from_packed_refs(monkeypatch, tmp_path):
-    web = _import_web(monkeypatch)
+def test_read_git_head_from_packed_refs(import_web, monkeypatch, tmp_path):
+    web = import_web(monkeypatch)
     repo_root = tmp_path / "repo"
     git_dir = repo_root / ".git"
     git_dir.mkdir(parents=True, exist_ok=True)
@@ -37,16 +25,16 @@ def test_read_git_head_from_packed_refs(monkeypatch, tmp_path):
     assert web._read_git_head(repo_root) == "deadbee"
 
 
-def test_timezone_helpers_extra(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_timezone_helpers_extra(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     assert web._normalize_timezone("  ") == "local"
     assert web._normalize_timezone("America/Los_Angeles") == "America/Los_Angeles"
     assert web._timezone_label("local") == "Browser local"
     assert web._timezone_label("Europe/Berlin") == "Europe/Berlin"
 
 
-def test_candidate_json_value_paths(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_candidate_json_value_paths(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     if not getattr(web, "_SQLA_AVAILABLE", False):
         pytest.skip("SQLAlchemy not available")
 
@@ -70,8 +58,8 @@ def test_candidate_json_value_paths(monkeypatch):
     assert web._candidate_json_value(expr, ["x"], "mysql") is None
 
 
-def test_get_db_dialect_name_variants(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_get_db_dialect_name_variants(import_web, monkeypatch):
+    web = import_web(monkeypatch)
 
     class Dialect:
         def __init__(self, name):
