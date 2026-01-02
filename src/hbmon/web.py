@@ -73,6 +73,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import anyio
 import numpy as np
 
+from hbmon.observation_tools import extract_video_metadata
+
 logger = logging.getLogger(__name__)
 
 """
@@ -1439,7 +1441,6 @@ def make_app() -> Any:
                 
                 # Extract video metadata using OpenCV
                 try:
-                    from hbmon.observation_tools import extract_video_metadata
                     video_metadata = await _run_blocking(extract_video_metadata, video_file)
                     fps = video_metadata.get("fps")
                     width = video_metadata.get("width")
@@ -3407,8 +3408,6 @@ def make_app() -> Any:
             result["file_suffix"] = full_path.suffix.lower()
 
             # Extract video metadata using OpenCV (FPS, resolution, codec)
-            from hbmon.observation_tools import extract_video_metadata
-            
             video_metadata = await _run_blocking(extract_video_metadata, full_path)
             # Map observation_tools keys to API response keys
             if "fps" in video_metadata:
