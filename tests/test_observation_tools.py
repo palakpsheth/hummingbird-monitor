@@ -460,6 +460,9 @@ async def test_process_observations_batch_paths(monkeypatch, tmp_path):
         def isnot(self, _value: object) -> "FieldStub":
             return self
 
+        def __eq__(self, _value: object) -> "FieldStub":
+            return self
+
         def __ne__(self, _value: object) -> "FieldStub":
             return self
 
