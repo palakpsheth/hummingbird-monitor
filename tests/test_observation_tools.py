@@ -7,8 +7,10 @@ batch processing, and cache management functionality.
 
 from pathlib import Path
 from unittest.mock import Mock, patch
+import sys
 import tempfile
 import time
+import types
 
 import pytest
 
@@ -458,6 +460,9 @@ async def test_process_observations_batch_paths(monkeypatch, tmp_path):
     """Test batch processing for no video, missing file, success, and failure paths."""
     class FieldStub:
         def isnot(self, _value: object) -> "FieldStub":
+            return self
+
+        def __eq__(self, _value: object) -> "FieldStub":
             return self
 
         def __ne__(self, _value: object) -> "FieldStub":
