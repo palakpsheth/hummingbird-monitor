@@ -3408,19 +3408,27 @@ def make_app() -> Any:
             result["file_suffix"] = full_path.suffix.lower()
 
             # Extract video metadata using OpenCV (FPS, resolution, codec)
-            video_metadata = await _run_blocking(extract_video_metadata, full_path)
-            # Map observation_tools keys to API response keys
-            if "fps" in video_metadata:
-                result["fps"] = video_metadata["fps"]
-            if "width" in video_metadata and "height" in video_metadata:
-                result["width"] = video_metadata["width"]
-                result["height"] = video_metadata["height"]
-                result["resolution"] = f"{video_metadata['width']}×{video_metadata['height']}"
-            if "duration" in video_metadata:
-                result["frame_count"] = video_metadata.get("frame_count")
-                result["duration_seconds"] = video_metadata["duration"]
-            if "fourcc" in video_metadata:
-                result["fourcc"] = video_metadata["fourcc"]
+            try:
+                video_metadata = await _run_blocking(extract_video_metadata, full_path)
+                # Map observation_tools keys to API response keys
+                if "fps" in video_metadata:
+                    result["fps"] = video_metadata["fps"]
+                if "width" in video_metadata and "height" in video_metadata:
+                    result["width"] = video_metadata["width"]
+                    result["height"] = video_metadata["height"]
+                    result["resolution"] = f"{video_metadata['width']}×{video_metadata['height']}"
+                if "duration" in video_metadata:
+                    result["frame_count"] = video_metadata.get("frame_count")
+                    result["duration_seconds"] = video_metadata["duration"]
+                if "fourcc" in video_metadata:
+                    result["fourcc"] = video_metadata["fourcc"]
+            except Exception as exc:
+                logger.warning(
+                    "Failed to extract video metadata for observation %s at %s: %s",
+                    obs_id,
+                    full_path,
+                    exc,
+                )
 
             # Try to detect codec from file header
             codec_hint = "unknown"
