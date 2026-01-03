@@ -16,6 +16,81 @@ import pytest
 import hbmon.worker as worker
 
 
+@pytest.fixture
+def mock_cv2_for_jpeg(monkeypatch):
+    """
+    Fixture to mock cv2 for JPEG encoding tests.
+    
+    Returns a tuple of (captured_params, encoded_data, fake_cv2) where:
+    - captured_params: list that captures the parameters passed to cv2.imencode
+    - encoded_data: the fake JPEG data that will be returned
+    - fake_cv2: the mocked cv2 module with IMWRITE_JPEG_QUALITY constant
+    
+    The fixture also sets up the monkeypatch for _CV2_AVAILABLE and cv2 module.
+    
+    Usage:
+        def test_something(mock_cv2_for_jpeg):
+            captured_params, encoded_data, fake_cv2 = mock_cv2_for_jpeg
+            # ... test code ...
+            assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 100, ...]]
+    """
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+    
+    encoded_data = b"fake jpeg data"
+    captured_params = []
+    
+    def mock_imencode(ext, frame, params):
+        captured_params.append(params)
+        return True, types.SimpleNamespace(tobytes=lambda: encoded_data)
+    
+    fake_cv2 = types.SimpleNamespace(
+        imencode=mock_imencode,
+        IMWRITE_JPEG_QUALITY=1,
+        IMWRITE_JPEG_SAMPLING_FACTOR=2,
+        IMWRITE_JPEG_SAMPLING_FACTOR_444=3,
+    )
+    monkeypatch.setattr(worker, "cv2", fake_cv2)
+    
+    return captured_params, encoded_data, fake_cv2
+
+
+@pytest.fixture
+def mock_cv2_for_jpeg_failure(monkeypatch):
+    """
+    Fixture to mock cv2 for JPEG encoding failure tests.
+    
+    Similar to mock_cv2_for_jpeg but the imencode function returns False
+    to simulate encoding failure.
+    
+    Returns a tuple of (captured_params, fake_cv2) where:
+    - captured_params: list that captures the parameters passed to cv2.imencode
+    - fake_cv2: the mocked cv2 module with IMWRITE_JPEG_QUALITY constant
+    
+    Usage:
+        def test_something(mock_cv2_for_jpeg_failure):
+            captured_params, fake_cv2 = mock_cv2_for_jpeg_failure
+            # ... test code ...
+            assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 100, ...]]
+    """
+    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
+    
+    captured_params = []
+    
+    def mock_imencode(ext, frame, params):
+        captured_params.append(params)
+        return False, None  # Encode failure
+    
+    fake_cv2 = types.SimpleNamespace(
+        imencode=mock_imencode,
+        IMWRITE_JPEG_QUALITY=1,
+        IMWRITE_JPEG_SAMPLING_FACTOR=2,
+        IMWRITE_JPEG_SAMPLING_FACTOR_444=3,
+    )
+    monkeypatch.setattr(worker, "cv2", fake_cv2)
+    
+    return captured_params, fake_cv2
+
+
 class TestDetClass:
     """Tests for the Det detection dataclass."""
 
@@ -366,107 +441,82 @@ class TestWriteJpeg:
         with pytest.raises(RuntimeError, match="OpenCV.*not installed"):
             worker._write_jpeg(Path("/tmp/test.jpg"), np.zeros((10, 10, 3), dtype=np.uint8))
 
-    def test_write_jpeg_success(self, monkeypatch, tmp_path):
+    def test_write_jpeg_success(self, mock_cv2_for_jpeg, tmp_path):
         """Test _write_jpeg success with mocked cv2."""
-        monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
-
-        encoded_data = b"fake jpeg data"
-        captured_params = []
-
-        def mock_imencode(ext, frame, params):
-            captured_params.append(params)
-            return True, types.SimpleNamespace(tobytes=lambda: encoded_data)
-
-        fake_cv2 = types.SimpleNamespace(
-            imencode=mock_imencode,
-            IMWRITE_JPEG_QUALITY=1,
-        )
-        monkeypatch.setattr(worker, "cv2", fake_cv2)
+        captured_params, encoded_data, fake_cv2 = mock_cv2_for_jpeg
 
         out_path = tmp_path / "test.jpg"
         frame = np.zeros((10, 10, 3), dtype=np.uint8)
         worker._write_jpeg(out_path, frame)
 
-        assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 100]]
+        expected_params = [
+            fake_cv2.IMWRITE_JPEG_QUALITY,
+            100,
+            fake_cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
+            fake_cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
+        ]
+        assert captured_params == [expected_params]
         assert out_path.exists()
         assert out_path.read_bytes() == encoded_data
 
-    def test_write_jpeg_encode_failure(self, monkeypatch, tmp_path):
+    def test_write_jpeg_encode_failure(self, mock_cv2_for_jpeg_failure, tmp_path):
         """Test _write_jpeg raises on encode failure."""
-        monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
-
-        captured_params = []
-
-        def mock_imencode(ext, frame, params):
-            captured_params.append(params)
-            return False, None  # Encode failure
-
-        fake_cv2 = types.SimpleNamespace(
-            imencode=mock_imencode,
-            IMWRITE_JPEG_QUALITY=1,
-        )
-        monkeypatch.setattr(worker, "cv2", fake_cv2)
+        captured_params, fake_cv2 = mock_cv2_for_jpeg_failure
 
         out_path = tmp_path / "test.jpg"
         frame = np.zeros((10, 10, 3), dtype=np.uint8)
 
         with pytest.raises(RuntimeError, match="imencode failed"):
             worker._write_jpeg(out_path, frame)
-        assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 100]]
+        expected_params = [
+            fake_cv2.IMWRITE_JPEG_QUALITY,
+            100,
+            fake_cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
+            fake_cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
+        ]
+        assert captured_params == [expected_params]
 
 
 class TestWriteJpegAsync:
     """Tests for the _write_jpeg_async function."""
 
     @pytest.mark.asyncio
-    async def test_write_jpeg_async_success(self, monkeypatch, tmp_path):
+    async def test_write_jpeg_async_success(self, mock_cv2_for_jpeg, tmp_path):
         """Test _write_jpeg_async writes file successfully using asyncio.to_thread."""
-        monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
-
-        encoded_data = b"fake jpeg data async"
-        captured_params = []
-
-        def mock_imencode(ext, frame, params):
-            captured_params.append(params)
-            return True, types.SimpleNamespace(tobytes=lambda: encoded_data)
-
-        fake_cv2 = types.SimpleNamespace(
-            imencode=mock_imencode,
-            IMWRITE_JPEG_QUALITY=1,
-        )
-        monkeypatch.setattr(worker, "cv2", fake_cv2)
+        captured_params, encoded_data, fake_cv2 = mock_cv2_for_jpeg
 
         out_path = tmp_path / "test_async.jpg"
         frame = np.zeros((10, 10, 3), dtype=np.uint8)
         await worker._write_jpeg_async(out_path, frame)
 
-        assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 100]]
+        expected_params = [
+            fake_cv2.IMWRITE_JPEG_QUALITY,
+            100,
+            fake_cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
+            fake_cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
+        ]
+        assert captured_params == [expected_params]
         assert out_path.exists()
         assert out_path.read_bytes() == encoded_data
 
     @pytest.mark.asyncio
-    async def test_write_jpeg_async_propagates_errors(self, monkeypatch, tmp_path):
+    async def test_write_jpeg_async_propagates_errors(self, mock_cv2_for_jpeg_failure, tmp_path):
         """Test _write_jpeg_async propagates errors from _write_jpeg."""
-        monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
-
-        captured_params = []
-
-        def mock_imencode(ext, frame, params):
-            captured_params.append(params)
-            return False, None  # Encode failure
-
-        fake_cv2 = types.SimpleNamespace(
-            imencode=mock_imencode,
-            IMWRITE_JPEG_QUALITY=1,
-        )
-        monkeypatch.setattr(worker, "cv2", fake_cv2)
+        captured_params, fake_cv2 = mock_cv2_for_jpeg_failure
 
         out_path = tmp_path / "test_async.jpg"
         frame = np.zeros((10, 10, 3), dtype=np.uint8)
 
         with pytest.raises(RuntimeError, match="imencode failed"):
             await worker._write_jpeg_async(out_path, frame)
-        assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 100]]
+        expected_params = [
+            fake_cv2.IMWRITE_JPEG_QUALITY,
+            100,
+            fake_cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
+            fake_cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
+        ]
+        assert captured_params == [expected_params]
+
 
 
 class TestConvertToH264:
