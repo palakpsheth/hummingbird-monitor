@@ -36,6 +36,8 @@ dependencies = [
 # MOVED FROM [project.optional-dependencies] to [dependency-groups]
 [dependency-groups]
 dev = [
+  "ipykernel>=6,<7",
+  "jupyterlab>=4,<5",
   "pytest>=8,<10",
   "pytest-xdist>=3.5,<4",
   "pytest-playwright>=0.4.4,<1",
