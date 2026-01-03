@@ -672,8 +672,10 @@ def test_observation_detail_prev_next_links(tmp_path, monkeypatch):
 
     r = client.get(f"/observations/{current_id}")
     assert r.status_code == 200
-    assert f"/observations/{newer_id}" in r.text
-    assert f"/observations/{older_id}" in r.text
+    # Verify that the Previous link points to the older observation
+    assert re.search(rf'<a[^>]+href="/observations/{older_id}"[^>]*>.*?Previous.*?</a>', r.text, re.DOTALL | re.IGNORECASE)
+    # Verify that the Next link points to the newer observation
+    assert re.search(rf'<a[^>]+href="/observations/{newer_id}"[^>]*>.*?Next.*?</a>', r.text, re.DOTALL | re.IGNORECASE)
 
 
 def test_observation_detail_not_found(tmp_path, monkeypatch):

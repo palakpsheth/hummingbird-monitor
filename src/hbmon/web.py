@@ -1537,7 +1537,7 @@ def make_app() -> Any:
         prev_obs_id: int | None = None
         next_obs_id: int | None = None
         if _SQLA_AVAILABLE:
-            prev_stmt = (
+            next_obs_stmt = (
                 select(Observation.id)
                 .where(
                     or_(
@@ -1548,7 +1548,7 @@ def make_app() -> Any:
                 .order_by(Observation.ts.asc(), Observation.id.asc())
                 .limit(1)
             )
-            next_stmt = (
+            prev_obs_stmt = (
                 select(Observation.id)
                 .where(
                     or_(
@@ -1559,8 +1559,8 @@ def make_app() -> Any:
                 .order_by(Observation.ts.desc(), Observation.id.desc())
                 .limit(1)
             )
-            prev_result = await db.execute(prev_stmt)
-            next_result = await db.execute(next_stmt)
+            prev_result = await db.execute(prev_obs_stmt)
+            next_result = await db.execute(next_obs_stmt)
             prev_obs_id = prev_result.scalar_one_or_none()
             next_obs_id = next_result.scalar_one_or_none()
 
