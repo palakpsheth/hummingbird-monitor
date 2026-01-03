@@ -139,12 +139,10 @@ def query_observations(
         
     except Exception as e:
         print(f"ERROR: Database connection failed: {e}", file=sys.stderr)
-        safe_conn_info = {
-            "host": conn_params.get("host"),
-            "port": conn_params.get("port"),
-            "dbname": conn_params.get("dbname"),
-        }
-        print(f"Connection params (without password): {safe_conn_info}", file=sys.stderr)
+        print(
+            "HINT: Check HBMON_DB_ASYNC_URL / HBMON_DB_URL environment variables and database availability.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
