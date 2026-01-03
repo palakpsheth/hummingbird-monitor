@@ -115,6 +115,7 @@ class Settings:
     camera_name: str = "camera"
     fps_limit: float = 8.0
     temporal_window_frames: int = 5
+    temporal_min_detections: int = 1
     arrival_buffer_seconds: float = 5.0
     departure_timeout_seconds: float = 2.0
     post_departure_buffer_seconds: float = 3.0
@@ -168,6 +169,7 @@ class Settings:
 
         s.fps_limit = env_float("HBMON_FPS_LIMIT", s.fps_limit)
         s.temporal_window_frames = env_int("HBMON_TEMPORAL_WINDOW_FRAMES", s.temporal_window_frames)
+        s.temporal_min_detections = env_int("HBMON_TEMPORAL_MIN_DETECTIONS", s.temporal_min_detections)
         s.arrival_buffer_seconds = env_float("HBMON_ARRIVAL_BUFFER_SECONDS", s.arrival_buffer_seconds)
         s.departure_timeout_seconds = env_float("HBMON_DEPARTURE_TIMEOUT_SECONDS", s.departure_timeout_seconds)
         s.post_departure_buffer_seconds = env_float("HBMON_POST_DEPARTURE_BUFFER_SECONDS", s.post_departure_buffer_seconds)
@@ -325,6 +327,7 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
         camera_name=str(d.get("camera_name", "camera")),
         fps_limit=float(d.get("fps_limit", 8.0)),
         temporal_window_frames=int(d.get("temporal_window_frames", 5)),
+        temporal_min_detections=int(d.get("temporal_min_detections", 1)),
         arrival_buffer_seconds=float(d.get("arrival_buffer_seconds", 5.0)),
         departure_timeout_seconds=float(d.get("departure_timeout_seconds", 2.0)),
         post_departure_buffer_seconds=float(d.get("post_departure_buffer_seconds", 3.0)),

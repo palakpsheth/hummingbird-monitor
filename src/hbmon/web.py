@@ -106,7 +106,7 @@ except Exception:  # pragma: no cover
     _FASTAPI_AVAILABLE = False
 
 try:
-    from sqlalchemy import JSON, Integer, cast, delete, desc, func, select  # type: ignore
+    from sqlalchemy import JSON, Integer, and_, cast, delete, desc, func, or_, select  # type: ignore
     from sqlalchemy.dialects.postgresql import JSONB  # type: ignore
     from sqlalchemy.exc import OperationalError  # type: ignore
     from sqlalchemy.orm import Session  # type: ignore
@@ -548,6 +548,30 @@ def get_observation_media_paths(obs: Observation) -> dict[str, str]:
     return {k: v for k, v in media.items() if isinstance(v, str) and v}
 
 
+def _extract_observation_metrics(obs: Observation) -> tuple[Any | None, Any | None]:
+    """Extracts detection confidence and video duration from observation extra data.
+    
+    Args:
+        obs: Observation instance with extra_json field
+        
+    Returns:
+        Tuple of (detection_confidence, video_duration), either or both may be None
+    """
+    extra = obs.get_extra() or {}
+    detection_confidence = None
+    video_duration = None
+    if isinstance(extra, dict):
+        detection = extra.get("detection")
+        if isinstance(detection, dict):
+            detection_confidence = detection.get("box_confidence")
+        media = extra.get("media")
+        if isinstance(media, dict):
+            video = media.get("video")
+            if isinstance(video, dict):
+                video_duration = video.get("duration")
+    return detection_confidence, video_duration
+
+
 def _normalize_candidate_label(raw: str | None) -> str:
     if not raw:
         return ""
@@ -984,6 +1008,11 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
         parse_int("temporal_window_frames", "Temporal window frames", 1, 120)
     else:
         parsed["temporal_window_frames"] = 5
+    temporal_min_text = str(raw.get("temporal_min_detections", "")).strip()
+    if temporal_min_text:
+        parse_int("temporal_min_detections", "Temporal min detections", 1, 120)
+    else:
+        parsed["temporal_min_detections"] = 1
     parse_float("arrival_buffer_seconds", "Arrival buffer seconds", 0.0, 30.0)
     parse_float("departure_timeout_seconds", "Departure timeout seconds", 0.5, 60.0)
     parse_float("post_departure_buffer_seconds", "Post-departure buffer seconds", 0.0, 30.0)
@@ -1023,6 +1052,13 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
                 parsed["timezone"] = tz_clean
             except ZoneInfoNotFoundError:
                 errors.append("Timezone must be a valid IANA name (e.g., America/Los_Angeles) or 'local'.")
+
+    if (
+        "temporal_window_frames" in parsed
+        and "temporal_min_detections" in parsed
+        and parsed["temporal_min_detections"] > parsed["temporal_window_frames"]
+    ):
+        errors.append("Temporal min detections must be less than or equal to the temporal window size.")
 
     return parsed, errors
 
@@ -1175,6 +1211,7 @@ def make_app() -> Any:
             "fps_limit": f"{float(getattr(settings, 'fps_limit', 8.0)):.1f}",
 
             "temporal_window_frames": str(int(getattr(settings, "temporal_window_frames", 5))),
+            "temporal_min_detections": str(int(getattr(settings, "temporal_min_detections", 1))),
             "arrival_buffer_seconds": f"{float(getattr(settings, 'arrival_buffer_seconds', 5.0)):.1f}",
             "departure_timeout_seconds": f"{float(getattr(settings, 'departure_timeout_seconds', 2.0)):.1f}",
             "post_departure_buffer_seconds": f"{float(getattr(settings, 'post_departure_buffer_seconds', 3.0)):.1f}",
@@ -1210,12 +1247,14 @@ def make_app() -> Any:
         request: Request,
         page: int = 1,
         page_size: int = 10,
+        ind_page: int = 1,
+        ind_page_size: int = 10,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
         title = os.getenv("HBMON_TITLE", "Hummingbird Monitor")
 
-        cache_key = f"hbmon:index:{page}:{page_size}"
+        cache_key = f"hbmon:index:{page}:{page_size}:{ind_page}:{ind_page_size}"
         cached = await cache_get_json(cache_key)
         if cached:
             top_inds_out = cached["top_inds_out"]
@@ -1224,13 +1263,22 @@ def make_app() -> Any:
             clamped_page_size = cached["clamped_page_size"]
             total_pages = cached["total_pages"]
             total_recent = cached["total_recent"]
+            ind_current_page = cached["ind_current_page"]
+            ind_clamped_page_size = cached["ind_clamped_page_size"]
+            ind_total_pages = cached["ind_total_pages"]
+            total_individuals = cached["total_individuals"]
             last_capture_utc = cached["last_capture_utc"]
         else:
+            total_individuals = (await db.execute(select(func.count(Individual.id)))).scalar_one()
+            ind_current_page, ind_clamped_page_size, ind_total_pages, ind_offset = paginate(
+                total_individuals, page=ind_page, page_size=ind_page_size, max_page_size=100
+            )
             top_inds = (
                 await db.execute(
                     select(Individual.id, Individual.name, Individual.visit_count, Individual.last_seen_at)
-                    .order_by(desc(Individual.visit_count))
-                    .limit(20)
+                    .order_by(desc(Individual.visit_count), desc(Individual.id))
+                    .offset(ind_offset)
+                    .limit(ind_clamped_page_size)
                 )
             ).all()
 
@@ -1260,6 +1308,7 @@ def make_app() -> Any:
                 # Use annotated snapshot if available, otherwise fall back to raw
                 annotated = get_annotated_snapshot_path(o)
                 o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
+                detection_confidence, video_duration = _extract_observation_metrics(o)
                 recent.append(
                     {
                         "id": int(o.id),
@@ -1271,6 +1320,11 @@ def make_app() -> Any:
                         "display_snapshot_path": o.display_snapshot_path,  # type: ignore[attr-defined]
                         "video_path": o.video_path,
                         "species_css": o.species_css,  # type: ignore[attr-defined]
+                        "detection_confidence": (
+                            float(detection_confidence) if detection_confidence is not None else None
+                        ),
+                        "video_duration": float(video_duration) if video_duration is not None else None,
+                        "review_label": o.review_label,
                     }
                 )
 
@@ -1286,6 +1340,10 @@ def make_app() -> Any:
                     "clamped_page_size": clamped_page_size,
                     "total_pages": total_pages,
                     "total_recent": int(total_recent),
+                    "ind_current_page": ind_current_page,
+                    "ind_clamped_page_size": ind_clamped_page_size,
+                    "ind_total_pages": ind_total_pages,
+                    "total_individuals": int(total_individuals),
                     "last_capture_utc": last_capture_utc,
                 },
             )
@@ -1309,6 +1367,11 @@ def make_app() -> Any:
                 recent_total_pages=total_pages,
                 recent_total=int(total_recent),
                 recent_page_size_options=PAGE_SIZE_OPTIONS,
+                ind_page=ind_current_page,
+                ind_page_size=ind_clamped_page_size,
+                ind_total_pages=ind_total_pages,
+                ind_total=int(total_individuals),
+                ind_page_size_options=PAGE_SIZE_OPTIONS,
                 roi=roi,
                 roi_str=roi_str,
                 rtsp_url=rtsp,
@@ -1324,9 +1387,11 @@ def make_app() -> Any:
         individual_id: int | None = None,
         page: int = 1,
         page_size: int = 10,
+        view: str = "list",
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
+        view_mode = "cards" if view == "cards" else "list"
 
         count_query = select(func.count(Observation.id))
         if individual_id is not None:
@@ -1350,6 +1415,9 @@ def make_app() -> Any:
             o.annotated_snapshot_path = annotated  # type: ignore[attr-defined]
             o.clip_snapshot_path = get_clip_snapshot_path(o)  # type: ignore[attr-defined]
             o.background_snapshot_path = get_background_snapshot_path(o)  # type: ignore[attr-defined]
+            detection_confidence, video_duration = _extract_observation_metrics(o)
+            o.detection_confidence = detection_confidence  # type: ignore[attr-defined]
+            o.video_duration = video_duration  # type: ignore[attr-defined]
 
         extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
         extra_column_defaults = _default_extra_column_visibility(extra_columns)
@@ -1387,6 +1455,7 @@ def make_app() -> Any:
                 obs_page=current_page,
                 obs_page_size=clamped_page_size,
                 obs_total_pages=total_pages,
+                obs_view=view_mode,
                 limit_options=PAGE_SIZE_OPTIONS,
                 count_shown=len(obs),
                 count_total=int(total),
@@ -1467,6 +1536,36 @@ def make_app() -> Any:
                 "fourcc": fourcc,
             }
 
+        prev_obs_id: int | None = None
+        next_obs_id: int | None = None
+        if _SQLA_AVAILABLE:
+            next_obs_stmt = (
+                select(Observation.id)
+                .where(
+                    or_(
+                        Observation.ts > o.ts,
+                        and_(Observation.ts == o.ts, Observation.id > o.id),
+                    )
+                )
+                .order_by(Observation.ts.asc(), Observation.id.asc())
+                .limit(1)
+            )
+            prev_obs_stmt = (
+                select(Observation.id)
+                .where(
+                    or_(
+                        Observation.ts < o.ts,
+                        and_(Observation.ts == o.ts, Observation.id < o.id),
+                    )
+                )
+                .order_by(Observation.ts.desc(), Observation.id.desc())
+                .limit(1)
+            )
+            prev_result = await db.execute(prev_obs_stmt)
+            next_result = await db.execute(next_obs_stmt)
+            prev_obs_id = prev_result.scalar_one_or_none()
+            next_obs_id = next_result.scalar_one_or_none()
+
         return templates.TemplateResponse(
             request,
             "observation_detail.html",
@@ -1483,6 +1582,8 @@ def make_app() -> Any:
                 background_snapshot_path=background_snapshot_path,
                 mask_path=mask_path,
                 mask_overlay_path=mask_overlay_path,
+                prev_obs_id=prev_obs_id,
+                next_obs_id=next_obs_id,
             ),
         )
 
@@ -2541,7 +2642,7 @@ def make_app() -> Any:
 
     @app.get("/config", response_class=HTMLResponse)
     async def config_page(request: Request) -> HTMLResponse:
-        s = load_settings()
+        s = load_settings(apply_env_overrides=False)
         saved = request.query_params.get("saved") == "1"
         return templates.TemplateResponse(
             request,
@@ -2558,7 +2659,7 @@ def make_app() -> Any:
 
     @app.post("/config", response_class=HTMLResponse)
     async def config_save(request: Request) -> HTMLResponse:
-        s = load_settings()
+        s = load_settings(apply_env_overrides=False)
         form = await request.form()
         field_names = (
             "detect_conf",
@@ -2573,6 +2674,8 @@ def make_app() -> Any:
             "bg_min_overlap",
             # New fields
             "fps_limit",
+            "temporal_window_frames",
+            "temporal_min_detections",
 
             "arrival_buffer_seconds",
             "departure_timeout_seconds",
@@ -2622,6 +2725,8 @@ def make_app() -> Any:
         s.bg_min_overlap = parsed["bg_min_overlap"]
         # New fields
         s.fps_limit = parsed["fps_limit"]
+        s.temporal_window_frames = parsed["temporal_window_frames"]
+        s.temporal_min_detections = parsed["temporal_min_detections"]
 
         s.arrival_buffer_seconds = parsed["arrival_buffer_seconds"]
         s.departure_timeout_seconds = parsed["departure_timeout_seconds"]

@@ -109,7 +109,6 @@ class _DummyCV2:
 
 
 
-
 class _RejectBox:
     def __init__(self):
         self.cls = _DummyScalar(0)

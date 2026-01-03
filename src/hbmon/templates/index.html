@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from '_macros.html' import observation_card %}
 {% block content %}
 <div class="page-header">
   <h1 class="page-title">Dashboard</h1>
@@ -69,6 +70,33 @@
     <div class="muted">Sorted by visits</div>
   </div>
 
+  <div class="inline"
+    style="justify-content: space-between; align-items: center; gap: 10px; margin: 6px 0 12px 0; flex-wrap: wrap;">
+    <form class="inline" method="get" action="/" style="gap: 6px; flex-wrap: wrap;">
+      <label class="muted">Per page:</label>
+      <select name="ind_page_size">
+        {% for n in ind_page_size_options %}
+        <option value="{{ n }}" {% if ind_page_size==n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+      <input type="hidden" name="ind_page" value="1" />
+      <input type="hidden" name="page" value="{{ recent_page }}" />
+      <input type="hidden" name="page_size" value="{{ recent_page_size }}" />
+      <button type="submit">Apply</button>
+    </form>
+
+    <form class="inline" method="get" action="/" style="gap: 6px; flex-wrap: wrap;">
+      <input type="hidden" name="ind_page_size" value="{{ ind_page_size }}" />
+      <input type="hidden" name="page" value="{{ recent_page }}" />
+      <input type="hidden" name="page_size" value="{{ recent_page_size }}" />
+      <button type="submit" name="ind_page" value="{{ ind_page - 1 }}" {% if ind_page <=1 %}disabled{% endif
+        %}>Prev</button>
+      <div class="muted">Page {{ ind_page }} / {{ ind_total_pages }} ({{ ind_total }} total)</div>
+      <button type="submit" name="ind_page" value="{{ ind_page + 1 }}" {% if ind_page>= ind_total_pages %}disabled{%
+        endif %}>Next</button>
+    </form>
+  </div>
+
   <div class="table" style="margin-top:10px;">
     <div class="row head">
       <div>ID</div>
@@ -121,11 +149,15 @@
       {% endfor %}
     </select>
     <input type="hidden" name="page" value="1" />
+    <input type="hidden" name="ind_page" value="{{ ind_page }}" />
+    <input type="hidden" name="ind_page_size" value="{{ ind_page_size }}" />
     <button type="submit">Apply</button>
   </form>
 
   <form class="inline" method="get" action="/" style="gap: 6px; flex-wrap: wrap;">
     <input type="hidden" name="page_size" value="{{ recent_page_size }}" />
+    <input type="hidden" name="ind_page" value="{{ ind_page }}" />
+    <input type="hidden" name="ind_page_size" value="{{ ind_page_size }}" />
     <button type="submit" name="page" value="{{ recent_page - 1 }}" {% if recent_page <=1 %}disabled{% endif
       %}>Prev</button>
     <div class="muted">Page {{ recent_page }} / {{ recent_total_pages }} ({{ recent_total }} total)</div>
@@ -134,33 +166,9 @@
   </form>
 </div>
 <div class="gallery">
+  {# Each entry in recent is a dict with observation fields (see index route in web.py) #}
   {% for o in recent %}
-  {% set hue = ((o.individual_id or 0) * 47) % 360 %}
-  <div class="thumb">
-    <a href="/observations/{{ o.id }}"><img src="/media/{{ o.display_snapshot_path }}" loading="lazy"
-        alt="Observation {{ o.id }}" /></a>
-    <div class="meta">
-      <div>
-        <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
-        <span class="muted">({{ "%.2f"|format(o.species_prob) }})</span>
-      </div>
-
-      <div>
-        Ind:
-        <a href="/individuals/{{ o.individual_id }}">
-          <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
-        </a>
-        · sim {{ "%.3f"|format(o.match_score) }}
-      </div>
-
-      <div><span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span></div>
-
-      <div>
-        <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a>
-        · <a href="/observations/{{ o.id }}">Details</a>
-      </div>
-    </div>
-  </div>
+  {{ observation_card(o) }}
   {% endfor %}
 </div>
 {% endblock %}

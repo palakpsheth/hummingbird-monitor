@@ -1,8 +1,12 @@
-import cv2
-import threading
-import queue
-from pathlib import Path
 import logging
+import queue
+import threading
+from pathlib import Path
+
+try:
+    import cv2  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    cv2 = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +50,17 @@ class BackgroundRecorder:
 
     def _run(self):
         try:
+            if cv2 is None:
+                self.error = "OpenCV not available"
+                logger.error(self.error)
+                while True:
+                    try:
+                        frame = self.queue.get_nowait()
+                        self.queue.task_done()
+                    except queue.Empty:
+                        break
+                return
+
             # Try to initialize VideoWriter with various codecs
             # Ideally use avc1 (H.264) for browser compatibility
             codecs = [

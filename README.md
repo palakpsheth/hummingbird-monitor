@@ -88,11 +88,12 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Utilities**: Batch processing tools in `observation_tools.py` for extracting and updating video metadata
 
 ### Web UI pages
-- **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for auto-refresh with configurable refresh rate (1s, 2s, 5s, 10s), a live/fallback source indicator, and a detection health indicator); recent observations are paginated with a per-page selector
+- **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for auto-refresh with configurable refresh rate (1s, 2s, 5s, 10s), a live/fallback source indicator, and a detection health indicator); recent observations include detection confidence, clip length, and review badges, and both recent observations and top individuals are paginated with per-page selectors
 - **Observations**: filterable, sortable table (including dynamic extra metadata fields such as
   detector confidence) with compact thumbnails, a per-page selector, column visibility checklist (sensitivity
-  fields hidden by default), links to raw/annotated/clip snapshots + video, multi-select + bulk delete, and
-  horizontal scrolling for wide metadata + detail page
+  fields hidden by default), list/card view toggle, links to raw/annotated/clip snapshots + video, multi-select
+  + bulk delete, and horizontal scrolling for wide metadata + detail page (including floating previous/next
+  arrows for easy browsing)
 - **Candidates**: motion-rejected detections for review (thumbnails, overlap/confidence, label form, bulk delete)
 - **Individuals**: sortable list + detail page with prototypical snapshot and a paginated observations table with a per-page selector
 - **ROI calibration**: draw a box on the latest snapshot
@@ -276,6 +277,7 @@ The table below maps `.env.example` variables to their defaults and whether they
 | --- | --- | --- |
 | `HBMON_FPS_LIMIT` | `25` | Yes |
 | `HBMON_TEMPORAL_WINDOW_FRAMES` | `5` | Yes |
+| `HBMON_TEMPORAL_MIN_DETECTIONS` | `1` | Yes |
 | `HBMON_ARRIVAL_BUFFER_SECONDS` | `5.0` | Yes |
 | `HBMON_DEPARTURE_TIMEOUT_SECONDS` | `2.0` | Yes |
 | `HBMON_POST_DEPARTURE_BUFFER_SECONDS` | `3.0` | Yes |
@@ -428,6 +430,9 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 - `HBMON_TEMPORAL_WINDOW_FRAMES` (default 5)
   - Frames kept in the temporal voting buffer to smooth detections across frames
   - Increase to reduce flicker, decrease for faster reaction to quick motion
+- `HBMON_TEMPORAL_MIN_DETECTIONS` (default 1)
+  - Minimum number of frames within the temporal window that must contain a detection
+  - Example: window 20 + min 3 requires detections in at least 3 of the last 20 frames
 
 ### YOLO Model Selection
 - `HBMON_YOLO_MODEL` (default `yolo11n.pt`)
@@ -1066,6 +1071,24 @@ This repository uses **Git LFS (Large File Storage)** to manage large test video
    ```bash
    git lfs pull
    ```
+
+
+### UI Tests (Playwright)
+
+UI tests live under `tests/ui/` and drive the FastAPI UI with Playwright in headless mode (CI-friendly).
+Before running them locally, install the Playwright browser binaries:
+
+```bash
+uv run playwright install chromium
+```
+
+To run UI tests selectively:
+
+```bash
+uv run pytest tests/ui/          # Run all UI tests
+uv run pytest -m ui              # Run tests marked with @pytest.mark.ui
+```
+>>>>>>> origin/main
 
 ### Test Data Structure
 

@@ -11,6 +11,47 @@
   </div>
 </div>
 
+{% if prev_obs_id or next_obs_id %}
+<div class="obs-nav-arrows" data-obs-nav>
+  {% if prev_obs_id %}
+  <a class="obs-nav-arrow obs-nav-arrow--prev" href="/observations/{{ prev_obs_id }}"
+    aria-label="Previous observation">
+    <span aria-hidden="true">←</span>
+    <span class="obs-nav-label">Previous</span>
+  </a>
+  {% endif %}
+  {% if next_obs_id %}
+  <a class="obs-nav-arrow obs-nav-arrow--next" href="/observations/{{ next_obs_id }}"
+    aria-label="Next observation">
+    <span aria-hidden="true">→</span>
+    <span class="obs-nav-label">Next</span>
+  </a>
+  {% endif %}
+</div>
+<script>
+  (function () {
+    var nav = document.querySelector('[data-obs-nav]');
+    if (!nav) {
+      return;
+    }
+    var timeout = null;
+    var show = function () {
+      nav.classList.add('obs-nav-arrows--visible');
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      timeout = setTimeout(function () {
+        nav.classList.remove('obs-nav-arrows--visible');
+      }, 2200);
+    };
+    ['mousemove', 'touchstart', 'keydown', 'scroll'].forEach(function (eventName) {
+      window.addEventListener(eventName, show, { passive: true });
+    });
+    show();
+  })();
+</script>
+{% endif %}
+
 <div class="grid2">
   <div class="card">
     <div class="zoom-frame" data-zoom-container>

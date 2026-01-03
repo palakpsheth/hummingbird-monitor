@@ -178,6 +178,7 @@ class CandidateItem:
     motion_mask: np.ndarray | None = None
     background_img: np.ndarray | None = None
     settings_snapshot: dict[str, Any] | None = None
+    temporal_stats: dict[str, Any] | None = None
     roi_stats: dict[str, Any] | None = None
     bbox_stats: dict[str, Any] | None = None
     bg_active: bool = False
@@ -1115,6 +1116,7 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
                     "roi_size": [item.roi_shape[1], item.roi_shape[0]] if item.roi_shape else None,  # [width, height]
                     "roi_xyxy": [item.xoff, item.yoff, item.xoff + item.roi_shape[1], item.yoff + item.roi_shape[0]] if item.roi_shape else None,
                     "yolo_imgsz": list(item.predict_imgsz) if isinstance(item.predict_imgsz, tuple) else item.predict_imgsz,
+                    "temporal_voting": item.temporal_stats or {},
                 },
                 identification={
                     "individual_id": individual_id,
@@ -1187,7 +1189,7 @@ def _load_yolo_model() -> tuple[Any, str]:
     Returns:
         tuple: (Loaded YOLO model, device_label string)
     """
-    if not _YOLO_AVAILABLE:
+    if YOLO is None and not _YOLO_AVAILABLE:
         raise RuntimeError("ultralytics must be installed to load YOLO models")
 
     model_name = os.getenv("HBMON_YOLO_MODEL", "yolo11n.pt")
@@ -1385,8 +1387,13 @@ async def run_worker() -> None:
 
     # Temporal voting buffer: stores recent frames to catch birds visible for only 1-2 frames
     temporal_window = int(settings.temporal_window_frames if settings else 5)
+    temporal_min_detections = int(settings.temporal_min_detections if settings else 1)
     frame_buffer: deque[FrameEntry] = deque(maxlen=temporal_window)
-    logger.info(f"Temporal voting enabled with window size: {temporal_window} frames")
+    logger.info(
+        "Temporal voting enabled with window size: %s frames (min detections: %s)",
+        temporal_window,
+        temporal_min_detections,
+    )
 
     def get_settings() -> Settings:
         nonlocal last_settings_load, settings
@@ -1423,6 +1430,7 @@ async def run_worker() -> None:
     visit_last_seen_ts = 0.0
     visit_best_candidate: CandidateItem | None = None
     visit_best_score = 0.0
+    last_observation_ts: float | None = None
     
     # Arrival buffer: capture context before detection.
     # Default 5.0s (e.g. 100 frames at 20fps). Tuning: 5.0s is good for "approach" capture.
@@ -1441,6 +1449,15 @@ async def run_worker() -> None:
         if arrival_buffer.maxlen != target_arr_frames:
              logger.info(f"Resizing arrival buffer: {arrival_buffer.maxlen} -> {target_arr_frames} frames ({s.arrival_buffer_seconds}s)")
              arrival_buffer = deque(arrival_buffer, maxlen=target_arr_frames)
+
+        target_temporal_window = max(1, int(s.temporal_window_frames))
+        if frame_buffer.maxlen != target_temporal_window:
+            logger.info(
+                "Resizing temporal window: %s -> %s frames",
+                frame_buffer.maxlen,
+                target_temporal_window,
+            )
+            frame_buffer = deque(frame_buffer, maxlen=target_temporal_window)
 
         if cap is None or not cap.isOpened():
             logger.info(f"Opening RTSP: {s.rtsp_url}")
@@ -1531,12 +1548,33 @@ async def run_worker() -> None:
         # Temporal voting: find best detection across recent frames
         best_entry: FrameEntry | None = None
         best_det: Det | None = None
+        detection_frame_count = sum(1 for entry in frame_buffer if entry.detections)
+        min_required = max(1, min(int(s.temporal_min_detections), frame_buffer.maxlen or 1))
+        temporal_stats = {
+            "window_frames": int(frame_buffer.maxlen or 1),
+            "positive_frames": int(detection_frame_count),
+            "min_required": int(min_required),
+        }
+        if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+            logger.debug(
+                "Temporal voting: %s/%s frames with detections (min required: %s)",
+                detection_frame_count,
+                frame_buffer.maxlen,
+                min_required,
+            )
 
-        for entry in frame_buffer:
-            for d in entry.detections:
-                if best_det is None or d.conf > best_det.conf:
-                    best_det = d
-                    best_entry = entry
+        if detection_frame_count >= min_required:
+            for entry in frame_buffer:
+                for d in entry.detections:
+                    if best_det is None or d.conf > best_det.conf:
+                        best_det = d
+                        best_entry = entry
+        else:
+            # Not enough positive frames in the window. Use latest frame context but skip detections.
+            if len(frame_buffer) > 0:
+                best_entry = frame_buffer[-1]
+            else:
+                continue
 
         if best_entry is None:
             # No detections in window. Use latest frame context to ensure state machine runs.
@@ -1547,7 +1585,7 @@ async def run_worker() -> None:
 
         # Restore context from the best frame
         frame = best_entry.frame
-        detections = best_entry.detections
+        detections = best_entry.detections if best_det is not None else []
         motion_mask = best_entry.motion_mask
         xoff = best_entry.xoff
         yoff = best_entry.yoff
@@ -1592,10 +1630,21 @@ async def run_worker() -> None:
         current_time = timestamp # Use frame timestamp
         
         # 1. Transitions & Actions
+        cooldown_seconds = float(s.cooldown_seconds)
+        cooldown_active = (
+            last_observation_ts is not None
+            and cooldown_seconds > 0.0
+            and (current_time - last_observation_ts) < cooldown_seconds
+        )
+
         if is_bird_present:
              visit_last_seen_ts = current_time
              
              if visit_state == VisitState.IDLE:
+                 if cooldown_active:
+                     if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+                         logger.debug("Cooldown active; skipping visit start")
+                     continue
                  # START RECORDING
                  visit_state = VisitState.RECORDING
                  visit_start_ts = current_time
@@ -1654,10 +1703,13 @@ async def run_worker() -> None:
                               "min_box_area": int(s.min_box_area),
                               "fps_limit": float(s.fps_limit),
                               "cooldown_seconds": float(s.cooldown_seconds),
+                              "temporal_window_frames": int(s.temporal_window_frames),
+                              "temporal_min_detections": int(s.temporal_min_detections),
                               "bg_subtraction_enabled": bool(s.bg_subtraction_enabled),
                               "bg_subtraction_configured": bool(s.background_image),
                               "background_image_available": background_img is not None,
                           },
+                         temporal_stats=temporal_stats,
                          roi_stats={}, 
                          bbox_stats=det_stats,
                          bg_active=bg_active,
@@ -1698,6 +1750,7 @@ async def run_worker() -> None:
                               queue.put_nowait(visit_best_candidate)
                               duration = current_time - visit_start_ts
                               logger.info(f"Visit ENDED. Queued best candidate (p={visit_best_candidate.det.conf:.2f}). Duration: {duration:.1f}s")
+                              last_observation_ts = current_time
                          else:
                               logger.warning("Visit ended but no candidate found?")
                          
@@ -1725,7 +1778,19 @@ async def run_worker() -> None:
                           timestamp=timestamp,
                           motion_mask=motion_mask.copy() if motion_mask is not None else None,
                           background_img=background_img,
-                          settings_snapshot={}, 
+                          settings_snapshot={
+                              "detect_conf": float(s.detect_conf),
+                              "detect_iou": float(s.detect_iou),
+                              "min_box_area": int(s.min_box_area),
+                              "fps_limit": float(s.fps_limit),
+                              "cooldown_seconds": float(s.cooldown_seconds),
+                              "temporal_window_frames": int(s.temporal_window_frames),
+                              "temporal_min_detections": int(s.temporal_min_detections),
+                              "bg_subtraction_enabled": bool(s.bg_subtraction_enabled),
+                              "bg_subtraction_configured": bool(s.background_image),
+                              "background_image_available": background_img is not None,
+                          },
+                          temporal_stats=temporal_stats,
                           roi_stats=_roi_motion_stats(motion_mask) if motion_mask is not None else {},
                           bbox_stats=rej_stats,
                           bg_active=bg_active,

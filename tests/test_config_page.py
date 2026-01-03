@@ -1,8 +1,5 @@
-from test_web_helpers import _import_web
-
-
-def test_validate_detection_inputs_ok(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_validate_detection_inputs_ok(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     parsed, errors = web._validate_detection_inputs(
         {
             "detect_conf": "0.35",
@@ -20,6 +17,7 @@ def test_validate_detection_inputs_ok(monkeypatch):
             # New fields
             "fps_limit": "10",
             "temporal_window_frames": "5",
+            "temporal_min_detections": "1",
             "crop_padding": "0.10",
             "bg_rejected_cooldown_seconds": "3.0",
             "arrival_buffer_seconds": "5.0",
@@ -45,8 +43,8 @@ def test_validate_detection_inputs_ok(monkeypatch):
     assert parsed["bg_rejected_cooldown_seconds"] == 3.0
 
 
-def test_validate_detection_inputs_errors(monkeypatch):
-    web = _import_web(monkeypatch)
+def test_validate_detection_inputs_errors(import_web, monkeypatch):
+    web = import_web(monkeypatch)
     _, errors = web._validate_detection_inputs(
         {
             "detect_conf": "1.5",
@@ -62,6 +60,7 @@ def test_validate_detection_inputs_errors(monkeypatch):
             "bg_motion_blur": "4",
             "bg_min_overlap": "2",
             "temporal_window_frames": "0",
+            "temporal_min_detections": "0",
         }
     )
     assert any("between 0.05 and 0.95" in e for e in errors)
@@ -75,3 +74,4 @@ def test_validate_detection_inputs_errors(monkeypatch):
     assert any("Background motion threshold" in e for e in errors)
     assert any("Background motion blur" in e for e in errors)
     assert any("Background minimum overlap" in e for e in errors)
+    assert any("Temporal min detections" in e for e in errors)

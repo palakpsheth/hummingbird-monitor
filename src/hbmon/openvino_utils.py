@@ -65,8 +65,7 @@ def get_core() -> Core:
         
         # OpenVINO's CACHE_DIR property enables binary model caching
         try:
-            # _CORE.set_property({"CACHE_DIR": cache_dir})
-            logger.info("OpenVINO: Disabling CACHE_DIR per request to troubleshoot silent failures")
+            _CORE.set_property({"CACHE_DIR": cache_dir})
         except Exception as e:
             logger.warning(f"Failed to set OpenVINO CACHE_DIR: {e}")
             
@@ -335,10 +334,9 @@ def load_openvino_clip(
         text_xml = str(xml_path).replace(".xml", "_text.xml")
         
         # Temporarily disabling cache check to force clean conversion/load every boot
-        # if not (Path(image_xml).exists() and Path(text_xml).exists()):
-        #     logger.debug(f"Cached OpenVINO CLIP model not found at {xml_path}")
-        #     return None
-        return None
+        if not (Path(image_xml).exists() and Path(text_xml).exists()):
+            logger.debug(f"Cached OpenVINO CLIP model not found at {xml_path}")
+            return None
         
         logger.info(f"Loading cached OpenVINO CLIP model from {Path(xml_path).parent}...")
         

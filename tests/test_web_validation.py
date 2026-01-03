@@ -7,20 +7,7 @@ in the web module without requiring FastAPI/SQLAlchemy.
 
 from __future__ import annotations
 
-import importlib
-from pathlib import Path
 
-
-def _import_web(monkeypatch):
-    """Import hbmon.web after setting safe directories."""
-    cwd = Path.cwd().resolve()
-    monkeypatch.setenv("HBMON_DATA_DIR", str(cwd / "data"))
-    monkeypatch.setenv("HBMON_MEDIA_DIR", str(cwd / "media"))
-
-    if 'hbmon.web' in importlib.sys.modules:
-        importlib.sys.modules.pop('hbmon.web')
-
-    return importlib.import_module('hbmon.web')
 
 
 def _base_raw() -> dict[str, str]:
@@ -39,6 +26,7 @@ def _base_raw() -> dict[str, str]:
         # New fields
         "fps_limit": "8",
         "temporal_window_frames": "5",
+        "temporal_min_detections": "1",
         "crop_padding": "0.05",
         "bg_rejected_cooldown_seconds": "3.0",
         "arrival_buffer_seconds": "5.0",
@@ -50,9 +38,9 @@ def _base_raw() -> dict[str, str]:
 class TestValidateDetectionInputs:
     """Tests for the _validate_detection_inputs function."""
 
-    def test_valid_inputs(self, monkeypatch):
+    def test_valid_inputs(self, import_web, monkeypatch):
         """Test validation with all valid inputs."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         raw = _base_raw()
         raw["timezone"] = "America/Los_Angeles"
@@ -69,9 +57,24 @@ class TestValidateDetectionInputs:
         assert parsed["ema_alpha"] == 0.10
         assert parsed["timezone"] == "America/Los_Angeles"
 
-    def test_invalid_detect_conf_not_number(self, monkeypatch):
+    def test_temporal_min_detections_exceeds_window(self, import_web, monkeypatch):
+        """Ensure min detections cannot exceed the temporal window size."""
+        web = import_web(monkeypatch)
+
+        raw = _base_raw()
+        raw["timezone"] = "local"
+        raw["temporal_window_frames"] = "5"
+        raw["temporal_min_detections"] = "6"
+
+        parsed, errors = web._validate_detection_inputs(raw)
+
+        assert parsed["temporal_window_frames"] == 5
+        assert parsed["temporal_min_detections"] == 6
+        assert any("Temporal min detections" in e for e in errors)
+
+    def test_invalid_detect_conf_not_number(self, import_web, monkeypatch):
         """Test validation with invalid detect_conf."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         raw = _base_raw()
         raw["detect_conf"] = "not_a_number"
@@ -80,9 +83,9 @@ class TestValidateDetectionInputs:
 
         assert "Detection confidence must be a number." in errors
 
-    def test_invalid_detect_conf_out_of_range(self, monkeypatch):
+    def test_invalid_detect_conf_out_of_range(self, import_web, monkeypatch):
         """Test validation with detect_conf out of range."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         raw = _base_raw()
         raw["detect_conf"] = "0.01"  # Below 0.05
@@ -91,9 +94,9 @@ class TestValidateDetectionInputs:
 
         assert any("0.05" in e and "0.95" in e for e in errors)
 
-    def test_invalid_min_box_area_not_integer(self, monkeypatch):
+    def test_invalid_min_box_area_not_integer(self, import_web, monkeypatch):
         """Test validation with non-integer min_box_area."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         raw = _base_raw()
         raw["min_box_area"] = "600.5"  # Not a whole number
@@ -102,9 +105,9 @@ class TestValidateDetectionInputs:
 
         assert "Minimum box area must be a whole number." in errors
 
-    def test_invalid_min_box_area_out_of_range(self, monkeypatch):
+    def test_invalid_min_box_area_out_of_range(self, import_web, monkeypatch):
         """Test validation with min_box_area out of range."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         raw = _base_raw()
         raw["min_box_area"] = "999999"  # Above 200000
@@ -113,9 +116,9 @@ class TestValidateDetectionInputs:
 
         assert any("1" in e and "200000" in e for e in errors)
 
-    def test_invalid_timezone(self, monkeypatch):
+    def test_invalid_timezone(self, import_web, monkeypatch):
         """Test validation with invalid timezone."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         raw = _base_raw()
         raw["timezone"] = "Invalid/Timezone"
@@ -124,9 +127,9 @@ class TestValidateDetectionInputs:
 
         assert any("Timezone" in e for e in errors)
 
-    def test_timezone_local(self, monkeypatch):
+    def test_timezone_local(self, import_web, monkeypatch):
         """Test validation with 'local' timezone."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         raw = _base_raw()
         raw["timezone"] = "local"
@@ -136,9 +139,9 @@ class TestValidateDetectionInputs:
         assert errors == []
         assert parsed["timezone"] == "local"
 
-    def test_timezone_empty(self, monkeypatch):
+    def test_timezone_empty(self, import_web, monkeypatch):
         """Test validation with empty timezone defaults to local."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         raw = _base_raw()
         raw["timezone"] = ""
@@ -148,9 +151,9 @@ class TestValidateDetectionInputs:
         assert errors == []
         assert parsed["timezone"] == "local"
 
-    def test_cooldown_seconds_zero(self, monkeypatch):
+    def test_cooldown_seconds_zero(self, import_web, monkeypatch):
         """Test validation with zero cooldown seconds."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         raw = _base_raw()
         raw["cooldown_seconds"] = "0.0"
@@ -164,9 +167,9 @@ class TestValidateDetectionInputs:
 class TestPaginate:
     """Tests for the paginate function."""
 
-    def test_paginate_normal(self, monkeypatch):
+    def test_paginate_normal(self, import_web, monkeypatch):
         """Test pagination with normal inputs."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         page, size, total_pages, offset = web.paginate(100, 2, 10)
 
@@ -175,9 +178,9 @@ class TestPaginate:
         assert total_pages == 10
         assert offset == 10
 
-    def test_paginate_zero_total(self, monkeypatch):
+    def test_paginate_zero_total(self, import_web, monkeypatch):
         """Test pagination with zero total."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         page, size, total_pages, offset = web.paginate(0, 1, 10)
 
@@ -185,9 +188,9 @@ class TestPaginate:
         assert page == 1
         assert offset == 0
 
-    def test_paginate_page_too_high(self, monkeypatch):
+    def test_paginate_page_too_high(self, import_web, monkeypatch):
         """Test that page is clamped to max."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         page, size, total_pages, offset = web.paginate(50, 100, 10)
 
@@ -195,17 +198,17 @@ class TestPaginate:
         assert page == 5  # Clamped from 100
         assert offset == 40
 
-    def test_paginate_page_too_low(self, monkeypatch):
+    def test_paginate_page_too_low(self, import_web, monkeypatch):
         """Test that page is clamped to 1."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         page, size, total_pages, offset = web.paginate(50, 0, 10)
 
         assert page == 1
 
-    def test_paginate_size_clamped_to_max(self, monkeypatch):
+    def test_paginate_size_clamped_to_max(self, import_web, monkeypatch):
         """Test that page_size is clamped to max."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         page, size, total_pages, offset = web.paginate(100, 1, 500, max_page_size=50)
 
@@ -215,32 +218,32 @@ class TestPaginate:
 class TestSpeciesToCss:
     """Additional tests for species_to_css function."""
 
-    def test_species_with_apostrophe_variants(self, monkeypatch):
+    def test_species_with_apostrophe_variants(self, import_web, monkeypatch):
         """Test that different apostrophe variants work."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         # Standard straight apostrophe
         assert web.species_to_css("Anna's Hummingbird") == "species-anna"
         # Curly apostrophe
         assert web.species_to_css("Anna's Hummingbird") == "species-anna"
 
-    def test_species_case_insensitive(self, monkeypatch):
+    def test_species_case_insensitive(self, import_web, monkeypatch):
         """Test that species matching is case insensitive."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         assert web.species_to_css("ANNA'S HUMMINGBIRD") == "species-anna"
         assert web.species_to_css("anna's hummingbird") == "species-anna"
         assert web.species_to_css("AnNa'S hUmMiNgBiRd") == "species-anna"
 
-    def test_species_empty_string(self, monkeypatch):
+    def test_species_empty_string(self, import_web, monkeypatch):
         """Test with empty string."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         assert web.species_to_css("") == "species-unknown"
 
-    def test_species_none_like(self, monkeypatch):
+    def test_species_none_like(self, import_web, monkeypatch):
         """Test with None-like values."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         assert web.species_to_css(None) == "species-unknown"
 
@@ -248,9 +251,9 @@ class TestSpeciesToCss:
 class TestBuildHourHeatmap:
     """Additional tests for build_hour_heatmap function."""
 
-    def test_heatmap_empty_input(self, monkeypatch):
+    def test_heatmap_empty_input(self, import_web, monkeypatch):
         """Test heatmap with empty input."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         result = web.build_hour_heatmap([])
 
@@ -258,9 +261,9 @@ class TestBuildHourHeatmap:
         assert all(h["level"] == 0 for h in result)
         assert all(h["count"] == 0 for h in result)
 
-    def test_heatmap_all_same_count(self, monkeypatch):
+    def test_heatmap_all_same_count(self, import_web, monkeypatch):
         """Test heatmap when all hours have same count."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         hours = [(h, 10) for h in range(24)]
         result = web.build_hour_heatmap(hours)
@@ -268,9 +271,9 @@ class TestBuildHourHeatmap:
         # All should have level 5 (max)
         assert all(h["level"] == 5 for h in result)
 
-    def test_heatmap_single_hour(self, monkeypatch):
+    def test_heatmap_single_hour(self, import_web, monkeypatch):
         """Test heatmap with single hour."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         hours = [(12, 100)]
         result = web.build_hour_heatmap(hours)
@@ -283,21 +286,21 @@ class TestBuildHourHeatmap:
 class TestPrettyJson:
     """Additional tests for pretty_json function."""
 
-    def test_pretty_json_none(self, monkeypatch):
+    def test_pretty_json_none(self, import_web, monkeypatch):
         """Test with None input."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         assert web.pretty_json(None) is None
 
-    def test_pretty_json_empty(self, monkeypatch):
+    def test_pretty_json_empty(self, import_web, monkeypatch):
         """Test with empty string."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         assert web.pretty_json("") is None
 
-    def test_pretty_json_complex(self, monkeypatch):
+    def test_pretty_json_complex(self, import_web, monkeypatch):
         """Test with complex nested JSON."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         input_json = '{"nested": {"a": 1, "b": [1, 2, 3]}, "top": "value"}'
         result = web.pretty_json(input_json)
@@ -306,16 +309,16 @@ class TestPrettyJson:
         assert "\n" in result
         assert "nested" in result
 
-    def test_pretty_json_invalid_fallback(self, monkeypatch):
+    def test_pretty_json_invalid_fallback(self, import_web, monkeypatch):
         """Test that invalid JSON returns original string."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         result = web.pretty_json("{not valid json}")
         assert result == "{not valid json}"
 
-    def test_pretty_json_type_error(self, monkeypatch):
+    def test_pretty_json_type_error(self, import_web, monkeypatch):
         """Test pretty_json with non-serializable content after parse."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         # Valid JSON that might trigger TypeError on re-serialize (rare case)
         result = web.pretty_json('{"key": "value"}')
@@ -325,18 +328,18 @@ class TestPrettyJson:
 class TestAsUtcStr:
     """Tests for the _as_utc_str function."""
 
-    def test_as_utc_str_none(self, monkeypatch):
+    def test_as_utc_str_none(self, import_web, monkeypatch):
         """Test _as_utc_str with None returns None."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         result = web._as_utc_str(None)
         assert result is None
 
-    def test_as_utc_str_aware_datetime(self, monkeypatch):
+    def test_as_utc_str_aware_datetime(self, import_web, monkeypatch):
         """Test _as_utc_str with aware datetime."""
         from datetime import datetime, timezone
 
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         dt = datetime(2024, 1, 15, 12, 30, 45, tzinfo=timezone.utc)
         result = web._as_utc_str(dt)
@@ -347,9 +350,9 @@ class TestAsUtcStr:
 class TestAllowedReviewLabels:
     """Tests for the ALLOWED_REVIEW_LABELS constant."""
 
-    def test_allowed_labels_exist(self, monkeypatch):
+    def test_allowed_labels_exist(self, import_web, monkeypatch):
         """Test that ALLOWED_REVIEW_LABELS is defined."""
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         assert hasattr(web, "ALLOWED_REVIEW_LABELS")
         assert "true_positive" in web.ALLOWED_REVIEW_LABELS
@@ -360,22 +363,22 @@ class TestAllowedReviewLabels:
 class TestToUtc:
     """Tests for the _to_utc function."""
 
-    def test_to_utc_naive(self, monkeypatch):
+    def test_to_utc_naive(self, import_web, monkeypatch):
         """Test _to_utc with naive datetime."""
         from datetime import datetime, timezone
 
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         naive = datetime(2024, 1, 15, 12, 0, 0)
         result = web._to_utc(naive)
 
         assert result.tzinfo == timezone.utc
 
-    def test_to_utc_already_utc(self, monkeypatch):
+    def test_to_utc_already_utc(self, import_web, monkeypatch):
         """Test _to_utc with already UTC datetime."""
         from datetime import datetime, timezone
 
-        web = _import_web(monkeypatch)
+        web = import_web(monkeypatch)
 
         utc_dt = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         result = web._to_utc(utc_dt)
