@@ -139,7 +139,12 @@ def query_observations(
         
     except Exception as e:
         print(f"ERROR: Database connection failed: {e}", file=sys.stderr)
-        print(f"Connection params: host={conn_params['host']}, port={conn_params['port']}, dbname={conn_params['dbname']}", file=sys.stderr)
+        safe_conn_info = {
+            "host": conn_params.get("host"),
+            "port": conn_params.get("port"),
+            "dbname": conn_params.get("dbname"),
+        }
+        print(f"Connection params (without password): {safe_conn_info}", file=sys.stderr)
         sys.exit(1)
 
 
