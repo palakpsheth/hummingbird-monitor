@@ -316,7 +316,7 @@
 
           if (qualitySelect) {
             var savedQuality = localStorage.getItem(storageKey);
-            if (savedQuality && qualitySelect.querySelector('option[value="' + savedQuality + '"]')) {
+            if (savedQuality && Array.from(qualitySelect.options).some(function(o) { return o.value === savedQuality; })) {
               qualitySelect.value = savedQuality;
               applyQuality(savedQuality);
             }
