@@ -57,7 +57,6 @@ def test_ts_utc_lines_have_data_attribute():
                 if end == -1:
                     # Comment continues on the next line.
                     in_comment = True
-                    i = len(ln)
                     break
 
                 # Inline comment; skip it and continue scanning.
