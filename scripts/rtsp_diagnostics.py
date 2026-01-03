@@ -199,6 +199,7 @@ def _recv_all(sock: socket.socket, max_bytes: int = 64_000) -> bytes:
                 # allow a bit more for SDP body
                 sock.settimeout(0.2)
     except socket.timeout:
+        # Timeout is expected; return whatever data we have collected so far.
         pass
     return b"".join(chunks)
 
