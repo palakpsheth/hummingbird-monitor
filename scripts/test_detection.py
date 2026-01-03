@@ -505,8 +505,8 @@ def main() -> int:
         if args.save_annotated and result["detections"]:
              annotate_image(
                  Path(args.image_path),
+                 result["detections"],
                  args.save_annotated,
-                 result["detections"]
              )
         
         return 0
