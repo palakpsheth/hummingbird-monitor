@@ -67,8 +67,6 @@ def main():
                     if conf > max_conf:
                         max_conf = conf
                         best_frame = frame_count
-                    
-                    print(f"Frame {frame_count}: conf={conf:.3f} area={int(area)}")
 
                         
         if frame_count % 20 == 0:
