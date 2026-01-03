@@ -241,9 +241,9 @@
     <div style="margin-top:16px;">
       <h3 style="margin-top:0;">Video Clip</h3>
       <div class="video-toolbar">
-        <label class="stream-quality muted" for="video-quality-select">
+        <label class="stream-quality muted">
           Stream quality
-          <select id="video-quality-select" aria-label="Stream quality">
+          <select id="video-quality-select">
             <option value="auto">Auto</option>
             <option value="high">High</option>
             <option value="balanced">Balanced</option>
@@ -316,7 +316,7 @@
 
           if (qualitySelect) {
             var savedQuality = localStorage.getItem(storageKey);
-            if (savedQuality && qualitySelect.querySelector('option[value="' + savedQuality + '"]')) {
+            if (savedQuality && Array.from(qualitySelect.options).some(function(o) { return o.value === savedQuality; })) {
               qualitySelect.value = savedQuality;
               applyQuality(savedQuality);
             }
