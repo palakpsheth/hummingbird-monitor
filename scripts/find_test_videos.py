@@ -2,7 +2,6 @@
 import asyncio
 from sqlalchemy import select, desc
 from hbmon import db, models
-import os
 
 async def find_test_videos():
     await db.init_async_db()
@@ -47,7 +46,5 @@ async def find_test_videos():
             print(f"Error querying candidates: {e}")
             
 if __name__ == "__main__":
-    # Ensure env vars are set if needed, but defaults in hbmon/config.py should work for local DB
-    os.environ["HBMON_DB_URL"] = "sqlite:////media/palak/hbmon2/hummingbird-monitor/data/hbmon.sqlite"
-    os.environ["HBMON_DB_ASYNC_URL"] = "sqlite+aiosqlite:////media/palak/hbmon2/hummingbird-monitor/data/hbmon.sqlite"
+    # Rely on environment being configured correctly (via env vars or defaults in hbmon/config.py)
     asyncio.run(find_test_videos())

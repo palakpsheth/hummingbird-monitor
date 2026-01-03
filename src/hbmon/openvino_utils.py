@@ -333,7 +333,7 @@ def load_openvino_clip(
         image_xml = str(xml_path).replace(".xml", "_image.xml")
         text_xml = str(xml_path).replace(".xml", "_text.xml")
         
-        # Temporarily disabling cache check to force clean conversion/load every boot
+        # Check if cached models exist
         if not (Path(image_xml).exists() and Path(text_xml).exists()):
             logger.debug(f"Cached OpenVINO CLIP model not found at {xml_path}")
             return None

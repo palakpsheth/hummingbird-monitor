@@ -1088,7 +1088,6 @@ To run UI tests selectively:
 uv run pytest tests/ui/          # Run all UI tests
 uv run pytest -m ui              # Run tests marked with @pytest.mark.ui
 ```
->>>>>>> origin/main
 
 ### Test Data Structure
 
