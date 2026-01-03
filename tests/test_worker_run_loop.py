@@ -7,7 +7,6 @@ import asyncio
 
 from hbmon import db as db_module
 from hbmon.config import Settings
-from hbmon.models import Observation
 import hbmon.worker as worker
 
 
@@ -109,80 +108,6 @@ class _DummyCV2:
     VideoCapture = _DummyCap
 
 
-@pytest.mark.skip(reason="Test written for simple detection logic; current worker uses Full Visit Capture state machine")
-@pytest.mark.anyio
-async def test_run_worker_single_iteration(tmp_path, monkeypatch):
-    data_dir = tmp_path / "data"
-    media_dir = tmp_path / "media"
-    db_path = tmp_path / "db.sqlite"
-
-    monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))
-    monkeypatch.setenv("HBMON_MEDIA_DIR", str(media_dir))
-    monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
-    monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
-    monkeypatch.setenv("HBMON_RTSP_URL", "rtsp://example")
-    monkeypatch.setenv("HBMON_CAMERA_NAME", "envcam")
-    monkeypatch.setenv("HBMON_BG_SUBTRACTION", "0")
-    monkeypatch.setenv("HBMON_SPECIES_LIST", "Anna's, Rufous")
-
-    db_module.reset_db_state()
-
-    monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
-    monkeypatch.setattr(worker, "_YOLO_AVAILABLE", True)
-    monkeypatch.setattr(worker, "cv2", _DummyCV2)
-    monkeypatch.setattr(worker, "YOLO", _DummyYOLO)
-    monkeypatch.setattr(worker, "ClipModel", _DummyClip)
-    monkeypatch.setattr(worker, "_load_background_image", lambda: None)
-    monkeypatch.setattr(worker, "_write_jpeg", lambda *args, **kwargs: None)
-    monkeypatch.setattr(worker, "_draw_bbox", lambda frame, det, **kwargs: frame)
-    async def _noop_sleep(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(worker.asyncio, "sleep", _noop_sleep)
-
-    queue_capture = []
-    def _capture_dispatcher_eager(q, c):
-        queue_capture.append(q)
-        async def dummy(): pass
-        return dummy()
-
-    monkeypatch.setattr(worker, "processing_dispatcher", _capture_dispatcher_eager)
-    monkeypatch.setattr("hbmon.worker.processing_dispatcher", _capture_dispatcher_eager)
-
-    settings = Settings()
-    settings.rtsp_url = "rtsp://example"
-    settings.camera_name = "camera"
-    settings.fps_limit = 0.0
-    settings.detect_conf = 0.2
-    settings.detect_iou = 0.5
-    settings.min_box_area = 1
-    settings.cooldown_seconds = 0.0
-    settings.min_species_prob = 0.0
-    settings.match_threshold = 0.5
-    settings.ema_alpha = 0.2
-    settings.crop_padding = 0.0
-    settings.bg_subtraction_enabled = False
-    settings.arrival_buffer_seconds = 5.0
-    settings.departure_timeout_seconds = 2.0
-    settings.post_departure_buffer_seconds = 3.0
-    monkeypatch.setattr(worker, "load_settings", lambda apply_env_overrides=False: settings)
-
-    with pytest.raises(RuntimeError, match="stop loop"):
-        await worker.run_worker()
-        
-    assert len(queue_capture) == 1
-    captured_queue = queue_capture[0]
-    
-    assert captured_queue.qsize() == 1
-    item = captured_queue.get_nowait()
-    
-    sem = asyncio.Semaphore(1)
-    clip = _DummyClip(device="cpu")
-    await worker.process_candidate_task(item, clip, media_dir, sem)
-
-    async with db_module.async_session_scope() as session:
-        total = (await session.execute(select(func.count(Observation.id)))).scalar_one()
-        assert total == 1
 
 
 class _RejectBox:

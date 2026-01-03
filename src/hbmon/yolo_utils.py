@@ -1,6 +1,6 @@
 import numpy as np
 
-def resolve_predict_imgsz(imgsz_env: str, frame_shape: tuple[int, int] | None = None) -> list[int]:
+def resolve_predict_imgsz(imgsz_env: str, frame_shape: tuple[int, int] | None = None) -> list[int] | int:
     """
     Resolves the YOLO prediction image size based on environment variable and frame shape.
     
@@ -9,7 +9,7 @@ def resolve_predict_imgsz(imgsz_env: str, frame_shape: tuple[int, int] | None = 
         frame_shape: The (H, W) of the input frame, required for "auto" mode.
         
     Returns:
-        A list of [H, W] or [sz, sz] for YOLO imgsz parameter.
+        A list of [H, W] or [sz, sz] for YOLO imgsz parameter. Returns int if H==W.
     """
     if imgsz_env.lower() == "auto":
         if frame_shape is None:
@@ -19,6 +19,8 @@ def resolve_predict_imgsz(imgsz_env: str, frame_shape: tuple[int, int] | None = 
         h, w = frame_shape[:2]
         target_h = int(np.ceil(h / 32) * 32)
         target_w = int(np.ceil(w / 32) * 32)
+        if target_h == target_w:
+            return target_h
         return [target_h, target_w]
     
     # Parse H,W directly

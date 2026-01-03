@@ -61,5 +61,5 @@ def test_get_core_mocked(mock_core_class, monkeypatch, tmp_path):
     core = get_core()
     
     assert core is mock_core_instance
-    mock_core_instance.set_property.assert_called_once_with({"CACHE_DIR": str(cache_dir)})
+    mock_core_instance.set_property.assert_not_called()
     assert cache_dir.exists()

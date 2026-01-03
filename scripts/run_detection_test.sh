@@ -63,6 +63,10 @@ while [[ $# -gt 0 ]]; do
             KEEP_RUNNING=true
             shift
             ;;
+        --direct)
+            DIRECT_MODE=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -103,13 +107,22 @@ elif [[ -n "$OBSERVATION_ID" ]]; then
     fi
     echo "  Found video for observation #$OBSERVATION_ID: $VIDEO_PATH"
 else
-    VIDEO_PATH=$(uv run python scripts/extract_test_videos.py --paths-only -f --limit 1 2>/dev/null | head -1)
-    if [[ -z "$VIDEO_PATH" ]]; then
-        echo -e "${RED}ERROR: No observation videos found in database${NC}"
-        echo "  Make sure containers are running: make docker-up-intel"
-        exit 1
+    # Try true positive observations first (reviewed and confirmed)
+    VIDEO_PATH=$(uv run python scripts/extract_test_videos.py --true-positive --paths-only -f --limit 1 2>/dev/null | head -1)
+    if [[ -n "$VIDEO_PATH" ]]; then
+        echo "  Using true positive observation: $VIDEO_PATH"
+    else
+        # Fallback to latest observation (may not be reviewed)
+        VIDEO_PATH=$(uv run python scripts/extract_test_videos.py --paths-only -f --limit 1 2>/dev/null | head -1)
+        if [[ -z "$VIDEO_PATH" ]]; then
+            echo -e "${RED}ERROR: No observation videos found in database${NC}"
+            echo "  Make sure containers are running: make docker-up-intel"
+            exit 1
+        fi
+        echo -e "  ${YELLOW}Warning: No true positive observations found${NC}"
+        echo "  Using unreviewed observation: $VIDEO_PATH"
+        echo "  Consider labeling observations in the web UI for reliable testing."
     fi
-    echo "  Auto-selected latest: $VIDEO_PATH"
 fi
 
 # Step 2: Get current RTSP URL (to restore later)
@@ -122,8 +135,21 @@ if [[ -z "$ORIGINAL_RTSP_URL" ]]; then
 fi
 echo "  Original RTSP URL: $ORIGINAL_RTSP_URL"
 
-TEST_RTSP_URL="rtsp://172.17.0.1:${TEST_PORT}/test"
-echo "  Test RTSP URL: $TEST_RTSP_URL"
+if [[ "$DIRECT_MODE" == "true" ]]; then
+    # In direct mode, we use the file path directly to bypass RTSP server entirely
+    # Assuming video is in data/media/clips/... and mapped to /data/media/clips/...
+    # Host: /media/palak/hbmon2/hummingbird-monitor/data/media/clips/...
+    # Container structure: /data maps to ./data
+    
+    # Heuristic: strip everything up to /data/
+    REL_PATH="${VIDEO_PATH#*/data/}"
+    TEST_RTSP_URL="/data/$REL_PATH"
+    
+    echo "  Direct File Mode: $TEST_RTSP_URL"
+else
+    TEST_RTSP_URL="rtsp://172.17.0.1:${TEST_PORT}/test"
+    echo "  Test RTSP URL: $TEST_RTSP_URL"
+fi
 
 # Cleanup function
 cleanup() {
@@ -137,6 +163,12 @@ cleanup() {
         wait "$RTSP_PID" 2>/dev/null || true
     fi
     
+    # Stop mediamtx container if running
+    if docker ps -q --filter "name=hbmon-rtsp-test" 2>/dev/null | grep -q .; then
+        echo "  Stopping mediamtx container..."
+        docker rm -f hbmon-rtsp-test >/dev/null 2>&1 || true
+    fi
+    
     # Restore original RTSP URL if not keeping
     if [[ "$KEEP_RUNNING" != "true" && -n "$ORIGINAL_RTSP_URL" ]]; then
         echo "  Restoring original RTSP URL..."
@@ -144,7 +176,7 @@ cleanup() {
             sed -i "s|^HBMON_RTSP_URL=.*|HBMON_RTSP_URL=$ORIGINAL_RTSP_URL|" .env
         fi
         echo "  Restarting worker with original stream..."
-        docker compose restart hbmon-worker >/dev/null 2>&1 || true
+        docker compose up -d hbmon-worker >/dev/null 2>&1 || true
     fi
     
     echo -e "${GREEN}Cleanup complete.${NC}"
@@ -152,23 +184,27 @@ cleanup() {
 
 trap cleanup EXIT
 
-# Step 3: Start RTSP test server
-echo -e "${YELLOW}[3/6] Starting RTSP test server...${NC}"
-echo "  Video: $(basename "$VIDEO_PATH")"
-echo "  Port: $TEST_PORT"
+# Step 3: Start RTSP test server (Only in non-direct mode)
+if [[ "$DIRECT_MODE" != "true" ]]; then
+    echo -e "${YELLOW}[3/6] Starting RTSP test server...${NC}"
+    echo "  Video: $(basename "$VIDEO_PATH")"
+    echo "  Port: $TEST_PORT"
 
-# Start RTSP server in background
-uv run python scripts/rtsp_test_server.py --port "$TEST_PORT" "$VIDEO_PATH" &
-RTSP_PID=$!
+    # Start RTSP server in background
+    uv run python scripts/rtsp_test_server.py --port "$TEST_PORT" "$VIDEO_PATH" &
+    RTSP_PID=$!
 
-# Wait for server to start
-sleep 3
+    # Wait for server to start
+    sleep 3
 
-if ! kill -0 "$RTSP_PID" 2>/dev/null; then
-    echo -e "${RED}ERROR: RTSP server failed to start${NC}"
-    exit 1
+    if ! kill -0 "$RTSP_PID" 2>/dev/null; then
+        echo -e "${RED}ERROR: RTSP server failed to start${NC}"
+        exit 1
+    fi
+    echo -e "  ${GREEN}RTSP server started (PID $RTSP_PID)${NC}"
+else
+    echo -e "${YELLOW}[3/6] Skipping RTSP server (Direct Mode)${NC}"
 fi
-echo -e "  ${GREEN}RTSP server started (PID $RTSP_PID)${NC}"
 
 # Step 4: Update .env and restart worker
 echo -e "${YELLOW}[4/6] Configuring worker for test stream...${NC}"
@@ -181,7 +217,7 @@ else
 fi
 
 echo "  Restarting hbmon-worker..."
-docker compose restart hbmon-worker
+docker compose up -d hbmon-worker
 
 # Wait for worker to start
 sleep 5

@@ -14,6 +14,11 @@ Environment Variables:
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Optional OpenVINO dependency
 # ---------------------------------------------------------------------------
@@ -47,7 +52,6 @@ def get_core() -> Core:
     
     if _CORE is None:
         import os
-        from pathlib import Path
         _CORE = Core()
         
         # Enable model caching for faster subsequent compilations
@@ -61,10 +65,10 @@ def get_core() -> Core:
         
         # OpenVINO's CACHE_DIR property enables binary model caching
         try:
-            _CORE.set_property({"CACHE_DIR": cache_dir})
+            # _CORE.set_property({"CACHE_DIR": cache_dir})
+            logger.info("OpenVINO: Disabling CACHE_DIR per request to troubleshoot silent failures")
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"Failed to set OpenVINO CACHE_DIR: {e}")
+            logger.warning(f"Failed to set OpenVINO CACHE_DIR: {e}")
             
     return _CORE
 
@@ -330,10 +334,11 @@ def load_openvino_clip(
         image_xml = str(xml_path).replace(".xml", "_image.xml")
         text_xml = str(xml_path).replace(".xml", "_text.xml")
         
-        # Check if cached models exist
-        if not (Path(image_xml).exists() and Path(text_xml).exists()):
-            logger.debug(f"Cached OpenVINO CLIP model not found at {xml_path}")
-            return None
+        # Temporarily disabling cache check to force clean conversion/load every boot
+        # if not (Path(image_xml).exists() and Path(text_xml).exists()):
+        #     logger.debug(f"Cached OpenVINO CLIP model not found at {xml_path}")
+        #     return None
+        return None
         
         logger.info(f"Loading cached OpenVINO CLIP model from {Path(xml_path).parent}...")
         

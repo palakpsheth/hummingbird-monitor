@@ -1037,9 +1037,35 @@ uv run pytest -m integration
 
 Unit tests exercise the core logic without requiring heavy ML dependencies. They are lightweight and fast.
 
-### Integration Tests
+### E2E Tests (Production Data Driven)
 
+The **End-to-End (E2E)** tests simulate the full worker lifecycle against real production video clips and metadata. These are the most robust tests for verifying the entire pipeline:
+1.  **Data Driven**: Tests are discovered from `tests/integration/test_data/e2e/`.
+2.  **High Fidelity**: Each test case includes its original production ROI, video, and expected labels.
+3.  **Realism**: The worker runs its actual state machine, detector, and classifier.
+
+```bash
+# Run E2E tests
+uv run pytest tests/integration/test_worker_e2e.py -v
+```
+
+### Integration Tests
 Integration tests require ML dependencies (PyTorch, YOLO, CLIP) and real test data. They are marked with `@pytest.mark.integration`.
+
+#### Git LFS for Test Data
+This repository uses **Git LFS (Large File Storage)** to manage large test video files (mp4). To run integration tests successfully, you must have Git LFS installed and the files pulled.
+
+1. **Install Git LFS**:
+   ```bash
+   # Debian/Ubuntu
+   sudo apt-get install git-lfs
+   git lfs install
+   ```
+
+2. **Pull LFS Files**:
+   ```bash
+   git lfs pull
+   ```
 
 ### Test Data Structure
 

@@ -1,0 +1,24 @@
+{
+  "description": "Extracted from observation 69",
+  "species": "Hummingbird (unknown species)",
+  "expect_detection": false,
+  "yolo_imgsz": [
+    1024,
+    1440
+  ],
+  "roi": [
+    480,
+    23,
+    1920,
+    1047
+  ],
+  "original_bbox": [
+    1115,
+    498,
+    1162,
+    545
+  ],
+  "original_conf": 0.158203125,
+  "xfail": true,
+  "xfail_reason": "False positive bird detection needs model/threshold tuning"
+}

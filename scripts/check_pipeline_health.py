@@ -73,7 +73,9 @@ class HealthChecker:
             return False
         
         db_url = os.getenv("HBMON_DB_ASYNC_URL", "") or os.getenv("DATABASE_URL", "postgresql://hbmon:hbmon@localhost:5432/hbmon")
-        db_url = db_url.replace("+asyncpg", "")
+        db_url = db_url.replace("+asyncpg", "").replace("+psycopg", "")
+        # Translate Docker hostnames to localhost for host-run scripts
+        db_url = db_url.replace("@hbmon-db:", "@localhost:")
         
         from urllib.parse import urlparse
         parsed = urlparse(db_url)

@@ -48,11 +48,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
 def get_db_url() -> str:
-    """Get database URL from environment or default."""
+    """Get database URL from environment or default.
+    
+    Handles Docker hostnames by translating them to localhost.
+    """
     url = os.getenv("HBMON_DB_ASYNC_URL", "")
     if not url:
         url = os.getenv("DATABASE_URL", "postgresql://hbmon:hbmon@localhost:5432/hbmon")
-    return url.replace("+asyncpg", "")
+    # Remove async driver suffix
+    url = url.replace("+asyncpg", "").replace("+psycopg", "")
+    # Translate Docker hostnames to localhost for host-run scripts
+    url = url.replace("@hbmon-db:", "@localhost:")
+    return url
 
 
 def get_media_dir() -> Path:
@@ -110,6 +117,12 @@ def query_observation(obs_id: int | None = None, limit: int = 1) -> list[dict]:
                     extra = json.loads(row[9]) if isinstance(row[9], str) else row[9]
                 except Exception:
                     pass
+            # Extract ROI path from snapshots metadata if available
+            roi_path = None
+            if extra and isinstance(extra, dict):
+                snapshots = extra.get("snapshots", {})
+                if isinstance(snapshots, dict) and snapshots.get("roi_path"):
+                    roi_path = snapshots["roi_path"]
             results.append({
                 "id": row[0],
                 "ts": row[1],
@@ -118,6 +131,7 @@ def query_observation(obs_id: int | None = None, limit: int = 1) -> list[dict]:
                 "video_path": row[4],
                 "original_bbox": (row[5], row[6], row[7], row[8]) if row[5] else None,
                 "extra": extra,
+                "roi_path": roi_path,
             })
         
         cur.close()
@@ -165,9 +179,13 @@ def run_detection(
     iou: float,
     bird_class_id: int,
     min_box_area: int,
-    imgsz: int = 640,
+    imgsz: int | str = "auto",
 ) -> dict:
-    """Run YOLO detection on an image and return detailed results."""
+    """Run YOLO detection on an image and return detailed results.
+    
+    Args:
+        imgsz: Image size for YOLO. "auto" uses the image's dimensions snapped to 32-stride.
+    """
     import cv2
     
     # Load image
@@ -177,6 +195,15 @@ def run_detection(
     
     h, w = img.shape[:2]
     
+    # Auto-detect imgsz from image dimensions (snap to 32-stride like worker)
+    if imgsz == "auto":
+        # Snap to 32-pixel stride
+        imgsz_h = ((h + 31) // 32) * 32
+        imgsz_w = ((w + 31) // 32) * 32
+        imgsz_val = (imgsz_h, imgsz_w)  # YOLO expects (height, width)
+    else:
+        imgsz_val = int(imgsz)
+    
     # Run inference
     t0 = time.time()
     results = model.predict(
@@ -184,7 +211,7 @@ def run_detection(
         conf=conf,
         iou=iou,
         classes=[bird_class_id],
-        imgsz=imgsz,
+        imgsz=imgsz_val,
         verbose=False,
     )
     inference_time = (time.time() - t0) * 1000
@@ -221,7 +248,7 @@ def run_detection(
             "conf": conf,
             "iou": iou,
             "min_box_area": min_box_area,
-            "imgsz": imgsz,
+            "imgsz": imgsz_val,
         },
     }
 
@@ -318,6 +345,57 @@ def save_annotated_image(image_path: Path, detections: list, output_path: Path):
     return True
 
 
+def print_result(result: dict):
+    """Refactored print utility for single image result."""
+    # Create a mock observation dict for the report
+    mock_obs = {
+        "id": "N/A",
+        "species_label": "Unknown",
+        "original_bbox": None,
+    }
+    print_detection_report(mock_obs, result, show_recommendations=True)
+
+# Alias for compatibility with previous code edit
+annotate_image = save_annotated_image
+
+
+def run_confidence_sweep(
+    model, 
+    image_path: Path, 
+    bird_class_id: int, 
+    imgsz: int | str = "auto"
+) -> list[dict]:
+    """Test multiple confidence thresholds to find optimal setting."""
+    sweep_data = []
+    # Test a broad range of thresholds
+    thresholds = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    for conf in thresholds:
+        res = run_detection(
+            model,
+            image_path,
+            conf=conf,
+            iou=0.45,  # Using standard IOU for sweep
+            bird_class_id=bird_class_id,
+            min_box_area=600,
+            imgsz=imgsz
+        )
+        sweep_data.append({
+            "conf": conf,
+            "count": len(res["detections"]),
+            "max_conf": res["max_conf"],
+            "avg_conf": res["avg_conf"]
+        })
+    return sweep_data
+
+
+def print_sweep_table(results: list[dict]):
+    """Print sweep results in a formatted table."""
+    print("\nConfidence Sweep Results:")
+    print(f"{'Conf':<10} | {'Detections':<12} | {'Max Conf':<10} | {'Avg Conf':<10}")
+    print("-" * 55)
+    for r in results:
+        print(f"{r['conf']:<10.2f} | {r['count']:<12} | {r['max_conf']:<10.3f} | {r['avg_conf']:<10.3f}")
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Test YOLO detection on observation snapshots with detailed diagnostics."
@@ -354,9 +432,9 @@ def main() -> int:
     )
     ap.add_argument(
         "--imgsz",
-        type=int,
-        default=640,
-        help="YOLO inference image size (default: 640)"
+        type=str,
+        default="auto",
+        help="YOLO inference image size (default: auto - uses ROI dimensions)"
     )
     ap.add_argument(
         "--batch", "-b",
@@ -380,10 +458,55 @@ def main() -> int:
         action="store_true",
         help="Test multiple confidence thresholds to find optimal setting"
     )
+    ap.add_argument(
+        "--image-path", "-p",
+        type=str,
+        default=None,
+        help="Path to a specific image file to test (bypasses observation database)"
+    )
     args = ap.parse_args()
 
     media_dir = get_media_dir()
     
+    # Handle direct image path mode
+    if args.image_path:
+        model, bird_class_id = load_yolo_model(args.model)
+        
+        print("\n" + "=" * 70)
+        print("SINGLE IMAGE TEST")
+        print("=" * 70)
+        print(f"Testing image: {args.image_path}")
+        
+        result = run_detection(
+            model,
+            Path(args.image_path),
+            args.conf,
+            args.iou,
+            bird_class_id,
+            args.min_area,
+            imgsz=args.imgsz
+        )
+        print_result(result)
+        
+        if args.sweep_conf:
+            print("\nRunning Confidence Sweep...")
+            sweep_results = run_confidence_sweep(
+                model, 
+                Path(args.image_path), 
+                bird_class_id, 
+                imgsz=args.imgsz
+            )
+            print_sweep_table(sweep_results)
+        
+        if args.save_annotated and result["detections"]:
+             annotate_image(
+                 Path(args.image_path),
+                 args.save_annotated,
+                 result["detections"]
+             )
+        
+        return 0
+
     # Query observations
     if args.observation_id:
         observations = query_observation(obs_id=args.observation_id)
@@ -406,10 +529,19 @@ def main() -> int:
     # Confidence sweep mode
     if args.sweep_conf and len(observations) == 1:
         obs = observations[0]
-        snapshot_path = media_dir / obs["snapshot_path"]
+        
+        # Prefer ROI image (what YOLO actually ran on) over full snapshot
+        if obs.get("roi_path"):
+            snapshot_path = media_dir / obs["roi_path"]
+        else:
+            snapshot_path = media_dir / obs["snapshot_path"]
         
         if not snapshot_path.exists():
-            print(f"ERROR: Snapshot not found: {snapshot_path}")
+            # Fall back to snapshot if ROI doesn't exist
+            snapshot_path = media_dir / obs["snapshot_path"]
+            
+        if not snapshot_path.exists():
+            print(f"ERROR: Image not found: {snapshot_path}")
             return 1
         
         print(f"\n📊 Confidence Threshold Sweep for Observation #{obs['id']}")
@@ -438,14 +570,22 @@ def main() -> int:
     success_count = 0
     
     for obs in observations:
-        snapshot_path = media_dir / obs["snapshot_path"]
+        # Prefer ROI image (what YOLO actually ran on) over full snapshot
+        if obs.get("roi_path"):
+            image_path = media_dir / obs["roi_path"]
+        else:
+            image_path = media_dir / obs["snapshot_path"]
         
-        if not snapshot_path.exists():
-            print(f"\n⚠️  Observation #{obs['id']}: Snapshot not found at {snapshot_path}")
+        if not image_path.exists():
+            # Fall back to snapshot if ROI doesn't exist
+            image_path = media_dir / obs["snapshot_path"]
+        
+        if not image_path.exists():
+            print(f"\n⚠️  Observation #{obs['id']}: Image not found at {image_path}")
             continue
         
         result = run_detection(
-            model, snapshot_path, args.conf, args.iou, bird_class_id, args.min_area, args.imgsz
+            model, image_path, args.conf, args.iou, bird_class_id, args.min_area, args.imgsz
         )
         
         success = print_detection_report(obs, result, show_recommendations=not args.batch)
@@ -453,7 +593,7 @@ def main() -> int:
             success_count += 1
         
         if args.save_annotated and not args.batch:
-            save_annotated_image(snapshot_path, result['detections'], Path(args.save_annotated))
+            save_annotated_image(image_path, result['detections'], Path(args.save_annotated))
     
     # Summary for batch mode
     if args.batch:

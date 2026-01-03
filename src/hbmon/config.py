@@ -120,7 +120,7 @@ class Settings:
     post_departure_buffer_seconds: float = 3.0
 
     # detection tuning
-    detect_conf: float = 0.25
+    detect_conf: float = 0.1
     detect_iou: float = 0.45
     min_box_area: int = 600         # ignore tiny boxes
     cooldown_seconds: float = 2.0   # avoid duplicate triggers per same visit
