@@ -108,6 +108,7 @@ class _DummyCV2:
     VideoCapture = _DummyCap
 
 
+
 class _RejectBox:
     def __init__(self):
         self.cls = _DummyScalar(0)

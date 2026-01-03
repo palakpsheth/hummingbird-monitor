@@ -187,6 +187,10 @@ class CandidateItem:
     rejected_reason: str | None = None
     video_path: Path | None = None
     model_metadata: dict[str, Any] | None = None  # YOLO and CLIP model information
+    roi_shape: tuple[int, int] | None = None  # (height, width) of ROI frame
+    predict_imgsz: tuple[int, int] | int | None = None  # actual imgsz used for YOLO
+    xoff: int = 0
+    yoff: int = 0
 
 
 @dataclass
@@ -197,8 +201,8 @@ class FrameEntry:
     timestamp: float
     detections: list[Det]
     motion_mask: np.ndarray | None
-    xoff: int
-    yoff: int
+    xoff: int = 0
+    yoff: int = 0
 
 
 def _build_observation_media_paths(stamp: str, observation_uuid: str | None = None) -> ObservationMediaPaths:
@@ -1109,6 +1113,9 @@ async def process_candidate_task(item: CandidateItem, clip: ClipModel, media_roo
                     "bbox_area": int(det_full.area),
                     "nms_iou_threshold": float(s.detect_iou),
                     "background_subtraction_enabled": item.bg_active,
+                    "roi_size": [item.roi_shape[1], item.roi_shape[0]] if item.roi_shape else None,  # [width, height]
+                    "roi_xyxy": [item.xoff, item.yoff, item.xoff + item.roi_shape[1], item.yoff + item.roi_shape[0]] if item.roi_shape else None,
+                    "yolo_imgsz": list(item.predict_imgsz) if isinstance(item.predict_imgsz, tuple) else item.predict_imgsz,
                     "temporal_voting": item.temporal_stats or {},
                 },
                 identification={
@@ -1224,6 +1231,12 @@ def _load_yolo_model() -> tuple[Any, str]:
     
     # Ensure parent directory exists for export
     ov_model_dir.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Force clean conversion every boot for troubleshooting if a flag is set
+    if os.getenv("HBMON_FORCE_OPENVINO_CONVERSION") == "1":
+        if ov_model_dir.exists():
+            logger.info(f"Purging existing OpenVINO model cache at {ov_model_dir} for clean boot...")
+            shutil.rmtree(ov_model_dir, ignore_errors=True)
 
     if not ov_model_dir.exists():
         logger.info(f"Exporting {model_name} to OpenVINO format...")
@@ -1486,7 +1499,9 @@ async def run_worker() -> None:
         if (now_dbg - last_debug_log) > debug_every:
              logger.info(f"alive q_size={queue.qsize()} rtsp={s.rtsp_url}")
              if debug_save:
-                 await _write_jpeg_async(media_dir() / "debug_latest.jpg", frame)
+                 # Use copy() to avoid longjmp/segfaults due to concurrent access
+                 await _write_jpeg_async(media_dir() / "debug_latest.jpg", frame.copy())
+                 await _write_jpeg_async(media_dir() / "debug_crop.jpg", roi_frame.copy())
              last_debug_log = now_dbg
 
         motion_mask = None
@@ -1702,7 +1717,11 @@ async def run_worker() -> None:
                          s=s,
                          is_rejected=False,
                          video_path=visit_video_path,
-                         model_metadata=model_metadata
+                         model_metadata=model_metadata,
+                         roi_shape=(roi_frame.shape[0], roi_frame.shape[1]),
+                         predict_imgsz=predict_imgsz,
+                         xoff=xoff,
+                         yoff=yoff,
                      )
 
         # 2. Continuous Actions (Recording) and Timeouts
@@ -1779,7 +1798,9 @@ async def run_worker() -> None:
                           s=s,
                           is_rejected=True,
                           rejected_reason="motion_rejected",
-                          model_metadata=model_metadata
+                          model_metadata=model_metadata,
+                          roi_shape=(roi_frame.shape[0], roi_frame.shape[1]),
+                          predict_imgsz=predict_imgsz,
                       )
                       queue.put_nowait(item)
                       last_logged_candidate_ts = timestamp

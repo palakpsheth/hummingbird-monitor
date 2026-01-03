@@ -1,80 +1,72 @@
 {# Reusable Jinja2 macros for hbmon templates #}
 
 {% macro observation_card(o) %}
-  {# Renders an observation card with thumbnail, species, individual, metrics, and review badge
-     
-     Args:
-       o: Observation object or dict with fields:
-          - id: observation ID
-          - display_snapshot_path: path to thumbnail image
-          - review_label: optional review status (true_positive, false_positive, unknown)
-          - species_label: species name
-          - species_css: CSS class for species badge
-          - species_prob: species probability
-          - individual_id: optional individual ID
-          - match_score: similarity score
-          - detection_confidence: optional detection confidence
-          - video_duration: optional video duration in seconds
-          - ts_utc: UTC timestamp string
-          - video_path: path to video file
-  #}
-  {% set hue = ((o.individual_id or 0) * 47) % 360 %}
-  <div class="thumb">
-    <div class="thumb-media">
-      <a href="/observations/{{ o.id }}">
-        <img
-          src="/media/{{ o.display_snapshot_path }}"
-          alt="Observation {{ o.id }}"
-          loading="lazy"
-        />
-      </a>
-      {% if o.review_label %}
-        {% if o.review_label == "true_positive" %}
-          <span class="thumb-status-badge thumb-status-badge--tp">TP</span>
-        {% elif o.review_label == "false_positive" %}
-          <span class="thumb-status-badge thumb-status-badge--fp">FP</span>
-        {% elif o.review_label == "unknown" %}
-          <span class="thumb-status-badge thumb-status-badge--unknown">U</span>
+{# Renders an observation card with thumbnail, species, individual, metrics, and review badge
+
+Args:
+o: Observation object or dict with fields:
+- id: observation ID
+- display_snapshot_path: path to thumbnail image
+- review_label: optional review status (true_positive, false_positive, unknown)
+- species_label: species name
+- species_css: CSS class for species badge
+- species_prob: species probability
+- individual_id: optional individual ID
+- match_score: similarity score
+- detection_confidence: optional detection confidence
+- video_duration: optional video duration in seconds (NOT clip_duration)
+- ts_utc: UTC timestamp string
+- video_path: path to video file
+#}
+{% set hue = ((o.individual_id or 0) * 47) % 360 %}
+<div class="thumb">
+  <div class="thumb-media">
+    <a href="/observations/{{ o.id }}">
+      <img src="/media/{{ o.display_snapshot_path }}" alt="Observation {{ o.id }}" loading="lazy" />
+    </a>
+  </div>
+  <div class="meta">
+    {% if o.review_label %}
+    {% if o.review_label == "true_positive" %}
+    <span class="thumb-status-badge thumb-status-badge--tp">TP</span>
+    {% elif o.review_label == "false_positive" %}
+    <span class="thumb-status-badge thumb-status-badge--fp">FP</span>
+    {% elif o.review_label == "unknown" %}
+    <span class="thumb-status-badge thumb-status-badge--unknown">U</span>
+    {% endif %}
+    {% endif %}
+    <div><span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span></div>
+    <div class="thumb-metrics">
+      <span>Conf:
+        {% if o.detection_confidence is not none %}
+        <strong>{{ "%.3f"|format(o.detection_confidence) }}</strong>
+        {% else %}
+        —
         {% endif %}
+      </span>
+      <span>Clip:
+        {% if o.video_duration is not none %}
+        <strong>{{ "%.1f"|format(o.video_duration) }}s</strong>
+        {% else %}
+        —
+        {% endif %}
+      </span>
+    </div>
+    <div>
+      Ind:
+      {% if o.individual_id %}
+      <a href="/individuals/{{ o.individual_id }}">
+        <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
+      </a>
+      · sim {{ "%.3f"|format(o.match_score) }}
+      {% else %}
+      <span class="muted">—</span>
       {% endif %}
     </div>
-    <div class="meta">
-      <div>
-        <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
-        <span class="muted">({{ "%.2f"|format(o.species_prob) }})</span>
-      </div>
-      <div>
-        Ind:
-        {% if o.individual_id %}
-          <a href="/individuals/{{ o.individual_id }}">
-            <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
-          </a>
-        {% else %}
-          <span class="muted">—</span>
-        {% endif %}
-        · sim {{ "%.3f"|format(o.match_score) }}
-      </div>
-      <div class="thumb-metrics">
-        <span>Conf:
-          {% if o.detection_confidence is not none %}
-            <strong>{{ "%.3f"|format(o.detection_confidence) }}</strong>
-          {% else %}
-            —
-          {% endif %}
-        </span>
-        <span>Clip:
-          {% if o.video_duration is not none %}
-            <strong>{{ "%.1f"|format(o.video_duration) }}s</strong>
-          {% else %}
-            —
-          {% endif %}
-        </span>
-      </div>
-      <div><span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span></div>
-      <div>
-        <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a>
-        · <a href="/observations/{{ o.id }}">Details</a>
-      </div>
+    <div>
+      <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a>
+      · <a href="/observations/{{ o.id }}">Details</a>
     </div>
   </div>
+</div>
 {% endmacro %}

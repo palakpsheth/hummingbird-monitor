@@ -233,7 +233,11 @@ a:hover {
 
 .row {
   display: grid;
-  grid-template-columns: 80px 1fr 120px 220px;
+  grid-template-columns:
+    minmax(48px, max-content)
+    minmax(160px, 1.4fr)
+    minmax(70px, max-content)
+    minmax(200px, 2fr);
   gap: 10px;
   padding: 8px;
   border-radius: 10px;
@@ -241,6 +245,44 @@ a:hover {
 
 .individuals-table .row {
   grid-template-columns: 80px 84px 1fr 120px 220px;
+}
+
+.top-individuals-table {
+  overflow-x: auto;
+}
+
+.top-individuals-table .row {
+  grid-template-columns: 60px minmax(150px, 1fr) 72px 240px 210px 230px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  min-width: 1000px;
+}
+
+.top-individuals-table .row>div {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Specific alignments */
+.top-individuals-table .row>div:nth-child(3) {
+  text-align: center;
+}
+
+/* No truncation for these columns */
+.top-individuals-table .row>div:nth-child(4),
+.top-individuals-table .row>div:nth-child(5),
+.top-individuals-table .row>div:nth-child(6) {
+  overflow: visible;
+}
+
+@media (max-width: 900px) {
+  .top-individuals-table .row {
+    grid-template-columns: 50px minmax(120px, 1fr) 60px 200px 180px 200px;
+    gap: 10px;
+    min-width: 820px;
+  }
 }
 
 .row.head {
@@ -447,6 +489,8 @@ a:hover {
 .ind-pill {
   border-color: color-mix(in srgb, hsl(var(--ind-hue) 80% 60%) 55%, var(--border));
   background: color-mix(in srgb, hsl(var(--ind-hue) 80% 60%) 16%, transparent);
+  padding: 1px 7px;
+  font-size: 11px;
 }
 
 /* ───────────────────────── Image Galleries ───────────────────────── */
@@ -468,10 +512,8 @@ a:hover {
   border: 1px solid var(--border);
   border-radius: 14px;
   overflow: hidden;
-}
-
-.thumb-media {
   position: relative;
+  /* For stable status badge placement */
 }
 
 .thumb img {
@@ -483,19 +525,20 @@ a:hover {
 
 .thumb-status-badge {
   position: absolute;
-  right: 10px;
-  bottom: 10px;
-  width: 32px;
-  height: 32px;
+  right: 8px;
+  bottom: 8px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   letter-spacing: 0.02em;
   color: #fff;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  z-index: 2;
 }
 
 .thumb-status-badge--tp {
@@ -514,6 +557,8 @@ a:hover {
   padding: 10px;
   font-size: 13px;
   color: var(--muted);
+  position: relative;
+  /* Added for badge positioning */
 }
 
 .thumb-metrics {

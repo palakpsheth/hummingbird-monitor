@@ -75,7 +75,17 @@ async def test_index_caching(monkeypatch, tmp_path) -> None:
     async def _fake_cache_get_json(key: str):
         if "index" in key:
             return {
-                "top_inds_out": [[1, "Cached Bird", 5, "2024-01-01T12:00:00Z"]],
+                "top_inds_out": [
+                    {
+                        "id": 1,
+                        "name": "Cached Bird",
+                        "visit_count": 5,
+                        "last_seen_at": "2024-01-01T12:00:00Z",
+                        "created_at": "2024-01-01T10:00:00Z",
+                        "last_species": "Anna's Hummingbird",
+                        "species_css": "species-annas-hummingbird",
+                    }
+                ],
                 "recent": [],
                 "current_page": 1,
                 "clamped_page_size": 10,

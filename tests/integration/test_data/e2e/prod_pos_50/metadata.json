@@ -1,0 +1,21 @@
+{
+  "description": "Extracted from observation 50",
+  "species": "Hummingbird (unknown species)",
+  "expect_detection": true,
+  "yolo_imgsz": [
+    640
+  ],
+  "roi": [
+    480,
+    23,
+    1920,
+    1047
+  ],
+  "original_bbox": [
+    1510,
+    243,
+    1900,
+    669
+  ],
+  "original_conf": 0.5961288213729858
+}

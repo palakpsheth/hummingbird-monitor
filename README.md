@@ -1,4 +1,5 @@
-# Hummingbird Monitor (`hbmon`)
+# 🐦 Hummingbird Monitor (`hbmon`) 🎥
+![Hero Observation](docs/img/hero_observation.jpg)
 
 <!-- The coverage badge uses shields.io with a JSON endpoint generated in CI.
      The GitHub Actions workflow writes `coverage-badge.json` at the repository
@@ -12,40 +13,42 @@
 
 LAN-only hummingbird monitoring system designed for a **Linux x64 mini PC**.
 
-It ingests a **Wyze Cam v3** stream via **`wyze-bridge` (RTSP)**, detects birds using **YOLO**, records short clips, classifies hummingbird species using **CLIP/OpenCLIP**, and assigns sightings to **individual birds** via **embedding-based re-identification**.
+**`hbmon`** provides a 🔒 **privacy-first**, ⚡ **high-performance** alternative to cloud-based bird cameras. By processing video entirely locally, it ensures your stream and data never leave your home network while offering advanced features like individual bird recognition and automated species logging. The system is built for enthusiasts who want to track the distinct visitors to their feeders with 🧪 **scientific precision**, leveraging modern computer vision to not only identify species but also differentiate between individual birds across multiple visits.
 
-The web UI is optimized for **Android Chrome** and is intentionally **no-login / no-password** (only safe on a trusted home LAN).
+It ingests a **Wyze Cam v3** stream via **`wyze-bridge` (RTSP)**, detects birds using **YOLO** (accelerated by **OpenVINO** for Intel GPUs), records full visit videos with pre/post-trigger buffers, classifies hummingbird species using **BioCLIP**, and assigns sightings to **individual birds** via **embedding-based re-identification**. All processing happens on-device, with native support for **OpenVINO** to maintain high-frame-rate detection even on modest hardware.
+
+The web UI is optimized for 📱 **Android Chrome** and is intentionally **no-login / no-password** (only safe on a trusted home LAN). This streamlined approach makes it easy to keep a dedicated monitoring tablet on your kitchen counter or check the feeder from your phone without the friction of repetitive authentication.
 
 ---
 
 ## Table of contents
-- [What you get](#what-you-get)
-- [Architecture](#architecture)
-- [Quick start (Docker Compose)](#quick-start-docker-compose)
-- [Database & cache configuration](#database--cache-configuration)
-- [Developer shortcuts (Makefile)](#developer-shortcuts-makefile)
-- [Recommended setup steps](#recommended-setup-steps)
-- [Wyze Bridge configuration](#wyze-bridge-configuration)
-- [Tuning guide (practical)](#tuning-guide-practical)
-- [GPU acceleration (if available)](#gpu-acceleration-if-available)
-- [Exports & backups](#exports--backups)
-- [Local development (uv)](#local-development-uv)
-- [GitHub Actions CI](#github-actions-ci)
-- [License](#license)
-- [Troubleshooting](#troubleshooting)
-- [Current limitations (by design or early version)](#current-limitations-by-design-or-early-version)
-- [Where this can be improved next (ideas)](#where-this-can-be-improved-next-ideas)
-- [Testing & Coverage](#testing--coverage)
-- [Pre‑commit hooks](#pre-commit-hooks)
-- [Coverage badge (Shields.io)](#coverage-badge-shieldsio)
-- [Directory layout](#directory-layout)
+- [What you get](#-what-you-get)
+- [Architecture](#️-architecture)
+- [Quick start](#-quick-start)
+- [Database & cache configuration](#-database--cache-configuration)
+- [Developer shortcuts (Makefile)](#️-developer-shortcuts-makefile)
+- [Recommended setup steps](#-recommended-setup-steps)
+- [Wyze Bridge configuration](#-wyze-bridge-configuration)
+- [Tuning guide (practical)](#-tuning-guide-practical)
+- [GPU acceleration (if available)](#-gpu-acceleration-if-available)
+- [Exports & backups](#-exports--backups)
+- [Local development (uv)](#-local-development-uv)
+- [GitHub Actions CI](#-github-actions-ci)
+- [License](#-license)
+- [Troubleshooting](#-troubleshooting)
+- [Current limitations (by design or early version)](#️-current-limitations-by-design-or-early-version)
+- [Where this can be improved next (ideas)](#-where-this-can-be-improved-next-ideas)
+- [Testing & Coverage](#-testing--coverage)
+- [Pre‑commit hooks](#-pre-commit-hooks)
+- [Coverage badge (Shields.io)](#-coverage-badge-shieldsio)
+- [Directory layout](#-directory-layout)
 
 ---
 
-## What you get
+## ✨ What you get
 
-### Core features
-- **Automatic capture** of a snapshot + short video clip when a bird enters the feeder ROI
+### 🛠️ Core features
+- **Automatic capture** of snapshots + full visit video when a bird enters the feeder ROI
 - **Species label + probability** logged for each event
 - **Individual re-identification**: “bird A vs bird B” using image embeddings
 - **Name individuals** in the UI
@@ -71,7 +74,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
   - Candidate detail pages can export a similar bundle for motion-rejected detections.
   - Missing sensitivity/identification fields are backfilled with current defaults when exporting older observations.
 
-### Video storage and streaming
+### 📽️ Video storage and streaming
 - **Uncompressed storage**: Videos stored in pristine uncompressed format on disk for ML training and future use
 - **On-the-fly compression**: When streaming to browsers, videos are compressed using FFmpeg with intelligent caching
   - First view: compresses to `/media/.cache/compressed/` (3-5 seconds)
@@ -87,7 +90,7 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **ML training ready**: Pristine uncompressed videos preserve maximum detail for model fine-tuning
 - **Utilities**: Batch processing tools in `observation_tools.py` for extracting and updating video metadata
 
-### Web UI pages
+### 🌐 Web UI pages
 - **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for auto-refresh with configurable refresh rate (1s, 2s, 5s, 10s), a live/fallback source indicator, and a detection health indicator); recent observations include detection confidence, clip length, and review badges, and both recent observations and top individuals are paginated with per-page selectors
 - **Observations**: filterable, sortable table (including dynamic extra metadata fields such as
   detector confidence) with compact thumbnails, a per-page selector, column visibility checklist (sensitivity
@@ -104,24 +107,24 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 ### Containers (recommended)
 - **wyze-bridge**: logs into Wyze and exposes RTSP streams (using [IDisposable fork](https://github.com/IDisposable/docker-wyze-bridge) for improved performance and camera support)
 - **hbmon-db**: PostgreSQL database for concurrent reads/writes with pooling
 - **hbmon-redis**: Redis cache for hot query results (latest observations, health checks)
 - **hbmon-worker**: reads RTSP, runs detection + CLIP + re-ID, writes to PostgreSQL
-- **hbmon-web**: FastAPI + Jinja UI served by Gunicorn + Uvicorn workers, serves `/media` and exports
-- **hbmon-stream**: dedicated FastAPI worker for `/api/stream.mjpeg` MJPEG streaming
-- **nginx** (optional): reverse proxy on port 80 (nice “just open IP” UX)
+- **hbmon-web**: FastAPI + Jinja UI served by Gunicorn + Uvicorn workers, serves `/media`, exports, and handles video streaming
+- **hbmon-proxy** (nginx): reverse proxy on port 80 (nice "just open IP" UX)
 
 ### Container Startup Order & Healthchecks
 
 The `docker-compose.yml` uses healthchecks to ensure containers start in the correct order:
 
 ```
-wyze-bridge (healthy) → hbmon-db (healthy) → hbmon-web (healthy) → hbmon-worker
-                       → hbmon-redis (healthy) → hbmon-stream (healthy) → hbmon-proxy
+wyze-bridge (healthy) ─┐
+hbmon-db (healthy) ─────┼─→ hbmon-web (healthy) ─→ hbmon-worker
+hbmon-redis (healthy) ──┘                      └─→ hbmon-proxy
 ```
 
 | Container     | Healthcheck                           | Wait for                       |
@@ -129,10 +132,9 @@ wyze-bridge (healthy) → hbmon-db (healthy) → hbmon-web (healthy) → hbmon-w
 | wyze-bridge   | HTTP check on port 5000               | -                              |
 | hbmon-db      | `pg_isready`                          | -                              |
 | hbmon-redis   | `redis-cli ping`                      | -                              |
-| hbmon-web     | HTTP check on `/health` endpoint      | wyze-bridge + db + redis       |
-| hbmon-stream  | HTTP check on `/health` endpoint      | wyze-bridge + db + redis       |
+| hbmon-web     | HTTP check on `/api/health` endpoint  | wyze-bridge + db + redis       |
 | hbmon-worker  | Process check for `hbmon.worker`      | wyze-bridge + hbmon-web + db   |
-| hbmon-proxy   | HTTP check on port 80                 | hbmon-web + hbmon-stream       |
+| hbmon-proxy   | HTTP check on port 80                 | hbmon-web                      |
 
 This ensures the database is initialized by hbmon-web before the worker starts.
 
@@ -144,7 +146,7 @@ This ensures the database is initialized by hbmon-web before the worker starts.
 
 ---
 
-## Quick start (Docker Compose)
+## 🚀 Quick start
 
 ### Prereqs
 - Docker + Docker Compose on the Linux mini PC
@@ -204,7 +206,7 @@ ip a
 
 ---
 
-## Database & cache configuration
+## 💾 Database & ⚡ cache configuration
 
 The Docker setup runs PostgreSQL for the database and Redis for short-lived cache entries. Both the
 web service and worker use the async driver (`HBMON_DB_ASYNC_URL`).
@@ -261,7 +263,7 @@ The table below maps `.env.example` variables to their defaults and whether they
 | Variable | Default | Hot reloadable via Config UI |
 | --- | --- | --- |
 | `HBMON_DB_ASYNC_URL` | `postgresql+asyncpg://hbmon:hbmon@hbmon-db:5432/hbmon` | No |
-| `HBMON_DB_URL` | (empty) | No |
+| `HBMON_DB_URL` | `postgresql+psycopg://hbmon:hbmon@hbmon-db:5432/hbmon` | No |
 | `HBMON_DB_POOL_SIZE` | `5` | No |
 | `HBMON_DB_MAX_OVERFLOW` | `10` | No |
 | `HBMON_DB_POOL_TIMEOUT` | `30` | No |
@@ -297,7 +299,6 @@ The table below maps `.env.example` variables to their defaults and whether they
 | `HBMON_EMA_ALPHA` | `0.10` | Yes |
 | `HBMON_CROP_PADDING` | `0.05` | Yes |
 | `HBMON_SPECIES_LIST` | (see `.env.example`) | No |
-| `HBMON_INFERENCE_BACKEND` | `cpu` | No |
 
 **Background subtraction**
 
@@ -329,9 +330,31 @@ The table below maps `.env.example` variables to their defaults and whether they
 | `HBMON_VIDEO_CACHE_MAX_SIZE_GB` | `10.0` | No |
 | `HBMON_FFMPEG_PATH` | `ffmpeg` | No |
 
+**Hardware acceleration**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_YOLO_MODEL` | `yolo11s.pt` | No |
+| `HBMON_INFERENCE_BACKEND` | `cpu` | No |
+| `HBMON_YOLO_BACKEND` | (empty) | No |
+| `HBMON_DEVICE` | (empty) | No |
+| `OPENVINO_CACHE_DIR` | `/data/openvino_cache` | No |
+| `YOLO_CONFIG_DIR` | `/data/yolo` | No |
+| `HF_TOKEN` | (empty) | No |
+
+**Debugging and diagnostics**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_DEBUG_VERBOSE` | `1` | No |
+| `HBMON_DEBUG_BG` | `1` | No |
+| `HBMON_DEBUG_SAVE_FRAMES` | `1` | No |
+| `HBMON_DEBUG_EVERY_SECONDS` | `30` | No |
+| `HBMON_YOLO_IMGSZ` | `auto` | No |
+
 ---
 
-## Developer shortcuts (Makefile)
+## 🛠️ Developer shortcuts (Makefile)
 
 For local development, the repo includes a `Makefile` with common tasks. The targets use
 `uv` to manage the virtual environment and run commands (matching CI expectations).
@@ -354,13 +377,21 @@ make docker-down     # docker compose down
 make clean-db        # remove local database file only (defaults to ./data)
 make clean-media     # remove local media files (defaults to ./data/media)
 make clean-data      # remove all local data (defaults to ./data)
+make clean-openvino-cache  # clear OpenVINO model cache (forces re-export)
+
+# Diagnostic and testing commands
+make test-e2e        # full end-to-end detection test (auto-restores config)
+make test-detection  # test YOLO on saved snapshots with tuning recommendations
+make check-health    # check pipeline health for silent failures
+make test-stream-list   # list observation videos for test streaming
+make test-stream-start  # start RTSP test server with latest video
 ```
 
 Run `make help` to list all available targets.
 
 ---
 
-## Recommended setup steps
+## ✅ Recommended setup steps
 
 ### Calibrate ROI (biggest accuracy + performance win)
 1. Open **Calibrate ROI** (uses a live snapshot from the RTSP feed when available).
@@ -377,7 +408,7 @@ Why ROI matters:
 
 ---
 
-## Wyze Bridge configuration
+## 🌉 Wyze Bridge configuration
 
 This project uses the [IDisposable fork](https://github.com/IDisposable/docker-wyze-bridge) of docker-wyze-bridge, which provides improved performance and camera support.
 
@@ -404,7 +435,7 @@ The wyze-bridge container runs with `network_mode: host` for optimal performance
 ---
 
 
-## Tuning guide (practical)
+## 📻 Tuning guide (practical)
 
 Most tuning is via environment variables (Docker) or `/data/config.json` (persisted settings).
 
@@ -533,33 +564,10 @@ continue to override them when set.
   - Override the YOLO inference image size (larger values increase detail and CPU/GPU cost)
   - Set to "auto" to automatically snap dimensions to the nearest stride of 32 based on the ROI or frame size.
 
-### MJPEG live stream tuning
-The MJPEG endpoint (`/api/stream.mjpeg`) supports bandwidth/CPU tuning via environment variables:
-
-- `HBMON_MJPEG_FPS` (default 10)
-  - Target MJPEG frame rate for the live stream
-- `HBMON_MJPEG_MAX_WIDTH` (default 1280)
-  - Maximum output width; frames are downscaled if larger
-  - Set to 0 to disable width limiting
-- `HBMON_MJPEG_MAX_HEIGHT` (default 720)
-  - Maximum output height; frames are downscaled if larger
-  - Set to 0 to disable height limiting
-- `HBMON_MJPEG_JPEG_QUALITY` (default 70)
-  - JPEG quality for the MJPEG stream (10–100)
-- `HBMON_MJPEG_ADAPTIVE` (default 0)
-  - Set to 1 to enable adaptive degradation when encoding is slow
-- `HBMON_MJPEG_MIN_FPS` (default 4)
-  - Lowest FPS when adaptive degradation is active
-- `HBMON_MJPEG_MIN_QUALITY` (default 40)
-  - Lowest JPEG quality when adaptive degradation is active
-- `HBMON_MJPEG_FPS_STEP` (default 1)
-  - Step size for adaptive FPS adjustments
-- `HBMON_MJPEG_QUALITY_STEP` (default 5)
-  - Step size for adaptive quality adjustments
 
 ---
 
-## GPU acceleration (if available)
+## 🚀 GPU acceleration (if available)
 
 ### 1) Check if you have an NVIDIA GPU
 On the host:
@@ -752,7 +760,7 @@ If GPU is unavailable, the worker automatically falls back:
 
 ---
 
-## Exports & backups
+## 📤 Exports & 💾 backups
 
 ### From the UI (top nav)
 - **Obs CSV**: observations table
@@ -766,21 +774,21 @@ If you want a complete backup, copy:
 
 ---
 
-## Local development (uv)
+## 💻 Local development (uv)
 
 From repo root:
 
 ```bash
 uv venv
-uv pip install -e ".[dev]" --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+make sync  # installs dependencies + Playwright browsers
 uv run pytest -q
 uv run uvicorn hbmon.web:app --reload --host 0.0.0.0 --port 8000
 ```
 
-To use CUDA-enabled PyTorch wheels locally, swap the index URL (or run `make sync-gpu`):
+To use CUDA-enabled PyTorch wheels locally, run `make sync-gpu`:
 
 ```bash
-uv pip install -e ".[dev]" --index-url https://download.pytorch.org/whl/cu121 --extra-index-url https://pypi.org/simple
+make sync-gpu
 ```
 
 Run the worker locally (requires RTSP access from your host):
@@ -790,7 +798,7 @@ HBMON_RTSP_URL="rtsp://..." uv run python -m hbmon.worker
 
 ---
 
-## GitHub Actions CI
+## 🤖 GitHub Actions CI
 
 A typical `.github/workflows/ci.yml` for this repo:
 - uses `uv`
@@ -799,13 +807,13 @@ A typical `.github/workflows/ci.yml` for this repo:
 
 ---
 
-## License
+## 📄 License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
-## Troubleshooting
+## 🔍 Troubleshooting
 
 ### “VLC is unable to open the MRL …”
 - Confirm `wyze-bridge` is running and the stream name matches your camera
@@ -818,6 +826,47 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
   - Wyze login issue
   - camera offline / weak Wi‑Fi
   - upstream Wyze connectivity trouble
+
+### Detection not working (no observations despite birds)
+
+Use the built-in diagnostic scripts to isolate the issue:
+
+**1. Test YOLO directly on saved snapshots:**
+```bash
+# Quick test on last 5 observations
+make test-detection
+
+# Test specific observation with confidence sweep
+uv run python scripts/test_detection.py --observation-id 28 --sweep-conf
+
+# Test with different settings
+uv run python scripts/test_detection.py --conf 0.05 --min-area 400
+```
+
+**2. Replay observation video as test RTSP stream:**
+```bash
+# List available videos
+make test-stream-list
+
+# Start test RTSP server (in one terminal)
+make test-stream-start
+
+# In another terminal, update .env and restart worker:
+# HBMON_RTSP_URL=rtsp://localhost:8555/test
+docker compose restart hbmon-worker
+```
+
+**3. Interpret diagnostic output:**
+- `NO DETECTIONS FOUND` → Lower `detect_conf` in Config UI (try 0.05)
+- Detections filtered by `min_box_area` → Lower threshold in Config UI
+- Low confidence (< 0.15) → Consider larger YOLO model (yolo11s.pt)
+
+**4. Clear OpenVINO cache if model seems broken:**
+```bash
+make docker-down
+make clean-openvino-cache
+make docker-up-intel
+```
 
 ### Worker isn’t producing snapshots
 - Verify `HBMON_RTSP_URL` is correct in the worker container
@@ -917,9 +966,19 @@ HBMON_YOLO_BACKEND=pytorch  # PyTorch CPU
 HBMON_YOLO_BACKEND=openvino-cpu  # OpenVINO CPU (may be faster than PyTorch)
 ```
 
+**Clear OpenVINO cache to force model re-export**
+
+If detection suddenly stops working (no detections despite birds being present), the cached OpenVINO model may be corrupted:
+```bash
+# Stop containers, clear cache, restart
+make docker-down
+make clean-openvino-cache
+make docker-up-intel
+```
+
 ---
 
-## Current limitations (by design or early version)
+## ⚠️ Current limitations (by design or early version)
 
 - **No authentication**: this is LAN-only. Don’t expose ports to the internet.
 - **Species classification**: CLIP + prompts is “pretty good” but not a field guide.
@@ -929,7 +988,7 @@ HBMON_YOLO_BACKEND=openvino-cpu  # OpenVINO CPU (may be faster than PyTorch)
 
 ---
 
-## Where this can be improved next (ideas)
+## 💡 Where this can be improved next (ideas)
 
 ### Better “eventing”
 - **True pre-trigger buffer**: maintain a ring buffer of frames so clips include the *moment before* the bird arrives.
@@ -962,7 +1021,7 @@ HBMON_YOLO_BACKEND=openvino-cpu  # OpenVINO CPU (may be faster than PyTorch)
 
 ---
 
-## Testing & Coverage
+## 🧪 Testing & 📈 Coverage
 
 The `hbmon` package includes a comprehensive test suite with both **unit tests** and **integration tests**. The coverage badge and PR reports always reflect coverage of **all tests**.
 
@@ -983,9 +1042,36 @@ uv run pytest -m integration
 
 Unit tests exercise the core logic without requiring heavy ML dependencies. They are lightweight and fast.
 
-### Integration Tests
+### E2E Tests (Production Data Driven)
 
+The **End-to-End (E2E)** tests simulate the full worker lifecycle against real production video clips and metadata. These are the most robust tests for verifying the entire pipeline:
+1.  **Data Driven**: Tests are discovered from `tests/integration/test_data/e2e/`.
+2.  **High Fidelity**: Each test case includes its original production ROI, video, and expected labels.
+3.  **Realism**: The worker runs its actual state machine, detector, and classifier.
+
+```bash
+# Run E2E tests
+uv run pytest tests/integration/test_worker_e2e.py -v
+```
+
+### Integration Tests
 Integration tests require ML dependencies (PyTorch, YOLO, CLIP) and real test data. They are marked with `@pytest.mark.integration`.
+
+#### Git LFS for Test Data
+This repository uses **Git LFS (Large File Storage)** to manage large test video files (mp4). To run integration tests successfully, you must have Git LFS installed and the files pulled.
+
+1. **Install Git LFS**:
+   ```bash
+   # Debian/Ubuntu
+   sudo apt-get install git-lfs
+   git lfs install
+   ```
+
+2. **Pull LFS Files**:
+   ```bash
+   git lfs pull
+   ```
+
 
 ### UI Tests (Playwright)
 
@@ -1041,7 +1127,7 @@ uv run pytest --cov=hbmon --cov-report=html
 # Open htmlcov/index.html in browser
 ```
 
-## Pre‑commit hooks
+## ⚓ Pre‑commit hooks
 
 To make it easy to run the same checks locally that the CI pipeline performs, this repository includes a [pre‑commit](https://pre-commit.com) configuration.  Pre‑commit installs a Git hook that automatically runs a set of commands before each commit.  In this project the hook runs `ruff` (our linter) and the full test suite with coverage, mirroring the steps defined in the CI workflow.  If any of these checks fail, the commit will be aborted so you can fix the issues before pushing.
 
@@ -1090,7 +1176,7 @@ The hooks will run automatically before each commit.  They execute
 `PYTHONPATH=src` set in the hook configuration) to ensure the tests still pass.
 Running the hooks locally helps catch issues early and keeps the CI pipeline green.
 
-## Coverage badge (Shields.io)
+## 🛡️ Coverage badge (Shields.io)
 
 The coverage badge uses a shields.io JSON endpoint so the image stays fresh without manual README
 edits. To configure this in another repo:
@@ -1103,7 +1189,7 @@ edits. To configure this in another repo:
 4. Reference the badge in your README using:
    `https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/<owner>/<repo>/<default-branch>/coverage-badge.json&cacheSeconds=300`.
 
-## Directory layout
+## 📁 Directory layout
 
 ```text
 hummingbird-monitor/

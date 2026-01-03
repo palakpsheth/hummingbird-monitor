@@ -43,3 +43,4 @@ def test_load_yolo_model_path_resolution(mock_gpu, mock_ov_av, mock_yolo, monkey
     with patch("hbmon.worker.Path.exists", autospec=True, side_effect=exists_side_effect_2):
         _load_yolo_model()
         mock_yolo.assert_any_call(str(expected_path_2), task="detect")
+

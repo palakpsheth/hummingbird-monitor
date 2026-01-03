@@ -113,4 +113,6 @@ def test_docker_compose_uses_yaml_anchors() -> None:
     assert "x-rtsp-env:" in compose_text, "Should define x-rtsp-env anchor"
     
     # Check for anchor usage (using array syntax for merging multiple anchors)
-    assert "<<: [*common-env, *rtsp-env, *bg-subtraction-env]" in compose_text, "Services should use anchor array merge syntax"
+    # Using regex to allow optional whitespace around anchors and bracket
+    anchor_pattern = r"<<:\s*\[\s*\*common-env,\s*\*rtsp-env,\s*\*bg-subtraction-env\s*\]"
+    assert re.search(anchor_pattern, compose_text), "Services should use anchor array merge syntax (regex match failed)"

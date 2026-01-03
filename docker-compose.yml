@@ -96,7 +96,7 @@ services:
     container_name: hbmon-web
     command: [ "gunicorn", "hbmon.web:app", "-k", "uvicorn.workers.UvicornWorker", "--workers", "${HBMON_WEB_WORKERS:-4}", "--bind", "0.0.0.0:8000", "--log-level", "info", "--access-logfile", "-", "--error-logfile", "-" ]
     environment:
-      <<: [*common-env, *rtsp-env, *bg-subtraction-env]
+      <<: [ *common-env, *rtsp-env, *bg-subtraction-env ]
       HBMON_TITLE: ${HBMON_TITLE}
       HBMON_REDIS_TTL_SECONDS: ${HBMON_REDIS_TTL_SECONDS:-5}
       HBMON_SQLITE_BUSY_TIMEOUT_MS: ${HBMON_SQLITE_BUSY_TIMEOUT_MS:-5000}
@@ -160,7 +160,7 @@ services:
     devices:
       - /dev/dri:/dev/dri
     environment:
-      <<: [*common-env, *rtsp-env, *bg-subtraction-env]
+      <<: [ *common-env, *rtsp-env, *bg-subtraction-env ]
       HBMON_REDIS_TTL_SECONDS: ${HBMON_REDIS_TTL_SECONDS:-5}
       HBMON_SQLITE_BUSY_TIMEOUT_MS: ${HBMON_SQLITE_BUSY_TIMEOUT_MS:-5000}
       HBMON_CAMERA_NAME: ${HBMON_CAMERA_NAME}
@@ -191,13 +191,13 @@ services:
       HBMON_YOLO_BACKEND: ${HBMON_YOLO_BACKEND}
       OPENVINO_CACHE_DIR: ${OPENVINO_CACHE_DIR:-/data/openvino_cache}
       HBMON_YOLO_IMGSZ: ${HBMON_YOLO_IMGSZ:-auto}
-      HF_TOKEN: ${HF_TOKEN}
+      HF_TOKEN: ${HF_TOKEN:-}
 
       # Debug settings
       HBMON_DEBUG_BG: ${HBMON_DEBUG_BG:-1}
       HBMON_DEBUG_VERBOSE: ${HBMON_DEBUG_VERBOSE:-1}
-      HBMON_DEBUG_SAVE_FRAMES: ${HBMON_DEBUG_SAVE_FRAMES:-0}
-      HBMON_DEBUG_EVERY_SECONDS: ${HBMON_DEBUG_EVERY_SECONDS:-10}
+      HBMON_DEBUG_SAVE_FRAMES: ${HBMON_DEBUG_SAVE_FRAMES:-1}
+      HBMON_DEBUG_EVERY_SECONDS: ${HBMON_DEBUG_EVERY_SECONDS:-30}
 
     volumes:
       - ./data:/data
@@ -247,6 +247,9 @@ services:
       - POSTGRES_PASSWORD=hbmon
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+    # Expose port for host-side diagnostic scripts
+    ports:
+      - "5432:5432"
     healthcheck:
       # pg_isready is the standard healthcheck for the official Postgres image.
       test: [ "CMD-SHELL", "pg_isready -U hbmon -d hbmon" ]

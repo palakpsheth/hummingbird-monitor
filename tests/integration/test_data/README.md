@@ -20,9 +20,11 @@ test_data/
 │   └── ...
 ├── feeding_0/                   # Test case: feeding at feeder #0
 │   └── ...
-├── multiple_birds_0/            # Test case: multiple birds in frame #0
-│   └── ...
-├── false_positive_0/            # Test case: false positive detection #0
+├── e2e/                         # Production Data-Driven E2E Test Cases
+│   ├── prod_pos_50/             # High-fidelity case from observation 50
+│   │   ├── clip.mp4             # Production video clip
+│   │   ├── config.json          # Extracted ROI/Settings
+│   │   └── metadata.json        # Expected labels & imgsz
 │   └── ...
 └── edge_cases/                  # Edge case scenarios
     ├── low_light_0/             # Low light conditions
@@ -165,7 +167,21 @@ expected test layout:
   a background image is configured on the server)
 - Optional `snapshot_annotated.jpg` and `snapshot_clip.jpg` when available
 
-Extract the bundle under `tests/integration/test_data/` to add a new case.
+### Adding E2E Test Cases (Production Data)
+
+For full-visit E2E tests, it is recommended to pull directly from the production database to ensure real-world fidelity:
+
+1.  **Identify Observation**: Find a suitable observation ID in the dashboard or via SQL.
+2.  **Export**: Run the extraction script with the `--export-e2e` flag:
+    ```bash
+    # Extract observation 50 as a new E2E test case
+    HBMON_MEDIA_DIR=data/media uv run python scripts/extract_test_videos.py \
+      --observation-id 50 \
+      --export-e2e prod_pos_50 \
+      --roi-config data/config.json
+    ```
+    *   `--roi-config`: Strictly required for older observations that lack `roi_xyxy` metadata in the DB.
+3.  **Verify**: The script creates a folder in `tests/integration/test_data/e2e/` with `clip.mp4`, `config.json` (ROI), and `metadata.json` (expected labels/imgsz).
 
 ## Running Integration Tests
 

@@ -14,6 +14,11 @@ Environment Variables:
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Optional OpenVINO dependency
 # ---------------------------------------------------------------------------
@@ -47,7 +52,6 @@ def get_core() -> Core:
     
     if _CORE is None:
         import os
-        from pathlib import Path
         _CORE = Core()
         
         # Enable model caching for faster subsequent compilations
@@ -63,8 +67,7 @@ def get_core() -> Core:
         try:
             _CORE.set_property({"CACHE_DIR": cache_dir})
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"Failed to set OpenVINO CACHE_DIR: {e}")
+            logger.warning(f"Failed to set OpenVINO CACHE_DIR: {e}")
             
     return _CORE
 

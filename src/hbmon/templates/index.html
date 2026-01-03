@@ -97,26 +97,35 @@
     </form>
   </div>
 
-  <div class="table" style="margin-top:10px;">
+  <div class="table top-individuals-table" style="margin-top:10px;">
     <div class="row head">
       <div>ID</div>
       <div>Name</div>
       <div>Visits</div>
+      <div>Latest Species</div>
+      <div>First Seen</div>
       <div>Last seen ({{ timezone_label }})</div>
     </div>
 
     {% for r in top_inds %}
-    {# r = (id, name, visits, last_seen_utc) #}
-    {% set hue = (r[0] * 47) % 360 %}
+    {% set hue = (r.id * 47) % 360 %}
     <div class="row">
-      <div>{{ r[0] }}</div>
+      <div>{{ r.id }}</div>
       <div>
-        <a href="/individuals/{{ r[0] }}">
-          <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ r[1] }}</span>
+        <a href="/individuals/{{ r.id }}">
+          <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ r.name }}</span>
         </a>
       </div>
-      <div>{{ r[2] }}</div>
-      <div><span data-utc-ts="{{ r[3] or '' }}">{{ r[3] or "" }}</span></div>
+      <div>{{ r.visit_count }}</div>
+      <div>
+        {% if r.last_species %}
+        <span class="badge {{ r.species_css|default('') }}">{{ r.last_species }}</span>
+        {% else %}
+        <span class="muted">—</span>
+        {% endif %}
+      </div>
+      <div><span data-utc-ts="{{ r.created_at or '' }}">{{ r.created_at or "" }}</span></div>
+      <div><span data-utc-ts="{{ r.last_seen_at or '' }}">{{ r.last_seen_at or "" }}</span></div>
     </div>
     {% endfor %}
   </div>

@@ -86,8 +86,8 @@ When adding code that uses optional dependencies:
 
 - **pytest** with **pytest-cov** for coverage
 - Tests are in `tests/` directory
-- Run tests: `uv run pytest -n auto --verbose` or `pytest -n auto --verbose`
-- Run with coverage: `uv run pytest -n auto --verbose --cov=hbmon --cov-report=term --cov-report=html`
+- Run tests: `uv run pytest -n 2 --verbose` or `pytest -n 2 --verbose`
+- Run with coverage: `uv run pytest -n 2 --verbose --cov=hbmon --cov-report=term --cov-report=html`
 
 ### Test Principles
 
@@ -142,7 +142,7 @@ uv venv
 uv pip install -e ".[dev]" --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
 
 # Run tests
-uv run pytest -n auto --verbose -q
+uv run pytest -n 2 --verbose -q
 
 # Run web server (development mode)
 uv run uvicorn hbmon.web:app --reload --host 0.0.0.0 --port 8000
@@ -370,7 +370,7 @@ The config UI (`/config`) exposes the following grouped settings:
 
 2. **Run Full Test Suite:**
    ```bash
-   UV_INDEX_URL=https://download.pytorch.org/whl/cpu UV_EXTRA_INDEX_URL=https://pypi.org/simple uv run pytest -n auto --verbose --cov=hbmon --cov-report=term
+   UV_INDEX_URL=https://download.pytorch.org/whl/cpu UV_EXTRA_INDEX_URL=https://pypi.org/simple uv run pytest -n 2 --verbose --cov=hbmon --cov-report=term
    ```
 
 3. **Verify:**
@@ -505,7 +505,7 @@ When in doubt:
 - Review test files for examples
 - **If you modify user-facing functionality, configuration, or setup: UPDATE THE README**
 - **ALWAYS run `UV_INDEX_URL=https://download.pytorch.org/whl/cpu UV_EXTRA_INDEX_URL=https://pypi.org/simple uv run ruff check .` before committing**
-- **ALWAYS run `UV_INDEX_URL=https://download.pytorch.org/whl/cpu UV_EXTRA_INDEX_URL=https://pypi.org/simple uv run pytest -n auto --verbose --cov=hbmon` before committing**
+- **ALWAYS run `UV_INDEX_URL=https://download.pytorch.org/whl/cpu UV_EXTRA_INDEX_URL=https://pypi.org/simple uv run pytest -n 2 --verbose --cov=hbmon` before committing**
 - Use these commands to ensure changes don't break tests or violate code style
 
 ## Video Storage and Streaming

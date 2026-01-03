@@ -17,6 +17,8 @@ jobs:
         python-version: ['3.11', '3.12']
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          lfs: true
 
       - name: Set up Python
         uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
@@ -42,12 +44,12 @@ jobs:
       # Run unit tests (non-integration) with coverage in parallel
       - name: Unit Tests
         run: |
-          uv run pytest -m "not integration" -n auto --cov=hbmon --cov-report=term
+          uv run pytest -m "not integration" -n 2 --cov=hbmon --cov-report=term
 
       # Run integration tests with coverage (appends to existing coverage data) in parallel
       - name: Integration Tests
         run: |
-          uv run pytest -m "integration" -n auto --cov=hbmon --cov-append --cov-report=term
+          uv run pytest -m "integration" -n 2 --cov=hbmon --cov-append --cov-report=term
 
       # Generate combined coverage report (XML for PR comment, term for logs)
       # The coverage report includes an 80% threshold (non-critical - does not fail the build)
