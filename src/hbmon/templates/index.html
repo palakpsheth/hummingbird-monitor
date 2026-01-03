@@ -119,7 +119,7 @@
       <div>{{ r.visit_count }}</div>
       <div>
         {% if r.last_species %}
-        <span class="badge {{ r.species_css }}">{{ r.last_species }}</span>
+        <span class="badge {{ r.species_css|default('') }}">{{ r.last_species }}</span>
         {% else %}
         <span class="muted">—</span>
         {% endif %}
