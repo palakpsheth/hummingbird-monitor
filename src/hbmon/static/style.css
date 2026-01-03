@@ -447,6 +447,8 @@ a:hover {
 .ind-pill {
   border-color: color-mix(in srgb, hsl(var(--ind-hue) 80% 60%) 55%, var(--border));
   background: color-mix(in srgb, hsl(var(--ind-hue) 80% 60%) 16%, transparent);
+  padding: 1px 7px;
+  font-size: 11px;
 }
 
 /* ───────────────────────── Image Galleries ───────────────────────── */
@@ -468,10 +470,8 @@ a:hover {
   border: 1px solid var(--border);
   border-radius: 14px;
   overflow: hidden;
-}
-
-.thumb-media {
   position: relative;
+  /* For stable status badge placement */
 }
 
 .thumb img {
@@ -483,19 +483,20 @@ a:hover {
 
 .thumb-status-badge {
   position: absolute;
-  right: 10px;
-  bottom: 10px;
-  width: 32px;
-  height: 32px;
+  right: 8px;
+  bottom: 8px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   letter-spacing: 0.02em;
   color: #fff;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  z-index: 2;
 }
 
 .thumb-status-badge--tp {
@@ -514,6 +515,8 @@ a:hover {
   padding: 10px;
   font-size: 13px;
   color: var(--muted);
+  position: relative;
+  /* Added for badge positioning */
 }
 
 .thumb-metrics {

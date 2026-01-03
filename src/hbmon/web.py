@@ -564,11 +564,10 @@ def _extract_observation_metrics(obs: Observation) -> tuple[Any | None, Any | No
         detection = extra.get("detection")
         if isinstance(detection, dict):
             detection_confidence = detection.get("box_confidence")
-        media = extra.get("media")
-        if isinstance(media, dict):
-            video = media.get("video")
-            if isinstance(video, dict):
-                video_duration = video.get("duration")
+        # Confirmed: duration is stored under 'video' key at top level
+        video = extra.get("video")
+        if isinstance(video, dict):
+            video_duration = video.get("duration")
     return detection_confidence, video_duration
 
 
