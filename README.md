@@ -798,6 +798,18 @@ Run the worker locally (requires RTSP access from your host):
 HBMON_RTSP_URL="rtsp://..." uv run python -m hbmon.worker
 ```
 
+### Notebook: YOLO image annotation
+
+If you want to compare YOLO model sizes against a single image using hbmon-style defaults,
+open the standalone notebook:
+
+```bash
+uv run jupyter lab notebooks/yolo_image_annotation.ipynb
+```
+
+Update the `image_path` in the notebook and optionally enable `save_outputs` to write annotated
+images to disk.
+
 ---
 
 ## 🤖 GitHub Actions CI
