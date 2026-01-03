@@ -71,6 +71,8 @@ filterwarnings = [
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning:uvicorn.protocols.websockets.websockets_impl",
     # Ignore PyTorch tracer warnings from ultralytics YOLO (external dependency)
     "ignore:Iterating over a tensor might cause the trace to be incorrect:torch.jit.TracerWarning:ultralytics.utils.tal",
+    # Ignore aiosqlite event loop deprecation warning (external dependency)
+    "ignore:There is no current event loop:DeprecationWarning:aiosqlite.core",
 ]
 
 [tool.coverage.report]
