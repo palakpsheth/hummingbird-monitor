@@ -248,7 +248,7 @@ a:hover {
 }
 
 .top-individuals-table .row {
-  grid-template-columns: 60px minmax(120px, 1fr) 84px 184px auto auto;
+  grid-template-columns: 60px minmax(120px, 1fr) 84px 184px minmax(150px, 1fr) minmax(170px, 1fr);
   align-items: center;
   gap: 16px;
   padding: 10px 16px;
