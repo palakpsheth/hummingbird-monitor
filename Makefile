@@ -25,9 +25,11 @@ venv: ## Create a uv virtual environment (.venv)
 
 sync: ## Sync dev dependencies from pyproject.toml
 	$(UV) pip install -e ".[dev]" --index-url $(PYTORCH_INDEX_URL) --extra-index-url https://pypi.org/simple
+	$(UV_RUN) playwright install --with-deps chromium
 
 sync-gpu: ## Sync dev dependencies with CUDA-enabled PyTorch wheels
 	$(UV) pip install -e ".[dev]" --index-url $(PYTORCH_GPU_INDEX_URL) --extra-index-url https://pypi.org/simple
+	$(UV_RUN) playwright install --with-deps chromium
 
 lint: ## Run Ruff linting
 	$(RUFF) check --fix .
