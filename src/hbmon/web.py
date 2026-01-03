@@ -578,6 +578,20 @@ def _normalize_candidate_label(raw: str | None) -> str:
     return clean
 
 
+def _resolve_stream_quality(quality: str | None) -> tuple[str, int, str]:
+    preset = os.getenv("HBMON_VIDEO_PRESET", "fast")
+    default_crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
+    normalized = (quality or "auto").strip().lower()
+    crf_map = {
+        "high": 18,
+        "balanced": 23,
+        "low": 28,
+    }
+    if normalized in crf_map:
+        return normalized, crf_map[normalized], preset
+    return "auto", default_crf, preset
+
+
 async def select_prototype_observations(
     db: AsyncSession | _AsyncSessionAdapter,
     individual_ids: list[int],
@@ -3274,6 +3288,7 @@ def make_app() -> Any:
     async def stream_video(
         obs_id: int,
         request: Request,
+        quality: str | None = None,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> Any:
         """
@@ -3321,8 +3336,7 @@ def make_app() -> Any:
         import hashlib
         
         # Create cache key from observation ID and compression settings
-        crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
-        preset = os.getenv("HBMON_VIDEO_PRESET", "fast")  # Use "fast" for on-the-fly to reduce latency
+        _, crf, preset = _resolve_stream_quality(quality)
         cache_key = f"{obs_id}_{crf}_{preset}"
         cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
         
@@ -3404,6 +3418,7 @@ def make_app() -> Any:
     @app.get("/api/streaming_bitrate/{obs_id}")
     async def streaming_bitrate(
         obs_id: int,
+        quality: str | None = None,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> dict[str, Any]:
         """
@@ -3426,8 +3441,7 @@ def make_app() -> Any:
         
         # Get cached compressed video path
         import hashlib
-        crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
-        preset = os.getenv("HBMON_VIDEO_PRESET", "fast")
+        _, crf, preset = _resolve_stream_quality(quality)
         cache_key = f"{obs_id}_{crf}_{preset}"
         cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
         

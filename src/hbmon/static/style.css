@@ -1225,6 +1225,30 @@ button:hover {
   font-size: 0.9em;
 }
 
+/* ───────────────────────── Video Stream Quality ───────────────────────── */
+
+.video-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 6px 0 8px;
+}
+
+.stream-quality {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9em;
+}
+
+.stream-quality select {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text);
+  font-size: 0.9em;
+}
+
 /* ───────────────────────── Config Page Groups ───────────────────────── */
 
 .config-group {
