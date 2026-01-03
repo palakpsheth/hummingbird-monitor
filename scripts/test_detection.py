@@ -115,8 +115,12 @@ def query_observation(obs_id: int | None = None, limit: int = 1) -> list[dict]:
             if row[9]:
                 try:
                     extra = json.loads(row[9]) if isinstance(row[9], str) else row[9]
-                except Exception:
-                    pass
+                except (json.JSONDecodeError, TypeError) as exc:
+                    print(
+                        f"WARNING: Failed to parse extra_json for observation {row[0]}: {exc}",
+                        file=sys.stderr,
+                    )
+                    extra = None
             # Extract ROI path from snapshots metadata if available
             roi_path = None
             if extra and isinstance(extra, dict):
