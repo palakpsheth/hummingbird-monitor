@@ -21,17 +21,18 @@ def mock_cv2_for_jpeg(monkeypatch):
     """
     Fixture to mock cv2 for JPEG encoding tests.
     
-    Returns a tuple of (captured_params, encoded_data) where:
+    Returns a tuple of (captured_params, encoded_data, fake_cv2) where:
     - captured_params: list that captures the parameters passed to cv2.imencode
     - encoded_data: the fake JPEG data that will be returned
+    - fake_cv2: the mocked cv2 module with IMWRITE_JPEG_QUALITY constant
     
     The fixture also sets up the monkeypatch for _CV2_AVAILABLE and cv2 module.
     
     Usage:
         def test_something(mock_cv2_for_jpeg):
-            captured_params, encoded_data = mock_cv2_for_jpeg
+            captured_params, encoded_data, fake_cv2 = mock_cv2_for_jpeg
             # ... test code ...
-            assert captured_params == [[...]]
+            assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 95]]
     """
     monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
     
@@ -61,7 +62,13 @@ def mock_cv2_for_jpeg_failure(monkeypatch):
     
     Returns a tuple of (captured_params, fake_cv2) where:
     - captured_params: list that captures the parameters passed to cv2.imencode
-    - fake_cv2: the mocked cv2 module
+    - fake_cv2: the mocked cv2 module with IMWRITE_JPEG_QUALITY constant
+    
+    Usage:
+        def test_something(mock_cv2_for_jpeg_failure):
+            captured_params, fake_cv2 = mock_cv2_for_jpeg_failure
+            # ... test code ...
+            assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 95]]
     """
     monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
     
