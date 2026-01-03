@@ -43,6 +43,7 @@ try:
     # Attempt to import SQLAlchemy.  If it is unavailable this import will
     # raise ImportError and we will fall back to stubs.
     from sqlalchemy import (
+        Boolean,
         DateTime,
         Float,
         ForeignKey,
@@ -57,7 +58,7 @@ try:
     from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship  # type: ignore
     _SQLALCHEMY_AVAILABLE = True
 except Exception:  # pragma: no cover - executed when SQLAlchemy missing
-    DateTime = Float = ForeignKey = Integer = LargeBinary = String = Text = UniqueConstraint = Index = None  # type: ignore
+    Boolean = DateTime = Float = ForeignKey = Integer = LargeBinary = String = Text = UniqueConstraint = Index = None  # type: ignore
     DeclarativeBase = object  # type: ignore
     Mapped = mapped_column = relationship = None  # type: ignore
     _SQLALCHEMY_AVAILABLE = False
@@ -70,6 +71,9 @@ __all__ = [
     "Observation",
     "Candidate",
     "Embedding",
+    "AnnotationFrame",
+    "AnnotationBox",
+    "PipelineRun",
     "_pack_embedding",
     "_unpack_embedding",
 ]
@@ -425,6 +429,109 @@ if _SQLALCHEMY_AVAILABLE:
 
         def get_vec(self) -> np.ndarray:
             return _unpack_embedding(self.embedding_blob)
+
+    class AnnotationFrame(Base):
+        """
+        Per-frame annotation state for an observation.
+
+        Tracks whether a bird is present in the frame and the review status.
+        Each observation can have many frames extracted from its video clip.
+        """
+        __tablename__ = "annotation_frames"
+        __table_args__ = (
+            Index("ix_annotation_frames_obs_id", "observation_id"),
+            Index("ix_annotation_frames_status", "status"),
+        )
+
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+        observation_id: Mapped[int] = mapped_column(
+            Integer,
+            ForeignKey("observations.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+        frame_index: Mapped[int] = mapped_column(Integer, nullable=False)
+        frame_path: Mapped[str] = mapped_column(String(512), nullable=False)
+        label_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+        # Ground truth: is there a bird visible in this frame?
+        bird_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+        # Workflow status: queued, auto, in_review, complete
+        status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+
+        # Review tracking
+        reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+        updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+        reviewer: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+        # Relationships
+        boxes: Mapped[list["AnnotationBox"]] = relationship(
+            back_populates="frame",
+            cascade="all, delete-orphan",
+            passive_deletes=True,
+        )
+
+    class AnnotationBox(Base):
+        """
+        Per-box annotation within a frame.
+
+        Each box represents a detected object (bird). The is_false_positive flag
+        indicates whether this detection was marked as incorrect during review,
+        which is used for hard-negative mining.
+        """
+        __tablename__ = "annotation_boxes"
+        __table_args__ = (
+            Index("ix_annotation_boxes_frame_id", "frame_id"),
+        )
+
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+        frame_id: Mapped[int] = mapped_column(
+            Integer,
+            ForeignKey("annotation_frames.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+
+        # YOLO-format normalized coordinates (center x, center y, width, height)
+        class_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0=bird
+        x: Mapped[float] = mapped_column(Float, nullable=False)  # center x (0-1)
+        y: Mapped[float] = mapped_column(Float, nullable=False)  # center y (0-1)
+        w: Mapped[float] = mapped_column(Float, nullable=False)  # width (0-1)
+        h: Mapped[float] = mapped_column(Float, nullable=False)  # height (0-1)
+
+        # False positive flag for hard-negative mining
+        is_false_positive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+        # Source: auto (from YOLO) or manual (user-drawn)
+        source: Mapped[str] = mapped_column(String(32), nullable=False, default="auto")
+
+        # Relationship
+        frame: Mapped["AnnotationFrame"] = relationship(back_populates="boxes")
+
+    class PipelineRun(Base):
+        """
+        Tracks training pipeline execution.
+
+        Records which observations were included/excluded, timing, and log paths.
+        """
+        __tablename__ = "pipeline_runs"
+
+        id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+        started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+        completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+        # Status: running, completed, failed
+        status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+
+        # Path to run log
+        log_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+        # Observation counts
+        observations_included: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+        observations_excluded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+        # Hard negative stats
+        hard_negatives_exported: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
 else:
     # -----------------------------------------------------------------------
     # Dataclass-based stubs when SQLAlchemy is unavailable
@@ -605,3 +712,53 @@ else:
 
         def get_vec(self) -> np.ndarray:
             return _unpack_embedding(self.embedding_blob)
+
+    @dataclass
+    class AnnotationFrame(Base):
+        """
+        Lightweight stand-in for the ``AnnotationFrame`` model used when
+        SQLAlchemy is unavailable.
+        """
+        id: int
+        observation_id: int
+        frame_index: int
+        frame_path: str
+        label_path: Optional[str] = None
+        bird_present: bool = False
+        status: str = "queued"
+        reviewed_at: Optional[datetime] = None
+        updated_at: datetime = field(default_factory=utcnow)
+        reviewer: Optional[str] = None
+        boxes: List["AnnotationBox"] = field(default_factory=list)
+
+    @dataclass
+    class AnnotationBox(Base):
+        """
+        Lightweight stand-in for the ``AnnotationBox`` model used when
+        SQLAlchemy is unavailable.
+        """
+        id: int
+        frame_id: int
+        class_id: int = 0
+        x: float = 0.0
+        y: float = 0.0
+        w: float = 0.0
+        h: float = 0.0
+        is_false_positive: bool = False
+        source: str = "auto"
+        frame: Optional["AnnotationFrame"] = None
+
+    @dataclass
+    class PipelineRun(Base):
+        """
+        Lightweight stand-in for the ``PipelineRun`` model used when
+        SQLAlchemy is unavailable.
+        """
+        id: int
+        started_at: datetime = field(default_factory=utcnow)
+        completed_at: Optional[datetime] = None
+        status: str = "running"
+        log_path: Optional[str] = None
+        observations_included: int = 0
+        observations_excluded: int = 0
+        hard_negatives_exported: int = 0

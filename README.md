@@ -33,8 +33,8 @@ The web UI is optimized for 📱 **Android Chrome** and is intentionally **no-lo
 - [GPU acceleration (if available)](#-gpu-acceleration-if-available)
 - [Exports & backups](#-exports--backups)
 - [Local development (uv)](#-local-development-uv)
+- [Annotation Pipeline](#️-annotation-pipeline)
 - [GitHub Actions CI](#-github-actions-ci)
-- [License](#-license)
 - [Troubleshooting](#-troubleshooting)
 - [Current limitations (by design or early version)](#️-current-limitations-by-design-or-early-version)
 - [Where this can be improved next (ideas)](#-where-this-can-be-improved-next-ideas)
@@ -351,6 +351,25 @@ The table below maps `.env.example` variables to their defaults and whether they
 | `HBMON_DEBUG_SAVE_FRAMES` | `1` | No |
 | `HBMON_DEBUG_EVERY_SECONDS` | `30` | No |
 | `HBMON_YOLO_IMGSZ` | `auto` | No |
+
+**Annotation pipeline (model fine-tuning)**
+
+| Variable | Default | Hot reloadable via Config UI |
+| --- | --- | --- |
+| `HBMON_ANNOTATION_YOLO_MODEL` | `yolo11l.pt` | No |
+| `HBMON_ANNOTATION_USE_SAM` | `1` | No |
+| `HBMON_ANNOTATION_SAM_MODEL` | `sam_b` | No |
+| `HBMON_ANNOTATION_CONFIDENCE` | `0.15` | No |
+| `HBMON_ANNOTATION_BATCH_SIZE` | `8` | No |
+| `HBMON_ANNOTATION_QUEUE_ENABLED` | `1` | No |
+| `HBMON_ANNOTATION_AUTO_EXTRACT` | `0` | No |
+| `HBMON_ANNOTATION_BATCH_HOUR` | `3` | No |
+| `HBMON_ANNOTATION_EXTRACTION_TIMEOUT` | `30m` | No |
+| `HBMON_ANNOTATION_DETECTION_TIMEOUT` | `60m` | No |
+| `HBMON_ANNOTATION_PROPAGATION_TIMEOUT` | `5m` | No |
+| `HBMON_ANNOTATION_MAX_RETRIES` | `3` | No |
+| `HBMON_ANNOTATION_RETRY_DELAY` | `60` | No |
+| `HBMON_ANNOTATION_CHECKPOINT_INTERVAL` | `10` | No |
 
 ---
 
@@ -757,6 +776,52 @@ If GPU is unavailable, the worker automatically falls back:
 
 ### Notes on AMD GPUs
 - AMD GPU: ROCm can work for PyTorch, but it's platform-specific and often harder than NVIDIA on a mini PC.
+
+---
+
+## 🏷️ Annotation Pipeline
+
+The annotation pipeline enables frame-level labeling for model fine-tuning and hard-negative mining.
+
+### Features
+- **Frame extraction**: Extract frames from observation videos for annotation
+- **Manual review UI**: Canvas-based box editing with keyboard shortcuts (←→ nav, S save, B toggle bird)
+- **False-positive tagging**: Mark boxes as FP for hard-negative mining
+- **YOLO export**: Export annotated data in YOLO format with train/val split
+- **Training pipeline**: Gating logic blocks training if any observations have partial annotations
+
+### Workflow
+1. Navigate to **Annotate** tab → select an observation → click "Start Annotation"
+2. Review each frame: toggle "Bird present", draw/adjust boxes, mark false positives
+3. Save frames with keyboard shortcut `S` or button
+4. When complete, run the export script and train
+
+### API Endpoints
+### API Endpoints
+- `GET /api/annotate/{obs_id}/frames` - List frames for observation
+
+### Configuration (Environment Variables)
+
+The annotation worker runs in a separate container (`hbmon-annotator`) and can be configured independently:
+
+- `HBMON_ANNOTATION_YOLO_MODEL`: Model used for auto-detection (default: `yolo11l.pt`)
+- `HBMON_ANNOTATION_USE_SAM`: Enable SAM refinement (default: `1`)
+- `HBMON_ANNOTATION_SAM_MODEL`: SAM model variant (default: `sam_b`)
+- `HBMON_ANNOTATION_CONFIDENCE`: Lower confidence threshold for auto-detection (default: `0.15`)
+- `HBMON_YOLO_IMGSZ`: Image size for inference (default: `auto`)
+- `HBMON_ANNOTATOR_DEBUG`: Enable debug logging for the worker (default: `1`)
+
+- `GET /api/annotate/{obs_id}/frame/{frame_id}` - Get frame details with boxes
+- `POST /api/annotate/{obs_id}/frame/{frame_id}` - Save frame annotation
+- `GET /api/pipeline/status` - Check training eligibility
+- `POST /api/pipeline/run` - Trigger training pipeline (requires completed annotations)
+
+### Dataset Export
+```bash
+python scripts/build_yolo_dataset.py --output-dir /data/exports/yolo/dataset
+```
+
+See [Model Fine-Tuning Cookbook](docs/model_fine_tuning_cookbook.md) for complete training instructions.
 
 ---
 

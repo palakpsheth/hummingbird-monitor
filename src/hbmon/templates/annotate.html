@@ -1,0 +1,363 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="annotate-page">
+    <h1>Annotation Pipeline</h1>
+    <p class="muted">Review and annotate observation frames for model training.</p>
+
+    <!-- Help Section -->
+    <details class="help-section">
+        <summary>📖 How to Annotate</summary>
+        <div class="help-content">
+            <div class="help-grid">
+                <div class="help-item">
+                    <strong>1. Start Annotation</strong>
+                    <p>Click "Start Annotation" on any available observation. This extracts frames and runs
+                        auto-detection.</p>
+                </div>
+                <div class="help-item">
+                    <strong>2. Review Frames</strong>
+                    <p>Review each frame. The AI pre-draws bounding boxes around detected birds.</p>
+                </div>
+                <div class="help-item">
+                    <strong>3. Approve or Fix</strong>
+                    <p>If boxes look correct, tap "Approve". If not, adjust boxes or mark as False Positive.</p>
+                </div>
+                <div class="help-item">
+                    <strong>4. Train Model</strong>
+                    <p>Once all observations are reviewed, click "Start Training" to improve the detection model.</p>
+                </div>
+            </div>
+            <div class="help-edge-cases">
+                <strong>Edge Cases:</strong>
+                <ul>
+                    <li><strong>No bird detected:</strong> Uncheck "Bird present" and approve</li>
+                    <li><strong>Bird missed:</strong> Draw a new box around the bird</li>
+                    <li><strong>Wrong detection (leaf/shadow):</strong> Mark the box as "FP" (False Positive)</li>
+                    <li><strong>Box too big/small:</strong> Drag corners to resize, or delete and redraw</li>
+                    <li><strong>Multiple birds:</strong> Each bird should have its own box</li>
+                </ul>
+            </div>
+        </div>
+    </details>
+    <!-- Summary Stats -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">{{ summary.completed }}</div>
+            <div class="stat-label">Completed</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ summary.in_review }}</div>
+            <div class="stat-label">In Review</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ summary.preprocessing }}</div>
+            <div class="stat-label">Preprocessing</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ summary.available }}</div>
+            <div class="stat-label">Available</div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="annotate-filters">
+        <label>
+            Sort by:
+            <select id="sort-select" onchange="updateSort(this.value)">
+                <option value="pending" {% if sort=='pending' %}selected{% endif %}>Most Pending</option>
+                <option value="newest" {% if sort=='newest' %}selected{% endif %}>Newest First</option>
+                <option value="stale" {% if sort=='stale' %}selected{% endif %}>Most Stale</option>
+            </select>
+        </label>
+        <label>
+            Filter:
+            <select id="filter-select" onchange="updateFilter(this.value)">
+                <option value="all" {% if filter=='all' %}selected{% endif %}>All</option>
+                <option value="available" {% if filter=='available' %}selected{% endif %}>Available</option>
+                <option value="preprocessing" {% if filter=='preprocessing' %}selected{% endif %}>Preprocessing</option>
+                <option value="in_review" {% if filter=='in_review' %}selected{% endif %}>In Review</option>
+                <option value="completed" {% if filter=='completed' %}selected{% endif %}>Completed</option>
+            </select>
+        </label>
+    </div>
+
+    <!-- Training Pipeline Status -->
+    {% if can_train %}
+    <div class="training-ready">
+        <strong>✅ Ready for training</strong> — All included observations are fully labeled.
+        <a href="/api/pipeline/run" class="btn btn-primary">Start Training Pipeline</a>
+    </div>
+    {% elif has_partial %}
+    <div class="training-blocked">
+        <strong>⚠️ Training blocked</strong> — {{ partial_count }} observation(s) have partial annotations.
+        Complete or reset them before training.
+    </div>
+    {% else %}
+    <div class="training-info">
+        <strong>ℹ️ No annotated observations</strong> — Annotate at least one observation to enable training.
+    </div>
+    {% endif %}
+
+    <!-- Grouped Sections -->
+    {% if groups.in_review %}
+    <section class="annotate-section">
+        <h2>🔍 In Review ({{ groups.in_review | length }})</h2>
+        <p class="muted">Observations ready for manual review.</p>
+        <div class="obs-grid">
+            {% for obs in groups.in_review %}
+            {% include "_annotate_card.html" %}
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if groups.preprocessing %}
+    <section class="annotate-section">
+        <h2>⏳ Preprocessing ({{ groups.preprocessing | length }})</h2>
+        <p class="muted">Extracting frames and running auto-detection.</p>
+        <div class="obs-grid">
+            {% for obs in groups.preprocessing %}
+            {% include "_annotate_card.html" %}
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if groups.available %}
+    <section class="annotate-section">
+        <h2>📋 Available ({{ groups.available | length }})</h2>
+        <p class="muted">Observations that can be annotated. Click to start preprocessing.</p>
+        <div class="obs-grid">
+            {% for obs in groups.available %}
+            {% include "_annotate_card.html" %}
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if groups.completed %}
+    <section class="annotate-section">
+        <h2>✅ Completed ({{ groups.completed | length }})</h2>
+        <p class="muted">Fully annotated and ready for training.</p>
+        <div class="obs-grid">
+            {% for obs in groups.completed %}
+            {% include "_annotate_card.html" %}
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if not (groups.in_review or groups.preprocessing or groups.available or groups.completed) %}
+    <div class="empty-state">
+        <p>No observations found.</p>
+        <a href="/observations" class="btn">View Observations</a>
+    </div>
+    {% endif %}
+
+</div>
+
+<script>
+    function updateSort(value) {
+        const url = new URL(window.location);
+        url.searchParams.set('sort', value);
+        window.location = url;
+    }
+
+    function updateFilter(value) {
+        const url = new URL(window.location);
+        if (value === 'all') {
+            url.searchParams.delete('filter');
+        } else {
+            url.searchParams.set('filter', value);
+        }
+        window.location = url;
+    }
+
+    async function resetAnnotation(obsId, event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (!confirm('Reset annotation for Obs #' + obsId + '?\n\nThis will delete all extracted frames and boxes, allowing you to start fresh.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/annotate/' + obsId + '/reset', {
+                method: 'POST',
+            });
+
+            if (response.ok) {
+                window.location.reload();
+            } else {
+                const error = await response.json();
+                alert('Failed to reset: ' + (error.detail || 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Failed to reset: ' + e.message);
+        }
+    }
+</script>
+
+<style>
+    .annotate-page {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 1rem;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 1rem;
+        margin: 1.5rem 0;
+    }
+
+    .stat-card {
+        background: var(--surface);
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+    }
+
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--accent);
+    }
+
+    .stat-label {
+        font-size: 0.875rem;
+        color: var(--muted);
+        margin-top: 0.25rem;
+    }
+
+    .annotate-filters {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin: 1rem 0;
+    }
+
+    .annotate-filters label {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .annotate-filters select {
+        padding: 0.5rem;
+        border-radius: 4px;
+        background: var(--surface);
+        color: var(--text);
+        border: 1px solid var(--border);
+    }
+
+    .annotate-section {
+        margin: 2rem 0;
+    }
+
+    .annotate-section h2 {
+        margin-bottom: 0.5rem;
+    }
+
+    .obs-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+
+    .training-ready,
+    .training-blocked,
+    .training-info {
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+
+    .training-ready {
+        background: rgba(0, 200, 100, 0.1);
+        border: 1px solid rgba(0, 200, 100, 0.3);
+    }
+
+    .training-blocked {
+        background: rgba(255, 200, 0, 0.1);
+        border: 1px solid rgba(255, 200, 0, 0.3);
+    }
+
+    .training-info {
+        background: var(--surface);
+        border: 1px solid var(--border);
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 3rem;
+        color: var(--muted);
+    }
+
+    /* Help section styles */
+    .help-section {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        margin: 1rem 0;
+    }
+
+    .help-section summary {
+        padding: 0.75rem 1rem;
+        cursor: pointer;
+        font-weight: 600;
+    }
+
+    .help-content {
+        padding: 0 1rem 1rem;
+    }
+
+    .help-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .help-item {
+        background: var(--bg);
+        padding: 0.75rem;
+        border-radius: 6px;
+    }
+
+    .help-item strong {
+        display: block;
+        margin-bottom: 0.25rem;
+    }
+
+    .help-item p {
+        font-size: 0.875rem;
+        color: var(--muted);
+        margin: 0;
+    }
+
+    .help-edge-cases {
+        background: rgba(255, 200, 0, 0.1);
+        padding: 0.75rem;
+        border-radius: 6px;
+    }
+
+    .help-edge-cases ul {
+        margin: 0.5rem 0 0 1.25rem;
+        padding: 0;
+    }
+
+    .help-edge-cases li {
+        font-size: 0.875rem;
+        margin-bottom: 0.25rem;
+    }
+</style>
+{% endblock %}

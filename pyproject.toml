@@ -31,6 +31,10 @@ dependencies = [
   "torchvision>=0.17,<1",
   "open-clip-torch>=2.20,<4",
   "pillow>=10,<13",
+
+  # Background job processing
+  "rq>=1.16,<2",
+  "rq-scheduler>=0.13,<1",
 ]
 
 # MOVED FROM [project.optional-dependencies] to [dependency-groups]

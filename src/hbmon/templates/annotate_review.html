@@ -1,0 +1,1387 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="annotate-review-page">
+    <div class="review-header">
+        <a href="/annotate" class="back-link">← Back to Annotation</a>
+        <h1>Review Observation #{{ observation.id }}</h1>
+        <div class="review-meta">
+            <span class="species">{{ observation.species_label }}</span>
+            <span class="timestamp" data-timestamp="{{ observation.ts_utc }}">{{ observation.ts_utc }}</span>
+        </div>
+        <!-- Compact help - desktop -->
+        <div class="review-help desktop-only">
+            <strong>Quick Guide:</strong>
+            Draw box = Click & drag | Select = Click box | Move = Drag selected | FP = Check "FP" |
+            Delete = Select + Delete key | No bird = Uncheck "Bird present"
+        </div>
+        <!-- Compact help - mobile -->
+        <div class="review-help mobile-help">
+            <strong>📱</strong> Swipe ←→ to navigate | Long-press box for FP | Use buttons below
+        </div>
+    </div>
+
+    <div class="review-layout">
+        <!-- Frame list sidebar (collapses on mobile) -->
+        <aside class="frame-list-sidebar" id="frameSidebar">
+            <div class="frame-list-header">
+                <h3>Frames</h3>
+                <div class="frame-filter">
+                    <button class="btn-sm" data-filter="all" onclick="filterFrames('all')">All</button>
+                    <button class="btn-sm" data-filter="pending" onclick="filterFrames('pending')">Pending</button>
+                    <button class="btn-sm" data-filter="reviewed" onclick="filterFrames('reviewed')">Done</button>
+                </div>
+            </div>
+            <div class="frame-list" id="frameList">
+                {% for frame in frames %}
+                <div class="frame-item {{ 'active' if frame.id == current_frame.id else '' }}"
+                    data-frame-id="{{ frame.id }}" data-status="{{ frame.status }}" onclick="loadFrame({{ frame.id }})">
+                    <img src="{{ frame.thumbnail_url }}" alt="Frame {{ frame.frame_index }}" loading="lazy" />
+                    <div class="frame-info">
+                        <span class="frame-index">#{{ frame.frame_index + 1 }}</span>
+                        <span class="frame-status {{ 'reviewed' if frame.status == 'complete' else 'pending' }}">
+                            {{ '✓' if frame.status == 'complete' else '○' }}
+                        </span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="frame-progress">
+                <div class="progress-bar">
+                    <div class="progress-fill"
+                        style="width: {{ (frames_reviewed / frames_total * 100) if frames_total > 0 else 0 }}%"></div>
+                </div>
+                <span>{{ frames_reviewed }} / {{ frames_total }} reviewed</span>
+            </div>
+        </aside>
+
+        <!-- Mobile sidebar toggle -->
+        <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">
+            <span>Frames</span>
+            <span class="badge">{{ frames_reviewed }}/{{ frames_total }}</span>
+        </button>
+
+        <!-- Main editor -->
+        <main class="editor-main">
+            <div class="canvas-container" id="canvasContainer">
+                <canvas id="annotationCanvas"></canvas>
+                <img id="frameImage" src="{{ current_frame.image_url if current_frame else '' }}" alt="Frame"
+                    crossorigin="anonymous" style="max-width: 100%; height: auto; display: block;" />
+            </div>
+
+            <!-- Desktop controls -->
+            <div class="editor-controls desktop-only">
+                <div class="truth-toggle">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="birdPresent" {{ 'checked' if current_frame and
+                            current_frame.bird_present else '' }} onchange="toggleBirdPresent()" />
+                        <span class="toggle-text">Bird present</span>
+                    </label>
+                </div>
+
+                <div class="box-list" id="boxList">
+                    <h4>Boxes</h4>
+                    <div id="boxItems"></div>
+                    <button class="btn btn-sm" onclick="addBox()">+ Add</button>
+                </div>
+
+                <div class="action-buttons">
+                    <button class="btn" onclick="resetToAuto()">Reset</button>
+                    <button class="btn" onclick="clearBoxes()">Clear</button>
+                    <button class="btn btn-primary" onclick="saveFrame()">Save</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Mobile action bar (fixed bottom, thumb-zone optimized) -->
+    <div class="mobile-action-bar">
+        <!-- Swipe hint at top -->
+        <div class="swipe-hint" id="swipeHint">
+            <span class="swipe-arrow left">← Prev</span>
+            <span class="frame-counter" id="frameCounter">1 / {{ frames_total }}</span>
+            <span class="swipe-arrow right">Next →</span>
+        </div>
+
+        <!-- Quick actions row - thumb reachable -->
+        <div class="quick-actions-row">
+            <button class="quick-action-btn" onclick="toggleBirdPresent()" id="birdToggleBtn">
+                <span class="icon">🐦</span>
+                <span class="label" id="birdToggleLabel">Bird: {{ 'Yes' if current_frame and current_frame.bird_present
+                    else 'No' }}</span>
+            </button>
+            <button class="quick-action-btn" onclick="markAllFP()">
+                <span class="icon">✗</span>
+                <span class="label">All FP</span>
+            </button>
+            <button class="quick-action-btn" onclick="toggleSidebar()">
+                <span class="icon">📋</span>
+                <span class="label" id="boxCountLabel">0 boxes</span>
+            </button>
+        </div>
+
+        <!-- Main action buttons - large, right-aligned for right thumb -->
+        <div class="main-actions-row">
+            <button class="action-btn secondary" onclick="skipFrame()">
+                Skip
+            </button>
+            <button class="action-btn primary" id="primaryActionBtn" onclick="executePrimaryAction()">
+                ✓ Approve
+            </button>
+        </div>
+
+        <!-- Floating action menu (slides up) -->
+        <div class="floating-menu" id="actionMenu">
+            <div class="menu-handle" onclick="toggleActionMenu()"></div>
+            <div class="menu-options">
+                <button class="menu-option" data-action="approve-advance" onclick="setAction('approve-advance')">
+                    <span class="opt-icon">✓</span> Approve & Next
+                </button>
+                <button class="menu-option" data-action="approve-only" onclick="setAction('approve-only')">
+                    <span class="opt-icon">✓</span> Approve Only
+                </button>
+                <button class="menu-option" data-action="mark-fp-advance" onclick="setAction('mark-fp-advance')">
+                    <span class="opt-icon">✗</span> All FP & Next
+                </button>
+                <button class="menu-option" data-action="no-bird-advance" onclick="setAction('no-bird-advance')">
+                    <span class="opt-icon">○</span> No Bird & Next
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating menu toggle (bottom right corner - thumb zone) -->
+    <button class="fab-menu-toggle" id="fabMenuToggle" onclick="toggleActionMenu()">⋮</button>
+
+    <!-- Toast notification -->
+    <div class="toast" id="toast"></div>
+
+    <!-- Desktop keyboard shortcuts -->
+    <div class="keyboard-shortcuts desktop-only">
+        <span>Shortcuts:</span>
+        <kbd>←</kbd> Prev
+        <kbd>→</kbd> Next
+        <kbd>S</kbd> Save
+        <kbd>A</kbd> Approve & Advance
+        <kbd>K</kbd> Skip
+        <kbd>B</kbd> Toggle Bird
+    </div>
+</div>
+
+<script>
+    const observationId = {{ observation.id }};
+    let currentFrameId = {{ current_frame.id if current_frame else 'null' }};
+    let boxes = {{ current_frame.boxes | tojson if current_frame else '[]' }};
+    let birdPresent = {{ 'true' if current_frame and current_frame.bird_present else 'false' }};
+
+    const canvas = document.getElementById('annotationCanvas');
+    const ctx = canvas.getContext('2d');
+    const img = document.getElementById('frameImage');
+
+    // Primary action state (persisted in localStorage)
+    let primaryAction = localStorage.getItem('annotationPrimaryAction') || 'approve-advance';
+    updatePrimaryActionButton();
+
+    // Touch state
+    let isTouchDevice = 'ontouchstart' in window;
+    let touchStartX, touchStartY;
+    let selectedBoxIndex = -1;
+
+    // Canvas setup
+    function setupCanvas() {
+        if (!img.complete) return;
+
+        const container = document.getElementById('canvasContainer');
+        const containerRect = container.getBoundingClientRect();
+
+        // Scale canvas to fit container while maintaining aspect ratio
+        const imgAspect = img.naturalWidth / img.naturalHeight;
+        const containerAspect = containerRect.width / containerRect.height;
+
+        let displayWidth, displayHeight;
+        if (imgAspect > containerAspect) {
+            displayWidth = containerRect.width;
+            displayHeight = displayWidth / imgAspect;
+        } else {
+            displayHeight = containerRect.height;
+            displayWidth = displayHeight * imgAspect;
+        }
+
+        canvas.style.width = displayWidth + 'px';
+        canvas.style.height = displayHeight + 'px';
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+
+        img.style.width = displayWidth + 'px';
+        img.style.height = displayHeight + 'px';
+
+        drawBoxes();
+    }
+
+    img.onload = setupCanvas;
+    window.addEventListener('resize', setupCanvas);
+    setupCanvas();
+
+    // Drawing
+    function drawBoxes() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        boxes.forEach((box, idx) => {
+            const x = (box.x - box.w / 2) * canvas.width;
+            const y = (box.y - box.h / 2) * canvas.height;
+            const w = box.w * canvas.width;
+            const h = box.h * canvas.height;
+
+            const isSelected = idx === selectedBoxIndex;
+            ctx.strokeStyle = box.is_false_positive ? '#ff6b6b' : (isSelected ? '#fff' : '#4ecdc4');
+            ctx.lineWidth = isSelected ? 4 : 3;
+            ctx.strokeRect(x, y, w, h);
+
+            ctx.fillStyle = box.is_false_positive ? 'rgba(255,107,107,0.2)' : 'rgba(78,205,196,0.2)';
+            ctx.fillRect(x, y, w, h);
+
+            // Label
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.fillText(`#${idx + 1}${box.is_false_positive ? ' (FP)' : ''}`, x + 4, y + 20);
+
+            // Draw resize handles for selected box
+            if (isSelected) {
+                drawResizeHandles(x, y, w, h);
+            }
+        });
+        updateBoxList();
+        updateBoxCount();
+    }
+
+    function drawResizeHandles(x, y, w, h) {
+        const handleSize = isTouchDevice ? 24 : 12;
+        ctx.fillStyle = '#fff';
+        // Corners
+        ctx.fillRect(x - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
+        ctx.fillRect(x + w - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
+        ctx.fillRect(x - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
+        ctx.fillRect(x + w - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
+    }
+
+    function updateBoxList() {
+        const container = document.getElementById('boxItems');
+        if (!container) return;
+        container.innerHTML = boxes.map((box, idx) => `
+            <div class="box-item ${box.is_false_positive ? 'false-positive' : ''} ${idx === selectedBoxIndex ? 'selected' : ''}"
+                 onclick="selectBox(${idx})">
+                <span>Box #${idx + 1}</span>
+                <label onclick="event.stopPropagation()">
+                    <input type="checkbox" ${box.is_false_positive ? 'checked' : ''} onchange="toggleFP(${idx})"> FP
+                </label>
+                <button class="btn-sm" onclick="event.stopPropagation(); deleteBox(${idx})">×</button>
+            </div>
+        `).join('');
+    }
+
+    function updateBoxCount() {
+        const countEl = document.getElementById('boxCount');
+        if (countEl) {
+            const fpCount = boxes.filter(b => b.is_false_positive).length;
+            const realCount = boxes.length - fpCount;
+            countEl.textContent = `${realCount} box${realCount !== 1 ? 'es' : ''}${fpCount ? ` (+${fpCount} FP)` : ''}`;
+        }
+    }
+
+    // Mouse events
+    let isDrawing = false;
+    let isDragging = false;
+    let isResizing = false;
+    let startX, startY;
+    let dragOffset = { x: 0, y: 0 };
+
+    function getCanvasCoords(e) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        let clientX, clientY;
+        if (e.touches) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+
+        return {
+            x: (clientX - rect.left) * scaleX,
+            y: (clientY - rect.top) * scaleY
+        };
+    }
+
+    function findBoxAtPoint(px, py) {
+        for (let i = boxes.length - 1; i >= 0; i--) {
+            const box = boxes[i];
+            const x1 = (box.x - box.w / 2) * canvas.width;
+            const y1 = (box.y - box.h / 2) * canvas.height;
+            const x2 = x1 + box.w * canvas.width;
+            const y2 = y1 + box.h * canvas.height;
+
+            if (px >= x1 && px <= x2 && py >= y1 && py <= y2) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    canvas.addEventListener('mousedown', handlePointerDown);
+    canvas.addEventListener('mousemove', handlePointerMove);
+    canvas.addEventListener('mouseup', handlePointerUp);
+
+    // Touch events
+    canvas.addEventListener('touchstart', handlePointerDown, { passive: false });
+    canvas.addEventListener('touchmove', handlePointerMove, { passive: false });
+    canvas.addEventListener('touchend', handlePointerUp, { passive: false });
+
+    function handlePointerDown(e) {
+        e.preventDefault();
+        const coords = getCanvasCoords(e);
+        startX = coords.x;
+        startY = coords.y;
+
+        // Check if clicking on existing box
+        const boxIdx = findBoxAtPoint(coords.x, coords.y);
+        if (boxIdx >= 0) {
+            selectedBoxIndex = boxIdx;
+            isDragging = true;
+            const box = boxes[boxIdx];
+            dragOffset.x = coords.x - box.x * canvas.width;
+            dragOffset.y = coords.y - box.y * canvas.height;
+        } else {
+            selectedBoxIndex = -1;
+            isDrawing = true;
+        }
+        drawBoxes();
+    }
+
+    function handlePointerMove(e) {
+        e.preventDefault();
+        const coords = getCanvasCoords(e);
+
+        if (isDragging && selectedBoxIndex >= 0) {
+            // Move selected box
+            const box = boxes[selectedBoxIndex];
+            box.x = (coords.x - dragOffset.x) / canvas.width;
+            box.y = (coords.y - dragOffset.y) / canvas.height;
+            // Clamp to canvas
+            box.x = Math.max(box.w / 2, Math.min(1 - box.w / 2, box.x));
+            box.y = Math.max(box.h / 2, Math.min(1 - box.h / 2, box.y));
+            drawBoxes();
+        } else if (isDrawing) {
+            // Draw new box preview
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBoxes();
+
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.strokeRect(startX, startY, coords.x - startX, coords.y - startY);
+            ctx.setLineDash([]);
+        }
+    }
+
+    function handlePointerUp(e) {
+        if (isDrawing) {
+            const coords = getCanvasCoords(e);
+            const w = Math.abs(coords.x - startX);
+            const h = Math.abs(coords.y - startY);
+
+            // Minimum size for new box
+            const minSize = isTouchDevice ? 30 : 10;
+            if (w > minSize && h > minSize) {
+                const cx = (Math.min(startX, coords.x) + w / 2) / canvas.width;
+                const cy = (Math.min(startY, coords.y) + h / 2) / canvas.height;
+                boxes.push({
+                    class_id: 0,
+                    x: cx,
+                    y: cy,
+                    w: w / canvas.width,
+                    h: h / canvas.height,
+                    is_false_positive: false,
+                    source: 'manual'
+                });
+                selectedBoxIndex = boxes.length - 1;
+            }
+        }
+
+        isDrawing = false;
+        isDragging = false;
+        isResizing = false;
+        drawBoxes();
+    }
+
+    // Long press for FP toggle on touch
+    let longPressTimer;
+    canvas.addEventListener('touchstart', (e) => {
+        const coords = getCanvasCoords(e);
+        const boxIdx = findBoxAtPoint(coords.x, coords.y);
+        if (boxIdx >= 0) {
+            longPressTimer = setTimeout(() => {
+                toggleFP(boxIdx);
+                showToast(`Box #${boxIdx + 1} ${boxes[boxIdx].is_false_positive ? 'marked as FP' : 'unmarked'}`);
+            }, 500);
+        }
+    });
+
+    canvas.addEventListener('touchend', () => {
+        clearTimeout(longPressTimer);
+    });
+
+    canvas.addEventListener('touchmove', () => {
+        clearTimeout(longPressTimer);
+    });
+
+    // Actions
+    function selectBox(idx) {
+        selectedBoxIndex = idx;
+        drawBoxes();
+    }
+
+    function toggleFP(idx) {
+        boxes[idx].is_false_positive = !boxes[idx].is_false_positive;
+        drawBoxes();
+    }
+
+    function deleteBox(idx) {
+        boxes.splice(idx, 1);
+        if (selectedBoxIndex >= boxes.length) {
+            selectedBoxIndex = boxes.length - 1;
+        }
+        drawBoxes();
+    }
+
+    function addBox() {
+        boxes.push({
+            class_id: 0,
+            x: 0.5,
+            y: 0.5,
+            w: 0.2,
+            h: 0.2,
+            is_false_positive: false,
+            source: 'manual'
+        });
+        selectedBoxIndex = boxes.length - 1;
+        drawBoxes();
+    }
+
+    function clearBoxes() {
+        boxes = [];
+        selectedBoxIndex = -1;
+        drawBoxes();
+    }
+
+    function resetToAuto() {
+        fetch(`/api/annotate/${observationId}/frame/${currentFrameId}`)
+            .then(r => r.json())
+            .then(data => {
+                boxes = data.boxes || [];
+                birdPresent = data.bird_present || false;
+                syncBirdPresentUI();
+                selectedBoxIndex = -1;
+                drawBoxes();
+            });
+    }
+
+    function toggleBirdPresent() {
+        birdPresent = !birdPresent;
+        syncBirdPresentUI();
+    }
+
+    function syncBirdPresentUI() {
+        const desktop = document.getElementById('birdPresent');
+        if (desktop) desktop.checked = birdPresent;
+        // Also update mobile UI label
+        updateBirdToggleLabel();
+    }
+
+    // Save and navigation
+    async function saveFrame(advance = false) {
+        const response = await fetch(`/api/annotate/${observationId}/frame/${currentFrameId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                bird_present: birdPresent,
+                boxes: boxes
+            })
+        });
+
+        if (response.ok) {
+            const frameItem = document.querySelector(`.frame-item[data-frame-id="${currentFrameId}"]`);
+            if (frameItem) {
+                frameItem.classList.add('saved');
+                frameItem.dataset.status = 'complete';
+                const statusEl = frameItem.querySelector('.frame-status');
+                if (statusEl) statusEl.textContent = '✓';
+            }
+            showToast('Saved ✓');
+
+            if (advance) {
+                goNextPending();
+            }
+        } else {
+            showToast('Save failed!', 'error');
+        }
+    }
+
+    function skipFrame() {
+        goNextPending();
+    }
+
+    function goNextPending() {
+        const items = Array.from(document.querySelectorAll('.frame-item'));
+        const currentIdx = items.findIndex(i => i.classList.contains('active'));
+
+        // Find next pending frame
+        for (let i = currentIdx + 1; i < items.length; i++) {
+            if (items[i].dataset.status !== 'complete') {
+                loadFrame(items[i].dataset.frameId);
+                return;
+            }
+        }
+
+        // No more pending, go to next anyway or show completion
+        if (currentIdx < items.length - 1) {
+            loadFrame(items[currentIdx + 1].dataset.frameId);
+        } else {
+            showToast('All frames reviewed! 🎉');
+        }
+    }
+
+    function loadFrame(frameId) {
+        window.location.href = `/annotate/${observationId}?frame=${frameId}`;
+    }
+
+    function goPrev() {
+        const items = Array.from(document.querySelectorAll('.frame-item'));
+        const currentIdx = items.findIndex(i => i.classList.contains('active'));
+        if (currentIdx > 0) {
+            loadFrame(items[currentIdx - 1].dataset.frameId);
+        }
+    }
+
+    function goNext() {
+        const items = Array.from(document.querySelectorAll('.frame-item'));
+        const currentIdx = items.findIndex(i => i.classList.contains('active'));
+        if (currentIdx < items.length - 1) {
+            loadFrame(items[currentIdx + 1].dataset.frameId);
+        }
+    }
+
+    function filterFrames(filter) {
+        document.querySelectorAll('.frame-item').forEach(item => {
+            const status = item.dataset.status;
+            if (filter === 'all') {
+                item.style.display = '';
+            } else if (filter === 'pending' && status !== 'complete') {
+                item.style.display = '';
+            } else if (filter === 'reviewed' && status === 'complete') {
+                item.style.display = '';
+            } else {
+                item.style.display = 'none';
+            }
+        });
+
+        // Update active filter button
+        document.querySelectorAll('.frame-filter .btn-sm').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.filter === filter);
+        });
+    }
+
+    // Primary action handling
+    function setAction(action) {
+        primaryAction = action;
+        localStorage.setItem('annotationPrimaryAction', action);
+        updatePrimaryActionButton();
+        toggleActionMenu(false);
+    }
+
+    function updatePrimaryActionButton() {
+        const btn = document.getElementById('primaryActionBtn');
+        if (!btn) return;
+
+        const labels = {
+            'approve-advance': '✓ Approve & Advance',
+            'approve-only': '✓ Approve Only',
+            'mark-fp-advance': '✗ Mark All FP & Advance',
+            'no-bird-advance': '○ No Bird & Advance'
+        };
+        btn.textContent = labels[primaryAction] || labels['approve-advance'];
+
+        // Update menu selection
+        document.querySelectorAll('.action-option').forEach(opt => {
+            opt.classList.toggle('selected', opt.dataset.action === primaryAction);
+        });
+    }
+
+    function executePrimaryAction() {
+        switch (primaryAction) {
+            case 'approve-advance':
+                saveFrame(true);
+                break;
+            case 'approve-only':
+                saveFrame(false);
+                break;
+            case 'mark-fp-advance':
+                boxes.forEach(box => box.is_false_positive = true);
+                birdPresent = true; // Bird IS present, boxes are just wrong detections
+                syncBirdPresentUI();
+                saveFrame(true);
+                break;
+            case 'no-bird-advance':
+                birdPresent = false;
+                syncBirdPresentUI();
+                saveFrame(true);
+                break;
+        }
+    }
+
+    function toggleActionMenu(show) {
+        const menu = document.getElementById('actionMenu');
+        if (show === undefined) {
+            menu.classList.toggle('visible');
+        } else {
+            menu.classList.toggle('visible', show);
+        }
+    }
+
+    // Sidebar toggle (mobile)
+    function toggleSidebar() {
+        document.getElementById('frameSidebar').classList.toggle('visible');
+    }
+
+    // Toast notifications
+    function showToast(message, type = 'success') {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.className = `toast ${type} visible`;
+        setTimeout(() => {
+            toast.classList.remove('visible');
+        }, 2000);
+    }
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT') return;
+        switch (e.key) {
+            case 'ArrowLeft': goPrev(); break;
+            case 'ArrowRight': goNext(); break;
+            case 's': case 'S': saveFrame(); break;
+            case 'a': case 'A': executePrimaryAction(); break;
+            case 'k': case 'K': skipFrame(); break;
+            case 'c': case 'C': clearBoxes(); break;
+            case 'r': case 'R': resetToAuto(); break;
+            case 'b': case 'B': toggleBirdPresent(); break;
+            case 'Delete': case 'Backspace':
+                if (selectedBoxIndex >= 0) {
+                    deleteBox(selectedBoxIndex);
+                }
+                break;
+            case 'f': case 'F':
+                if (selectedBoxIndex >= 0) {
+                    toggleFP(selectedBoxIndex);
+                }
+                break;
+        }
+    });
+
+    // Mobile swipe gestures for navigation
+    let swipeStartX = 0;
+    let swipeStartY = 0;
+    const SWIPE_THRESHOLD = 80;
+
+    document.addEventListener('touchstart', (e) => {
+        // Only track swipes on canvas area
+        if (!e.target.closest('.canvas-container')) return;
+        swipeStartX = e.touches[0].clientX;
+        swipeStartY = e.touches[0].clientY;
+    }, { passive: true });
+
+    document.addEventListener('touchend', (e) => {
+        if (swipeStartX === 0) return;
+
+        const deltaX = e.changedTouches[0].clientX - swipeStartX;
+        const deltaY = e.changedTouches[0].clientY - swipeStartY;
+
+        // Only horizontal swipes
+        if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > SWIPE_THRESHOLD) {
+            if (deltaX > 0) {
+                goPrev();
+                showSwipeHint('left');
+            } else {
+                goNext();
+                showSwipeHint('right');
+            }
+        }
+
+        swipeStartX = 0;
+        swipeStartY = 0;
+    }, { passive: true });
+
+    function showSwipeHint(direction) {
+        const hint = document.getElementById('swipeHint');
+        if (!hint) return;
+        hint.classList.add('active');
+        hint.querySelector(`.swipe-arrow.${direction}`)?.classList.add('highlight');
+        setTimeout(() => {
+            hint.classList.remove('active');
+            hint.querySelectorAll('.swipe-arrow').forEach(el => el.classList.remove('highlight'));
+        }, 300);
+    }
+
+    // Mark all boxes as false positive
+    function markAllFP() {
+        boxes.forEach(box => box.is_false_positive = true);
+        drawBoxes();
+        showToast('All boxes marked FP');
+    }
+
+    // Update frame counter
+    function updateFrameCounter() {
+        const items = document.querySelectorAll('.frame-item');
+        const currentIdx = Array.from(items).findIndex(i => i.classList.contains('active'));
+        const counter = document.getElementById('frameCounter');
+        if (counter) {
+            counter.textContent = `${currentIdx + 1} / ${items.length}`;
+        }
+    }
+
+    // Update box count in mobile UI
+    function updateBoxCount() {
+        const fpCount = boxes.filter(b => b.is_false_positive).length;
+        const realCount = boxes.length - fpCount;
+
+        const countLabel = document.getElementById('boxCountLabel');
+        if (countLabel) {
+            countLabel.textContent = `${boxes.length} box${boxes.length !== 1 ? 'es' : ''}`;
+        }
+    }
+
+    // Update bird toggle label
+    function updateBirdToggleLabel() {
+        const label = document.getElementById('birdToggleLabel');
+        if (label) {
+            label.textContent = `Bird: ${birdPresent ? 'Yes' : 'No'}`;
+        }
+        const btn = document.getElementById('birdToggleBtn');
+        if (btn) {
+            btn.classList.toggle('active', birdPresent);
+        }
+    }
+
+    // FAB menu toggle with backdrop
+    function toggleActionMenu(show) {
+        const menu = document.getElementById('actionMenu');
+        const fab = document.getElementById('fabMenuToggle');
+
+        if (show === undefined) {
+            menu.classList.toggle('visible');
+        } else {
+            menu.classList.toggle('visible', show);
+        }
+
+        if (fab) {
+            fab.classList.toggle('active', menu.classList.contains('visible'));
+        }
+    }
+
+    // Close menu when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.floating-menu') && !e.target.closest('.fab-menu-toggle')) {
+            toggleActionMenu(false);
+        }
+    });
+
+    // Initialize mobile UI
+    updateFrameCounter();
+    updateBirdToggleLabel();
+</script>
+
+<style>
+    :root {
+        --action-bar-height: 120px;
+    }
+
+    .annotate-review-page {
+        height: calc(100vh - 120px);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .review-header {
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .back-link {
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 0.875rem;
+    }
+
+    .review-header h1 {
+        margin: 0.25rem 0;
+        font-size: 1.25rem;
+    }
+
+    .review-meta {
+        font-size: 0.75rem;
+        color: var(--muted);
+    }
+
+    .review-help {
+        font-size: 0.75rem;
+        color: var(--muted);
+        background: var(--surface);
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        margin-top: 0.5rem;
+    }
+
+    .mobile-help {
+        display: none;
+    }
+
+    .review-layout {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+        position: relative;
+    }
+
+    /* Frame sidebar */
+    .frame-list-sidebar {
+        width: 180px;
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+        z-index: 100;
+    }
+
+    .frame-list-header {
+        padding: 0.5rem;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .frame-list-header h3 {
+        margin: 0 0 0.5rem;
+        font-size: 0.875rem;
+    }
+
+    .frame-filter {
+        display: flex;
+        gap: 0.25rem;
+    }
+
+    .frame-filter .btn-sm.active {
+        background: var(--accent);
+        color: white;
+    }
+
+    .frame-list {
+        flex: 1;
+        overflow-y: auto;
+    }
+
+    .frame-item {
+        display: flex;
+        padding: 0.5rem;
+        cursor: pointer;
+        border-bottom: 1px solid var(--border);
+        min-height: 48px;
+        align-items: center;
+    }
+
+    .frame-item:hover {
+        background: var(--surface);
+    }
+
+    .frame-item.active {
+        background: var(--accent-bg);
+        border-left: 3px solid var(--accent);
+    }
+
+    .frame-item.saved {
+        background: rgba(78, 205, 196, 0.1);
+    }
+
+    .frame-item img {
+        width: 50px;
+        height: 35px;
+        object-fit: cover;
+        border-radius: 4px;
+    }
+
+    .frame-info {
+        flex: 1;
+        margin-left: 0.5rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+
+    .frame-index {
+        font-size: 0.875rem;
+    }
+
+    .frame-status {
+        font-size: 0.75rem;
+        color: var(--muted);
+    }
+
+    .frame-status.reviewed {
+        color: var(--success);
+    }
+
+    .frame-progress {
+        padding: 0.5rem;
+        border-top: 1px solid var(--border);
+        font-size: 0.75rem;
+    }
+
+    .sidebar-toggle {
+        display: none;
+    }
+
+    /* Editor main */
+    .editor-main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 0.5rem;
+        overflow: hidden;
+    }
+
+    .canvas-container {
+        flex: 1;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #111;
+        border-radius: 8px;
+        overflow: hidden;
+        touch-action: none;
+    }
+
+    .canvas-container img {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+    }
+
+    .canvas-container canvas {
+        position: absolute;
+        pointer-events: auto;
+        touch-action: none;
+    }
+
+    .editor-controls {
+        padding: 0.75rem 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: flex-start;
+    }
+
+    .truth-toggle {
+        flex: 0 0 auto;
+    }
+
+    .toggle-label {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+        padding: 0.5rem;
+        min-height: 48px;
+    }
+
+    .box-list {
+        flex: 1;
+    }
+
+    .box-list h4 {
+        margin: 0 0 0.5rem;
+        font-size: 0.875rem;
+    }
+
+    .box-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.25rem 0.5rem;
+        background: var(--surface);
+        border-radius: 4px;
+        margin: 0.25rem;
+        cursor: pointer;
+        min-height: 36px;
+    }
+
+    .box-item.selected {
+        outline: 2px solid var(--accent);
+    }
+
+    .box-item.false-positive {
+        background: rgba(255, 107, 107, 0.2);
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    /* Mobile action bar - thumb-zone optimized */
+    .mobile-action-bar {
+        display: none;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: var(--bg);
+        border-top: 1px solid var(--border);
+        padding: 0.5rem;
+        padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+        z-index: 200;
+    }
+
+    .swipe-hint {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.75rem;
+        color: var(--muted);
+        opacity: 0.6;
+        transition: opacity 0.2s;
+    }
+
+    .swipe-hint.active {
+        opacity: 1;
+    }
+
+    .swipe-arrow {
+        transition: color 0.2s, transform 0.2s;
+    }
+
+    .swipe-arrow.highlight {
+        color: var(--accent);
+        transform: scale(1.2);
+    }
+
+    .frame-counter {
+        font-weight: 600;
+    }
+
+    .quick-actions-row {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .quick-action-btn {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5rem;
+        min-height: 56px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+
+    .quick-action-btn:active {
+        transform: scale(0.95);
+        background: var(--accent-bg);
+    }
+
+    .quick-action-btn.active {
+        background: var(--accent-bg);
+        border-color: var(--accent);
+    }
+
+    .quick-action-btn .icon {
+        font-size: 1.25rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .quick-action-btn .label {
+        font-size: 0.7rem;
+        color: var(--muted);
+    }
+
+    .main-actions-row {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .action-btn {
+        flex: 1;
+        min-height: 56px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        border: none;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+
+    .action-btn:active {
+        transform: scale(0.97);
+    }
+
+    .action-btn.secondary {
+        background: var(--surface);
+        color: var(--fg);
+        flex: 0 0 80px;
+    }
+
+    .action-btn.primary {
+        background: var(--accent);
+        color: white;
+    }
+
+    /* Floating action menu */
+    .floating-menu {
+        display: none;
+        position: fixed;
+        bottom: 180px;
+        right: 1rem;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+        overflow: hidden;
+        z-index: 250;
+    }
+
+    .floating-menu.visible {
+        display: block;
+        animation: slideUp 0.2s ease-out;
+    }
+
+    @keyframes slideUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .menu-handle {
+        width: 40px;
+        height: 4px;
+        background: var(--muted);
+        border-radius: 2px;
+        margin: 0.75rem auto;
+    }
+
+    .menu-options {
+        padding: 0 0.5rem 0.5rem;
+    }
+
+    .menu-option {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        width: 100%;
+        padding: 1rem;
+        text-align: left;
+        background: var(--surface);
+        border: none;
+        border-radius: 12px;
+        font-size: 1rem;
+        cursor: pointer;
+        margin-bottom: 0.5rem;
+        min-height: 56px;
+    }
+
+    .menu-option:last-child {
+        margin-bottom: 0;
+    }
+
+    .menu-option:active {
+        background: var(--accent-bg);
+    }
+
+    .menu-option.selected {
+        background: var(--accent-bg);
+        border: 2px solid var(--accent);
+    }
+
+    .opt-icon {
+        font-size: 1.25rem;
+    }
+
+    /* FAB menu toggle */
+    .fab-menu-toggle {
+        display: none;
+        position: fixed;
+        bottom: 190px;
+        right: 1rem;
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        font-size: 1.5rem;
+        cursor: pointer;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        z-index: 201;
+        transition: all 0.2s;
+    }
+
+    .fab-menu-toggle:active,
+    .fab-menu-toggle.active {
+        background: var(--accent);
+        color: white;
+    }
+
+    /* Toast */
+    .toast {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0.8);
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        padding: 1rem 2rem;
+        border-radius: 8px;
+        font-size: 1.1rem;
+        opacity: 0;
+        pointer-events: none;
+        transition: all 0.2s;
+        z-index: 1000;
+    }
+
+    .toast.visible {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+
+    .toast.error {
+        background: rgba(255, 107, 107, 0.9);
+    }
+
+    /* Keyboard shortcuts */
+    .keyboard-shortcuts {
+        padding: 0.5rem 1rem;
+        border-top: 1px solid var(--border);
+        font-size: 0.75rem;
+        color: var(--muted);
+    }
+
+    .keyboard-shortcuts kbd {
+        background: var(--surface);
+        padding: 2px 6px;
+        border-radius: 3px;
+        margin: 0 0.25rem;
+    }
+
+    /* Responsive: Mobile */
+    @media (max-width: 768px) {
+        .annotate-review-page {
+            height: calc(100vh - 60px);
+            padding-bottom: var(--action-bar-height);
+        }
+
+        .review-header {
+            padding: 0.5rem;
+        }
+
+        .review-header h1 {
+            font-size: 1rem;
+        }
+
+        .frame-list-sidebar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            transform: translateY(-100%);
+            transition: transform 0.3s ease;
+            border-right: none;
+            border-bottom: 1px solid var(--border);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .frame-list-sidebar.visible {
+            transform: translateY(0);
+        }
+
+        .sidebar-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            padding: 0.5rem 1rem;
+            background: var(--surface);
+            border: none;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+
+        .sidebar-toggle .badge {
+            background: var(--accent);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+        }
+
+        .editor-main {
+            padding: 0.25rem;
+        }
+
+        .desktop-only {
+            display: none !important;
+        }
+
+        .mobile-help {
+            display: block;
+        }
+
+        .mobile-action-bar {
+            display: block;
+        }
+
+        .fab-menu-toggle {
+            display: block;
+        }
+
+        .canvas-container {
+            border-radius: 0;
+        }
+    }
+
+    /* Desktop only */
+    @media (min-width: 769px) {
+        .mobile-action-bar {
+            display: none;
+        }
+
+        .sidebar-toggle {
+            display: none;
+        }
+
+        .fab-menu-toggle {
+            display: none;
+        }
+    }
+</style>
+{% endblock %}

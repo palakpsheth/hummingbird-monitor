@@ -42,6 +42,7 @@ RUN if [ "$INSTALL_OPENVINO" = "1" ]; then \
     intel-level-zero-gpu \
     level-zero \
     intel-opencl-icd \
+    intel-gpu-tools \
     && rm -rf /var/lib/apt/lists/*; \
     fi
 
@@ -52,6 +53,7 @@ WORKDIR /app
 # Copy only packaging metadata first for better docker caching
 COPY pyproject.toml README.md /app/
 COPY src /app/src
+COPY scripts /app/scripts
 
 ARG GIT_COMMIT=unknown
 ENV HBMON_GIT_COMMIT=${GIT_COMMIT}

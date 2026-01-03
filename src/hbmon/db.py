@@ -409,3 +409,6 @@ async def get_async_db() -> AsyncIterator[AsyncSession]:
         yield db
     finally:
         await db.close()
+
+# Alias for compatibility with annotation jobs
+get_sync_session = session_scope

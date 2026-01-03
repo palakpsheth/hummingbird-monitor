@@ -1705,6 +1705,856 @@ def make_app() -> Any:
 
         return RedirectResponse(url="/observations", status_code=303)
 
+    # ----------------------------
+    # Annotation Pipeline
+    # ----------------------------
+
+    @app.get("/annotate", response_class=HTMLResponse)
+    async def annotate_overview(
+        request: Request,
+        sort: str = "pending",
+        filter: str | None = None,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> HTMLResponse:
+        """Annotation pipeline overview page.
+        
+        Shows observations grouped by annotation state with progress stats.
+        """
+        # Fetch all observations with annotation summary
+        rows = (await db.execute(
+            select(Observation).order_by(desc(Observation.ts))
+        )).scalars().all()
+
+        def get_annotation_state(obs: Observation) -> str:
+            """Extract annotation state from observation's extra_json."""
+            extra = obs.get_extra() or {}
+            ann = extra.get("annotation_summary") if isinstance(extra, dict) else {}
+            if isinstance(ann, dict):
+                state = ann.get("state")
+                if state in ("preprocessing", "in_review", "completed"):
+                    return state
+            return "available"
+
+        def get_annotation_summary(obs: Observation) -> dict[str, Any] | None:
+            """Extract annotation summary from observation's extra_json."""
+            extra = obs.get_extra() or {}
+            if isinstance(extra, dict):
+                ann = extra.get("annotation_summary")
+                if isinstance(ann, dict):
+                    return ann
+            return None
+
+        # Decorate observations with annotation info
+        decorated = []
+        for o in rows:
+            o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
+            o.annotation_state = get_annotation_state(o)  # type: ignore[attr-defined]
+            o.annotation_summary = get_annotation_summary(o)  # type: ignore[attr-defined]
+            
+            # Use annotated snapshot if available
+            annotated = get_annotated_snapshot_path(o)
+            o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
+            
+            decorated.append(o)
+
+        # Apply filter
+        filter_value = (filter or "").strip().lower()
+        if filter_value and filter_value != "all":
+            decorated = [o for o in decorated if o.annotation_state == filter_value]  # type: ignore[attr-defined]
+
+        # Apply sorting
+        if sort == "pending":
+            # Most pending frames first
+            def pending_key(o: Observation) -> int:
+                s = o.annotation_summary  # type: ignore[attr-defined]
+                if s and isinstance(s, dict):
+                    return -(s.get("pending_frames", 0) or 0)
+                return 0
+            decorated.sort(key=pending_key)
+        elif sort == "stale":
+            # Oldest last_updated first
+            def stale_key(o: Observation) -> str:
+                s = o.annotation_summary  # type: ignore[attr-defined]
+                if s and isinstance(s, dict):
+                    return s.get("last_updated", "")
+                return ""
+            decorated.sort(key=stale_key)
+        # else: newest first (already sorted by ts desc)
+
+        # Group by state
+        groups: dict[str, list[Observation]] = {
+            "available": [],
+            "preprocessing": [],
+            "in_review": [],
+            "completed": [],
+        }
+        for o in decorated:
+            state = o.annotation_state  # type: ignore[attr-defined]
+            if state in groups:
+                groups[state].append(o)
+
+        # Summary stats
+        summary = {
+            "available": len(groups["available"]),
+            "preprocessing": len(groups["preprocessing"]),
+            "in_review": len(groups["in_review"]),
+            "completed": len(groups["completed"]),
+        }
+
+        # Training pipeline gating logic
+        partial_count = 0
+        for o in decorated:
+            s = o.annotation_summary  # type: ignore[attr-defined]
+            if s and isinstance(s, dict):
+                total = s.get("total_frames", 0) or 0
+                reviewed = s.get("reviewed_frames", 0) or 0
+                if total > 0 and 0 < reviewed < total:
+                    partial_count += 1
+
+        has_partial = partial_count > 0
+        can_train = summary["completed"] > 0 and not has_partial
+
+        return templates.TemplateResponse(
+            request,
+            "annotate.html",
+            _context(
+                request,
+                "Annotate",
+                groups=groups,
+                summary=summary,
+                sort=sort,
+                filter=filter_value or "all",
+                can_train=can_train,
+                has_partial=has_partial,
+                partial_count=partial_count,
+            ),
+        )
+
+    @app.get("/annotate/{obs_id}", response_class=HTMLResponse)
+    async def annotate_review(
+        obs_id: int,
+        request: Request,
+        frame: int | None = None,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> HTMLResponse:
+        """Annotation review page for an observation."""
+        from hbmon.models import AnnotationFrame, AnnotationBox
+        
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        o.species_css = species_to_css(o.species_label)  # type: ignore[attr-defined]
+
+        # Get annotation frames for this observation
+        if _SQLA_AVAILABLE:
+            frame_rows = (await db.execute(
+                select(AnnotationFrame)
+                .where(AnnotationFrame.observation_id == obs_id)
+                .order_by(AnnotationFrame.frame_index)
+            )).scalars().all()
+        else:
+            frame_rows = []
+
+        # Decorate frames with thumbnail URLs
+        frames = []
+        for f in frame_rows:
+            f.thumbnail_url = f"/api/annotate/{obs_id}/frame/{f.id}/image?thumb=1"  # type: ignore[attr-defined]
+            f.image_url = f"/api/annotate/{obs_id}/frame/{f.id}/image"  # type: ignore[attr-defined]
+            frames.append(f)
+
+        # Determine current frame
+        current_frame = None
+        if frames:
+            if frame:
+                current_frame = next((f for f in frames if f.id == frame), frames[0])
+            else:
+                current_frame = frames[0]
+
+            # Get boxes for current frame
+            if current_frame and _SQLA_AVAILABLE:
+                box_rows = (await db.execute(
+                    select(AnnotationBox)
+                    .where(AnnotationBox.frame_id == current_frame.id)
+                )).scalars().all()
+                current_frame.boxes = [  # type: ignore[attr-defined]
+                    {
+                        "class_id": b.class_id,
+                        "x": b.x,
+                        "y": b.y,
+                        "w": b.w,
+                        "h": b.h,
+                        "is_false_positive": b.is_false_positive,
+                        "source": b.source,
+                    }
+                    for b in box_rows
+                ]
+            else:
+                current_frame.boxes = []  # type: ignore[attr-defined]
+
+        frames_total = len(frames)
+        frames_reviewed = sum(1 for f in frames if f.status == "complete")
+
+        return templates.TemplateResponse(
+            request,
+            "annotate_review.html",
+            _context(
+                request,
+                f"Review Observation {obs_id}",
+                observation=o,
+                frames=frames,
+                current_frame=current_frame,
+                frames_total=frames_total,
+                frames_reviewed=frames_reviewed,
+            ),
+        )
+
+    @app.get("/api/annotate/{obs_id}/frames")
+    async def api_annotate_frames(
+        obs_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Response:
+        """Get list of frames for an observation."""
+        from hbmon.models import AnnotationFrame
+        
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        if _SQLA_AVAILABLE:
+            frame_rows = (await db.execute(
+                select(AnnotationFrame)
+                .where(AnnotationFrame.observation_id == obs_id)
+                .order_by(AnnotationFrame.frame_index)
+            )).scalars().all()
+        else:
+            frame_rows = []
+
+        frames = [
+            {
+                "id": f.id,
+                "frame_index": f.frame_index,
+                "status": f.status,
+                "bird_present": f.bird_present,
+                "image_url": f"/api/annotate/{obs_id}/frame/{f.id}/image",
+            }
+            for f in frame_rows
+        ]
+
+        return Response(
+            content=json.dumps({"frames": frames}),
+            media_type="application/json",
+        )
+
+    @app.get("/api/annotate/{obs_id}/frame/{frame_id}")
+    async def api_annotate_frame_detail(
+        obs_id: int,
+        frame_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Response:
+        """Get frame details including boxes."""
+        from hbmon.models import AnnotationFrame, AnnotationBox
+        
+        frame = await db.get(AnnotationFrame, frame_id)
+        if frame is None or frame.observation_id != obs_id:
+            raise HTTPException(status_code=404, detail="Frame not found")
+
+        if _SQLA_AVAILABLE:
+            box_rows = (await db.execute(
+                select(AnnotationBox)
+                .where(AnnotationBox.frame_id == frame_id)
+            )).scalars().all()
+        else:
+            box_rows = []
+
+        boxes = [
+            {
+                "id": b.id,
+                "class_id": b.class_id,
+                "x": b.x,
+                "y": b.y,
+                "w": b.w,
+                "h": b.h,
+                "is_false_positive": b.is_false_positive,
+                "source": b.source,
+            }
+            for b in box_rows
+        ]
+
+        return Response(
+            content=json.dumps({
+                "id": frame.id,
+                "frame_index": frame.frame_index,
+                "bird_present": frame.bird_present,
+                "status": frame.status,
+                "boxes": boxes,
+                "image_url": f"/api/annotate/{obs_id}/frame/{frame_id}/image",
+            }),
+            media_type="application/json",
+        )
+
+    @app.post("/api/annotate/{obs_id}/frame/{frame_id}")
+    async def api_annotate_frame_save(
+        obs_id: int,
+        frame_id: int,
+        request: Request,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Response:
+        """Save frame annotation with boxes."""
+        from hbmon.models import AnnotationFrame, AnnotationBox
+        from hbmon.annotation_storage import save_yolo_label, save_box_json, BoxData, sync_db_to_manifest, AnnotationSummary
+
+        frame = await db.get(AnnotationFrame, frame_id)
+        if frame is None or frame.observation_id != obs_id:
+            raise HTTPException(status_code=404, detail="Frame not found")
+
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON")
+
+        bird_present = body.get("bird_present", False)
+        boxes_data = body.get("boxes", [])
+
+        # Validate boxes
+        validated_boxes = []
+        for box in boxes_data:
+            if not isinstance(box, dict):
+                continue
+            try:
+                validated_boxes.append(BoxData(
+                    class_id=int(box.get("class_id", 0)),
+                    x=float(box.get("x", 0)),
+                    y=float(box.get("y", 0)),
+                    w=float(box.get("w", 0)),
+                    h=float(box.get("h", 0)),
+                    is_false_positive=bool(box.get("is_false_positive", False)),
+                    source=str(box.get("source", "manual")),
+                ))
+            except (ValueError, TypeError):
+                continue
+
+        # Update frame
+        frame.bird_present = bird_present
+        frame.status = "complete"
+        frame.reviewed_at = datetime.now(timezone.utc)
+
+        # Delete existing boxes and add new ones
+        if _SQLA_AVAILABLE:
+            await db.execute(delete(AnnotationBox).where(AnnotationBox.frame_id == frame_id))
+            for box in validated_boxes:
+                db_box = AnnotationBox(
+                    frame_id=frame_id,
+                    class_id=box.class_id,
+                    x=box.x,
+                    y=box.y,
+                    w=box.w,
+                    h=box.h,
+                    is_false_positive=box.is_false_positive,
+                    source=box.source,
+                )
+                db.add(db_box)
+
+        await _commit_with_retry(db)
+
+        # Save to disk
+        try:
+            save_yolo_label(str(obs_id), frame.frame_index, validated_boxes)
+            save_box_json(str(obs_id), frame.frame_index, validated_boxes, bird_present)
+        except Exception as e:
+            logger.warning(f"Failed to save annotation files: {e}")
+
+        # Update observation annotation summary
+        if _SQLA_AVAILABLE:
+            all_frames = (await db.execute(
+                select(AnnotationFrame)
+                .where(AnnotationFrame.observation_id == obs_id)
+            )).scalars().all()
+            total = len(all_frames)
+            reviewed = sum(1 for f in all_frames if f.status == "complete")
+            pending = total - reviewed
+
+            obs = await db.get(Observation, obs_id)
+            if obs:
+                state = "completed" if pending == 0 and total > 0 else "in_review"
+                obs.merge_extra({
+                    "annotation_summary": {
+                        "total_frames": total,
+                        "reviewed_frames": reviewed,
+                        "pending_frames": pending,
+                        "state": state,
+                        "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                    }
+                })
+                await _commit_with_retry(db)
+
+                # Sync to manifest
+                try:
+                    sync_db_to_manifest(str(obs_id), AnnotationSummary(
+                        total_frames=total,
+                        reviewed_frames=reviewed,
+                        pending_frames=pending,
+                        state=state,
+                        last_updated=datetime.now(timezone.utc).isoformat() + "Z",
+                    ))
+                except Exception as e:
+                    logger.warning(f"Failed to sync manifest: {e}")
+
+        return Response(
+            content=json.dumps({"success": True}),
+            media_type="application/json",
+        )
+
+    @app.get("/api/annotate/{obs_id}/frame/{frame_id}/image")
+    async def api_annotate_frame_image(
+        obs_id: int,
+        frame_id: int,
+        thumb: int = 0,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> FileResponse:
+        """Serve frame image."""
+        from hbmon.models import AnnotationFrame
+        
+        frame = await db.get(AnnotationFrame, frame_id)
+        if frame is None or frame.observation_id != obs_id:
+            raise HTTPException(status_code=404, detail="Frame not found")
+
+        frame_path = Path(frame.frame_path)
+        if not frame_path.exists():
+            raise HTTPException(status_code=404, detail="Frame image not found")
+
+        return FileResponse(str(frame_path), media_type="image/jpeg")
+
+    @app.get("/api/annotate/{obs_id}/start")
+    async def api_annotate_start(
+        obs_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Response:
+        """Start annotation for an observation by extracting frames.
+        
+        If background queue is available, enqueues preprocessing job.
+        Otherwise, runs inline (slower but works without Redis).
+        """
+        from hbmon.annotation_storage import ensure_annotation_dirs, get_frame_path
+        from hbmon.models import AnnotationFrame
+        
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        # Check if already has frames
+        if _SQLA_AVAILABLE:
+            existing = (await db.execute(
+                select(func.count(AnnotationFrame.id))
+                .where(AnnotationFrame.observation_id == obs_id)
+            )).scalar_one()
+            if existing > 0:
+                return RedirectResponse(url=f"/annotate/{obs_id}", status_code=303)
+
+        # Try to use background job queue
+        try:
+            from hbmon.annotation_jobs import is_queue_available, enqueue_preprocessing
+            
+            if is_queue_available():
+                job_id = enqueue_preprocessing(obs_id)
+                if job_id:
+                    # Update state to preprocessing
+                    o.merge_extra({
+                        "annotation_summary": {
+                            "state": "preprocessing",
+                            "job_id": job_id,
+                            "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                        }
+                    })
+                    await _commit_with_retry(db)
+                    
+                    # Redirect with job_id for status checking
+                    return RedirectResponse(
+                        url=f"/annotate/{obs_id}?job={job_id}",
+                        status_code=303,
+                    )
+        except ImportError:
+            pass  # Fall through to inline processing
+
+        # Fallback: inline processing
+        video_path = media_dir() / o.video_path
+        if not await _run_blocking(video_path.exists):
+            raise HTTPException(status_code=404, detail="Video file not found")
+
+        ensure_annotation_dirs()
+
+        try:
+            cv2 = _load_cv2()
+        except RuntimeError:
+            raise HTTPException(status_code=500, detail="OpenCV not available")
+
+        def extract_frames() -> list[tuple[int, Path]]:
+            cap = cv2.VideoCapture(str(video_path))
+            frames = []
+            idx = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frame_path = get_frame_path(str(obs_id), idx)
+                frame_path.parent.mkdir(parents=True, exist_ok=True)
+                cv2.imwrite(str(frame_path), frame)
+                frames.append((idx, frame_path))
+                idx += 1
+            cap.release()
+            return frames
+
+        extracted = await _run_blocking(extract_frames)
+
+        # Create AnnotationFrame entries
+        for idx, frame_path in extracted:
+            db_frame = AnnotationFrame(
+                observation_id=obs_id,
+                frame_index=idx,
+                frame_path=str(frame_path),
+                bird_present=False,
+                status="queued",
+            )
+            db.add(db_frame)
+
+        # Update observation annotation summary
+        total = len(extracted)
+        o.merge_extra({
+            "annotation_summary": {
+                "total_frames": total,
+                "reviewed_frames": 0,
+                "pending_frames": total,
+                "state": "in_review",
+                "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+            }
+        })
+
+        await _commit_with_retry(db)
+
+        return RedirectResponse(url=f"/annotate/{obs_id}", status_code=303)
+
+    @app.get("/api/annotate/job/{job_id}")
+    async def api_annotate_job_status(job_id: str) -> Response:
+        """Get status of an annotation preprocessing job."""
+        try:
+            from hbmon.annotation_jobs import get_job_status
+            
+            status = get_job_status(job_id)
+            if status is None:
+                raise HTTPException(status_code=404, detail="Job not found")
+            
+            return Response(
+                content=json.dumps(status),
+                media_type="application/json",
+            )
+        except ImportError:
+            raise HTTPException(status_code=501, detail="Job queue not available")
+
+    @app.post("/api/annotate/{obs_id}/reset")
+    async def api_annotate_reset(
+        obs_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Response:
+        """Reset annotation for an observation.
+        
+        This clears all frames and boxes, allowing the annotation to be restarted.
+        Useful for stuck jobs or corrupted annotations.
+        """
+        from hbmon.models import AnnotationFrame, AnnotationBox
+        
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        if _SQLA_AVAILABLE:
+            # Delete all boxes for this observation's frames
+            frames_subq = select(AnnotationFrame.id).where(
+                AnnotationFrame.observation_id == obs_id
+            ).scalar_subquery()
+            await db.execute(
+                delete(AnnotationBox).where(AnnotationBox.frame_id.in_(frames_subq))
+            )
+            
+            # Delete all frames
+            await db.execute(
+                delete(AnnotationFrame).where(AnnotationFrame.observation_id == obs_id)
+            )
+
+        # Clear annotation summary from observation
+        o.merge_extra({
+            "annotation_summary": None
+        })
+
+        await _commit_with_retry(db)
+
+        return Response(
+            content=json.dumps({"status": "reset", "observation_id": obs_id}),
+            media_type="application/json",
+        )
+
+    @app.post("/api/annotate/{obs_id}/label")
+    async def api_annotate_label(
+        obs_id: int,
+        request: Request,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Response:
+        """Apply observation-level label and propagate to all frames.
+        
+        Labels:
+        - false_positive: Mark all frames as no bird, boxes as FP
+        - verified: Mark all frames as complete, keep annotations
+        """
+        from hbmon.models import AnnotationFrame, AnnotationBox
+        from hbmon.annotation_storage import save_yolo_label, save_box_json, BoxData
+        
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON")
+
+        label = body.get("label", "")
+        if label not in ("false_positive", "verified"):
+            raise HTTPException(status_code=400, detail="Invalid label")
+
+        # Try to use background job for propagation
+        try:
+            from hbmon.annotation_jobs import is_queue_available, enqueue_label_propagation
+            
+            if is_queue_available():
+                job_id = enqueue_label_propagation(obs_id, label)
+                if job_id:
+                    return Response(
+                        content=json.dumps({
+                            "success": True,
+                            "job_id": job_id,
+                            "message": "Label propagation enqueued",
+                        }),
+                        media_type="application/json",
+                    )
+        except ImportError:
+            pass
+
+        # Fallback: inline propagation
+        frames_updated = 0
+        
+        if _SQLA_AVAILABLE:
+            frames = (await db.execute(
+                select(AnnotationFrame)
+                .where(AnnotationFrame.observation_id == obs_id)
+            )).scalars().all()
+
+            for frame in frames:
+                if label == "false_positive":
+                    frame.bird_present = False
+                    frame.status = "complete"
+                    
+                    # Get and update boxes
+                    boxes = (await db.execute(
+                        select(AnnotationBox)
+                        .where(AnnotationBox.frame_id == frame.id)
+                    )).scalars().all()
+                    
+                    for box in boxes:
+                        box.is_false_positive = True
+                    
+                    # Regenerate disk files
+                    box_data = [
+                        BoxData(
+                            class_id=b.class_id,
+                            x=b.x,
+                            y=b.y,
+                            w=b.w,
+                            h=b.h,
+                            is_false_positive=True,
+                            source=b.source,
+                        )
+                        for b in boxes
+                    ]
+                    save_yolo_label(str(obs_id), frame.frame_index, box_data)
+                    save_box_json(str(obs_id), frame.frame_index, box_data, False)
+                    
+                elif label == "verified":
+                    frame.status = "complete"
+                    frame.reviewed_at = datetime.now(timezone.utc)
+
+                frames_updated += 1
+
+            # Update observation state
+            o.merge_extra({
+                "annotation_summary": {
+                    "state": "completed",
+                    "label": label,
+                    "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                }
+            })
+            
+            await _commit_with_retry(db)
+
+        return Response(
+            content=json.dumps({
+                "success": True,
+                "frames_updated": frames_updated,
+                "label": label,
+            }),
+            media_type="application/json",
+        )
+
+    @app.post("/api/pipeline/run")
+    async def api_pipeline_run(
+        request: Request,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Response:
+        """
+        Trigger the training pipeline.
+        
+        Gating logic:
+        - BLOCKED if any observation has partial annotations
+        - ALLOWED if all observations are completed or pending
+        - Pending observations are excluded from training
+        """
+        from hbmon.models import PipelineRun
+        from hbmon.annotation_state import (
+            parse_annotation_summary,
+            compute_pipeline_eligibility,
+            AnnotationProgress,
+            AnnotationState,
+        )
+
+        # Gather all observations with annotation summaries
+        rows = (await db.execute(select(Observation))).scalars().all()
+        
+        progress_list = []
+        for obs in rows:
+            extra = obs.get_extra()
+            parsed = parse_annotation_summary(extra)
+            if parsed:
+                parsed.observation_id = obs.id
+                progress_list.append(parsed)
+            else:
+                # No annotation summary = pending
+                progress_list.append(AnnotationProgress(
+                    observation_id=obs.id,
+                    state=AnnotationState.PENDING,
+                    total_frames=0,
+                    reviewed_frames=0,
+                    pending_frames=0,
+                ))
+
+        # Check eligibility
+        can_train, included_ids, excluded_ids, reason = compute_pipeline_eligibility(progress_list)
+
+        if not can_train:
+            return Response(
+                content=json.dumps({
+                    "success": False,
+                    "can_train": False,
+                    "reason": reason,
+                    "included_observations": [],
+                    "excluded_observations": excluded_ids,
+                }),
+                media_type="application/json",
+                status_code=400,
+            )
+
+        # Create pipeline run record
+        pipeline_run = PipelineRun(
+            status="running",
+            observations_included=len(included_ids),
+            observations_excluded=len(excluded_ids),
+        )
+        db.add(pipeline_run)
+        await _commit_with_retry(db)
+
+        run_id = pipeline_run.id
+
+        # Log path for this run
+        log_dir = data_dir() / "exports" / "pipeline_runs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"run_{run_id}.log"
+
+        pipeline_run.log_path = str(log_path)
+        await _commit_with_retry(db)
+
+        # Note: Actual training execution would be triggered here
+        # For now, we return success and the client would need to run the training separately
+        
+        return Response(
+            content=json.dumps({
+                "success": True,
+                "can_train": True,
+                "reason": reason,
+                "run_id": run_id,
+                "included_observations": included_ids,
+                "excluded_observations": excluded_ids,
+                "log_path": str(log_path),
+                "next_steps": [
+                    "Run: python scripts/build_yolo_dataset.py --output-dir /data/exports/yolo/dataset",
+                    "Then: yolo detect train data=/data/exports/yolo/dataset/dataset.yaml model=yolo11n.pt epochs=50",
+                ],
+            }),
+            media_type="application/json",
+        )
+
+    @app.get("/api/pipeline/status")
+    async def api_pipeline_status(
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Response:
+        """Get training pipeline eligibility status without running."""
+        from hbmon.annotation_state import (
+            parse_annotation_summary,
+            compute_pipeline_eligibility,
+            AnnotationProgress,
+            AnnotationState,
+        )
+
+        rows = (await db.execute(select(Observation))).scalars().all()
+        
+        progress_list = []
+        for obs in rows:
+            extra = obs.get_extra()
+            parsed = parse_annotation_summary(extra)
+            if parsed:
+                parsed.observation_id = obs.id
+                progress_list.append(parsed)
+            else:
+                progress_list.append(AnnotationProgress(
+                    observation_id=obs.id,
+                    state=AnnotationState.PENDING,
+                    total_frames=0,
+                    reviewed_frames=0,
+                    pending_frames=0,
+                ))
+
+        can_train, included_ids, excluded_ids, reason = compute_pipeline_eligibility(progress_list)
+
+        # Count by state
+        state_counts = {
+            "pending": 0,
+            "preprocessing": 0,
+            "in_review": 0,
+            "completed": 0,
+            "partial": 0,
+        }
+        for p in progress_list:
+            state_counts[p.state.value] += 1
+            if p.is_partial:
+                state_counts["partial"] += 1
+
+        return Response(
+            content=json.dumps({
+                "can_train": can_train,
+                "reason": reason,
+                "included_count": len(included_ids),
+                "excluded_count": len(excluded_ids),
+                "state_counts": state_counts,
+            }),
+            media_type="application/json",
+        )
+
     @app.get("/candidates", response_class=HTMLResponse)
     async def candidates(
         request: Request,

@@ -4,6 +4,7 @@ x-common-env: &common-env
   HBMON_DATA_DIR: ${HBMON_DATA_DIR}
   HBMON_MEDIA_DIR: ${HBMON_MEDIA_DIR}
   HBMON_CONFIG_PATH: ${HBMON_CONFIG_PATH}
+  HBMON_DB_URL: ${HBMON_DB_URL:-postgresql://hbmon:hbmon@hbmon-db:5432/hbmon}
   HBMON_DB_ASYNC_URL: ${HBMON_DB_ASYNC_URL:-postgresql+asyncpg://hbmon:hbmon@hbmon-db:5432/hbmon}
   HBMON_DB_POOL_SIZE: ${HBMON_DB_POOL_SIZE:-5}
   HBMON_DB_MAX_OVERFLOW: ${HBMON_DB_MAX_OVERFLOW:-10}
@@ -157,6 +158,7 @@ services:
     container_name: hbmon-worker
     command: [ "python", "-m", "hbmon.worker" ]
     # Hardware acceleration device mapping (required for Intel/OpenVINO or other GPU backends)
+    privileged: true
     devices:
       - /dev/dri:/dev/dri
     environment:
@@ -271,3 +273,76 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+
+  # Background annotation preprocessing worker
+  # Uses high-accuracy models (YOLO Large + SAM) for auto-detection
+  hbmon-annotator:
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+    container_name: hbmon-annotator
+    # RQ worker command processing annotation queue
+    command: [ "python", "scripts/run_annotator.py" ]
+    # Hardware acceleration device mapping (required for Intel/OpenVINO or other GPU backends)
+    privileged: true
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      <<: [ *common-env ]
+      # Annotation-specific models (high-accuracy for preprocessing)
+      HBMON_ANNOTATION_YOLO_MODEL: ${HBMON_ANNOTATION_YOLO_MODEL:-yolo11l.pt}
+      HBMON_ANNOTATION_USE_SAM: ${HBMON_ANNOTATION_USE_SAM:-1}
+      HBMON_ANNOTATION_SAM_MODEL: ${HBMON_ANNOTATION_SAM_MODEL:-sam_b}
+      HBMON_ANNOTATION_CONFIDENCE: ${HBMON_ANNOTATION_CONFIDENCE:-0.15}
+      HBMON_ANNOTATION_BATCH_SIZE: ${HBMON_ANNOTATION_BATCH_SIZE:-8}
+
+      # Background job queue settings
+      HBMON_ANNOTATION_QUEUE_ENABLED: ${HBMON_ANNOTATION_QUEUE_ENABLED:-1}
+      HBMON_ANNOTATION_AUTO_EXTRACT: ${HBMON_ANNOTATION_AUTO_EXTRACT:-0}
+      HBMON_ANNOTATION_BATCH_HOUR: ${HBMON_ANNOTATION_BATCH_HOUR:-3}
+      HBMON_ANNOTATOR_DEBUG: ${HBMON_ANNOTATOR_DEBUG:-1}
+
+      # Job timeouts
+      HBMON_ANNOTATION_EXTRACTION_TIMEOUT: ${HBMON_ANNOTATION_EXTRACTION_TIMEOUT:-30m}
+      HBMON_ANNOTATION_DETECTION_TIMEOUT: ${HBMON_ANNOTATION_DETECTION_TIMEOUT:-60m}
+      HBMON_ANNOTATION_PROPAGATION_TIMEOUT: ${HBMON_ANNOTATION_PROPAGATION_TIMEOUT:-5m}
+
+      # Retry and recovery configuration
+      HBMON_ANNOTATION_MAX_RETRIES: ${HBMON_ANNOTATION_MAX_RETRIES:-3}
+      HBMON_ANNOTATION_RETRY_DELAY: ${HBMON_ANNOTATION_RETRY_DELAY:-60}
+      HBMON_ANNOTATION_CHECKPOINT_INTERVAL: ${HBMON_ANNOTATION_CHECKPOINT_INTERVAL:-10}
+
+      # Model configuration (shared with worker)
+      YOLO_CONFIG_DIR: ${YOLO_CONFIG_DIR:-/data/yolo}
+      HBMON_INFERENCE_BACKEND: ${HBMON_INFERENCE_BACKEND:-cpu}
+      HBMON_DEVICE: ${HBMON_DEVICE:-}
+      OPENVINO_CACHE_DIR: ${OPENVINO_CACHE_DIR:-/data/openvino_cache}
+      HF_TOKEN: ${HF_TOKEN:-}
+
+    volumes:
+      - ./data:/data
+    depends_on:
+      hbmon-db:
+        condition: service_healthy
+      hbmon-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # Resource limits: Give priority to main detection worker
+    # System has 20 CPUs / 32GB RAM - leave headroom for main worker
+    deploy:
+      resources:
+        limits:
+          cpus: '${HBMON_ANNOTATOR_CPU_LIMIT:-4}' # Max 4 CPUs (20% of system)
+          memory: ${HBMON_ANNOTATOR_MEMORY_LIMIT:-8G} # Max 8GB (25% of 32GB)
+        reservations:
+          cpus: '${HBMON_ANNOTATOR_CPU_RESERVE:-1}' # Reserve 1 CPU
+          memory: ${HBMON_ANNOTATOR_MEMORY_RESERVE:-4G} # Reserve 4GB
+    # Healthcheck: RQ worker is healthy if process is running
+    healthcheck:
+      test: [ "CMD", "pgrep", "-f", "rq.cli" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s # Longer start for model download
