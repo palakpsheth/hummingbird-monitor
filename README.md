@@ -86,8 +86,7 @@ The web UI is optimized for 📱 **Android Chrome** and is intentionally **no-lo
   - Example: "Streaming: 2.45 Mbps (3.2x smaller)"
   - Only appears after first view when cache exists
   - Provides transparency about compression efficiency
-- **Stream quality selector**: Observation detail page includes a subtle quality dropdown (Auto/High/Balanced/Low)
-  for quick trade-offs between clarity and bandwidth.
+- **Stream quality selector**: Observation detail page includes a subtle quality dropdown (Auto/High/Balanced/Low) for quick trade-offs between clarity and bandwidth.
 - **Configurable quality**: Adjust CRF (18-28) and encoding preset (fast/medium/slow) via environment variables
 - **Cache management**: Automatic cleanup of old cached files based on age (default: 7 days) and size (default: 10GB)
 - **ML training ready**: Pristine uncompressed videos preserve maximum detail for model fine-tuning
