@@ -264,7 +264,7 @@ def test_write_jpeg_and_mask_images(monkeypatch, tmp_path):
     out_path = tmp_path / "snapshots" / "frame.jpg"
     _write_jpeg(out_path, np.zeros((4, 4, 3), dtype=np.uint8))
     assert out_path.exists()
-    assert captured_params == [[DummyCV2.IMWRITE_JPEG_QUALITY, 100]]
+    assert captured_params == [[DummyCV2.IMWRITE_JPEG_QUALITY, 95]]
 
     png_path = tmp_path / "snapshots" / "frame.png"
     _write_png(png_path, np.zeros((4, 4, 3), dtype=np.uint8))
