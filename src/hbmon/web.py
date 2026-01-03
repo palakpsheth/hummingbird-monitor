@@ -3147,9 +3147,9 @@ def make_app() -> Any:
         bg_dir = background_dir()
         await _run_blocking(bg_dir.mkdir, parents=True, exist_ok=True)
 
-        # Save as JPEG
+        # Save as JPEG with maximum quality and no subsampling for sharpest color edges
         dst_path = background_image_path()
-        await _run_blocking(img.save, dst_path, format="JPEG", quality=95)
+        await _run_blocking(img.save, dst_path, format="JPEG", quality=100, subsampling=0)
 
         # Update settings
         s = load_settings()

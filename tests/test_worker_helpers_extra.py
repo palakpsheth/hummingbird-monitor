@@ -228,9 +228,11 @@ def test_write_jpeg_and_mask_images(monkeypatch, tmp_path):
 
     class DummyCV2:
         IMWRITE_JPEG_QUALITY = 1
-        INTER_NEAREST = 2
-        INTER_AREA = 3
-        FONT_HERSHEY_SIMPLEX = 4
+        IMWRITE_JPEG_SAMPLING_FACTOR = 2
+        IMWRITE_JPEG_SAMPLING_FACTOR_444 = 3
+        INTER_NEAREST = 4
+        INTER_AREA = 5
+        FONT_HERSHEY_SIMPLEX = 6
 
         @staticmethod
         def imencode(ext: str, image, params=None):
@@ -264,7 +266,13 @@ def test_write_jpeg_and_mask_images(monkeypatch, tmp_path):
     out_path = tmp_path / "snapshots" / "frame.jpg"
     _write_jpeg(out_path, np.zeros((4, 4, 3), dtype=np.uint8))
     assert out_path.exists()
-    assert captured_params == [[DummyCV2.IMWRITE_JPEG_QUALITY, 95]]
+    expected_params = [
+        DummyCV2.IMWRITE_JPEG_QUALITY,
+        100,
+        DummyCV2.IMWRITE_JPEG_SAMPLING_FACTOR,
+        DummyCV2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
+    ]
+    assert captured_params == [expected_params]
 
     png_path = tmp_path / "snapshots" / "frame.png"
     _write_png(png_path, np.zeros((4, 4, 3), dtype=np.uint8))

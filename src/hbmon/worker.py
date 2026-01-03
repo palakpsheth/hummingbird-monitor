@@ -575,7 +575,12 @@ def _write_jpeg(path: Path, frame_bgr: np.ndarray) -> None:
         raise RuntimeError("OpenCV (cv2) is not installed; cannot write JPEGs")
     assert cv2 is not None  # for type checkers
     _safe_mkdir(path.parent)
-    ok, buf = cv2.imencode(".jpg", frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    # Use quality=100 with no subsampling for maximum quality (sharpest color edges)
+    ok, buf = cv2.imencode(
+        ".jpg",
+        frame_bgr,
+        [int(cv2.IMWRITE_JPEG_QUALITY), 100, int(cv2.IMWRITE_JPEG_SAMPLING_FACTOR), cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444],
+    )
     if not ok:
         raise RuntimeError("cv2.imencode failed for jpeg")
     path.write_bytes(buf.tobytes())
