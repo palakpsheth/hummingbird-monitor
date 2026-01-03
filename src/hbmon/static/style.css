@@ -247,6 +247,31 @@ a:hover {
   grid-template-columns: 80px 84px 1fr 120px 220px;
 }
 
+.top-individuals-table .row {
+  grid-template-columns: 60px minmax(120px, 1fr) 84px 184px auto auto;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+}
+
+.top-individuals-table .row>div {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Specific alignments */
+.top-individuals-table .row>div:nth-child(3) {
+  text-align: center;
+}
+
+/* No truncation for these columns */
+.top-individuals-table .row>div:nth-child(4),
+.top-individuals-table .row>div:nth-child(5),
+.top-individuals-table .row>div:nth-child(6) {
+  overflow: visible;
+}
+
 .row.head {
   font-weight: 700;
   color: var(--text);

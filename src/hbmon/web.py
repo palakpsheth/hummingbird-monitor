@@ -1274,7 +1274,14 @@ def make_app() -> Any:
             )
             top_inds = (
                 await db.execute(
-                    select(Individual.id, Individual.name, Individual.visit_count, Individual.last_seen_at)
+                    select(
+                        Individual.id,
+                        Individual.name,
+                        Individual.visit_count,
+                        Individual.last_seen_at,
+                        Individual.created_at,
+                        Individual.last_species_label,
+                    )
                     .order_by(desc(Individual.visit_count), desc(Individual.id))
                     .offset(ind_offset)
                     .limit(ind_clamped_page_size)
@@ -1282,9 +1289,19 @@ def make_app() -> Any:
             ).all()
 
             # Convert last_seen to ISO for template
-            top_inds_out: list[tuple[int, str, int, str | None]] = []
-            for iid, name, visits, last_seen in top_inds:
-                top_inds_out.append((int(iid), str(name), int(visits), _as_utc_str(last_seen)))
+            top_inds_out: list[dict[str, Any]] = []
+            for iid, name, visits, last_seen, created_at, last_species in top_inds:
+                top_inds_out.append(
+                    {
+                        "id": int(iid),
+                        "name": str(name),
+                        "visit_count": int(visits),
+                        "last_seen_at": _as_utc_str(last_seen),
+                        "created_at": _as_utc_str(created_at),
+                        "last_species": last_species,
+                        "species_css": species_to_css(last_species) if last_species else "species-unknown",
+                    }
+                )
 
             total_recent = (await db.execute(select(func.count(Observation.id)))).scalar_one()
             current_page, clamped_page_size, total_pages, offset = paginate(
