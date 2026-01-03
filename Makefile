@@ -2,7 +2,7 @@
 
 UV ?= uv
 UV_RUN ?= UV_INDEX_URL=$(PYTORCH_INDEX_URL) UV_EXTRA_INDEX_URL=https://pypi.org/simple $(UV) run
-PYTEST ?= $(UV_RUN) pytest -n auto
+PYTEST ?= $(UV_RUN) pytest -n 2
 RUFF ?= $(UV_RUN) ruff
 
 DATA_DIR ?= data
