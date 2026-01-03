@@ -58,6 +58,7 @@ async def test_latest_observation_cache_validation(monkeypatch, tmp_path) -> Non
     assert data is not None
     assert data["id"] == obs_id
     assert data["ts_utc"] == expected_ts_utc
+
 @pytest.mark.anyio
 async def test_index_caching(monkeypatch, tmp_path) -> None:
     _setup_db(monkeypatch, tmp_path)
@@ -80,7 +81,11 @@ async def test_index_caching(monkeypatch, tmp_path) -> None:
                 "clamped_page_size": 10,
                 "total_pages": 1,
                 "total_recent": 1,
-                "last_capture_utc": "2024-01-01T12:00:00Z"
+                "ind_current_page": 1,
+                "ind_clamped_page_size": 10,
+                "ind_total_pages": 1,
+                "total_individuals": 1,
+                "last_capture_utc": "2024-01-01T12:00:00Z",
             }
         return None
     
