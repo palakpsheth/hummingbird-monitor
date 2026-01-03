@@ -233,7 +233,11 @@ a:hover {
 
 .row {
   display: grid;
-  grid-template-columns: 80px 1fr 120px 220px;
+  grid-template-columns:
+    minmax(48px, max-content)
+    minmax(160px, 1.4fr)
+    minmax(70px, max-content)
+    minmax(200px, 2fr);
   gap: 10px;
   padding: 8px;
   border-radius: 10px;
