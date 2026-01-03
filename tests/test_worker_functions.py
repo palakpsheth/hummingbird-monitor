@@ -371,8 +371,10 @@ class TestWriteJpeg:
         monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
 
         encoded_data = b"fake jpeg data"
+        captured_params = []
 
         def mock_imencode(ext, frame, params):
+            captured_params.append(params)
             return True, types.SimpleNamespace(tobytes=lambda: encoded_data)
 
         fake_cv2 = types.SimpleNamespace(
@@ -385,6 +387,7 @@ class TestWriteJpeg:
         frame = np.zeros((10, 10, 3), dtype=np.uint8)
         worker._write_jpeg(out_path, frame)
 
+        assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 100]]
         assert out_path.exists()
         assert out_path.read_bytes() == encoded_data
 
@@ -392,7 +395,10 @@ class TestWriteJpeg:
         """Test _write_jpeg raises on encode failure."""
         monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
 
+        captured_params = []
+
         def mock_imencode(ext, frame, params):
+            captured_params.append(params)
             return False, None  # Encode failure
 
         fake_cv2 = types.SimpleNamespace(
@@ -406,6 +412,7 @@ class TestWriteJpeg:
 
         with pytest.raises(RuntimeError, match="imencode failed"):
             worker._write_jpeg(out_path, frame)
+        assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 100]]
 
 
 class TestWriteJpegAsync:
@@ -417,8 +424,10 @@ class TestWriteJpegAsync:
         monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
 
         encoded_data = b"fake jpeg data async"
+        captured_params = []
 
         def mock_imencode(ext, frame, params):
+            captured_params.append(params)
             return True, types.SimpleNamespace(tobytes=lambda: encoded_data)
 
         fake_cv2 = types.SimpleNamespace(
@@ -431,6 +440,7 @@ class TestWriteJpegAsync:
         frame = np.zeros((10, 10, 3), dtype=np.uint8)
         await worker._write_jpeg_async(out_path, frame)
 
+        assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 100]]
         assert out_path.exists()
         assert out_path.read_bytes() == encoded_data
 
@@ -439,7 +449,10 @@ class TestWriteJpegAsync:
         """Test _write_jpeg_async propagates errors from _write_jpeg."""
         monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)
 
+        captured_params = []
+
         def mock_imencode(ext, frame, params):
+            captured_params.append(params)
             return False, None  # Encode failure
 
         fake_cv2 = types.SimpleNamespace(
@@ -453,6 +466,7 @@ class TestWriteJpegAsync:
 
         with pytest.raises(RuntimeError, match="imencode failed"):
             await worker._write_jpeg_async(out_path, frame)
+        assert captured_params == [[fake_cv2.IMWRITE_JPEG_QUALITY, 100]]
 
 
 class TestConvertToH264:

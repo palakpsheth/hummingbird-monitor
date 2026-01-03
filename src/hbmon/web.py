@@ -3149,7 +3149,7 @@ def make_app() -> Any:
 
         # Save as JPEG
         dst_path = background_image_path()
-        await _run_blocking(img.save, dst_path, format="JPEG", quality=90)
+        await _run_blocking(img.save, dst_path, format="JPEG", quality=100)
 
         # Update settings
         s = load_settings()

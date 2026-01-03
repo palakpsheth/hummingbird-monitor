@@ -224,6 +224,8 @@ def test_write_jpeg_and_mask_images(monkeypatch, tmp_path):
         def tobytes(self) -> bytes:
             return self._payload
 
+    captured_params = []
+
     class DummyCV2:
         IMWRITE_JPEG_QUALITY = 1
         INTER_NEAREST = 2
@@ -232,6 +234,7 @@ def test_write_jpeg_and_mask_images(monkeypatch, tmp_path):
 
         @staticmethod
         def imencode(ext: str, image, params=None):
+            captured_params.append(params)
             return True, DummyBuf(b"encoded")
 
         @staticmethod
@@ -261,6 +264,7 @@ def test_write_jpeg_and_mask_images(monkeypatch, tmp_path):
     out_path = tmp_path / "snapshots" / "frame.jpg"
     _write_jpeg(out_path, np.zeros((4, 4, 3), dtype=np.uint8))
     assert out_path.exists()
+    assert captured_params == [[DummyCV2.IMWRITE_JPEG_QUALITY, 100]]
 
     png_path = tmp_path / "snapshots" / "frame.png"
     _write_png(png_path, np.zeros((4, 4, 3), dtype=np.uint8))

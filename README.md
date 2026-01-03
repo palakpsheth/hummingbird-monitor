@@ -49,6 +49,7 @@ The web UI is optimized for 📱 **Android Chrome** and is intentionally **no-lo
 
 ### 🛠️ Core features
 - **Automatic capture** of snapshots + full visit video when a bird enters the feeder ROI
+- **Maximum-quality snapshots**: saved at highest JPEG quality (PNG where applicable) for training-ready stills
 - **Species label + probability** logged for each event
 - **Individual re-identification**: “bird A vs bird B” using image embeddings
 - **Name individuals** in the UI
