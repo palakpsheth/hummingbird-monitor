@@ -166,6 +166,7 @@
   </form>
 </div>
 <div class="gallery">
+  {# Each entry in recent is a dict with observation fields (see index route in web.py) #}
   {% for o in recent %}
   {{ observation_card(o) }}
   {% endfor %}

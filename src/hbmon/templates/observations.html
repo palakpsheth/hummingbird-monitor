@@ -59,6 +59,7 @@
 
   {% if obs_view == "cards" %}
     <div class="gallery">
+      {# Each o is an Observation ORM object with computed attributes added in observations route #}
       {% for o in observations %}
         {{ observation_card(o) }}
       {% endfor %}
