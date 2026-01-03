@@ -92,7 +92,12 @@ class HealthChecker:
             conn = psycopg2.connect(**conn_params, connect_timeout=5)
             self.add_result("db_connection", "PASS", f"Connected to {conn_params['host']}:{conn_params['port']}")
         except Exception as e:
-            self.add_result("db_connection", "FAIL", f"Connection failed: {e}")
+            error_type = type(e).__name__
+            safe_msg = (
+                f"Connection failed to {conn_params['host']}:{conn_params['port']}/{conn_params['dbname']} "
+                f"({error_type})"
+            )
+            self.add_result("db_connection", "FAIL", safe_msg)
             return False
         
         cur = conn.cursor()
