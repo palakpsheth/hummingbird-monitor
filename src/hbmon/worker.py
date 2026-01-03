@@ -1232,10 +1232,11 @@ def _load_yolo_model() -> tuple[Any, str]:
     # Ensure parent directory exists for export
     ov_model_dir.parent.mkdir(parents=True, exist_ok=True)
     
-    # Force clean conversion every boot for troubleshooting
-    if ov_model_dir.exists():
-        logger.info(f"Purging existing OpenVINO model cache at {ov_model_dir} for clean boot...")
-        shutil.rmtree(ov_model_dir, ignore_errors=True)
+    # Force clean conversion every boot for troubleshooting if a flag is set
+    if os.getenv("HBMON_FORCE_OPENVINO_CONVERSION") == "1":
+        if ov_model_dir.exists():
+            logger.info(f"Purging existing OpenVINO model cache at {ov_model_dir} for clean boot...")
+            shutil.rmtree(ov_model_dir, ignore_errors=True)
 
     if not ov_model_dir.exists():
         logger.info(f"Exporting {model_name} to OpenVINO format...")
