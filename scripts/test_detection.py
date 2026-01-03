@@ -383,11 +383,19 @@ def run_confidence_sweep(
             min_box_area=600,
             imgsz=imgsz
         )
+        detections = res.get("detections", [])
+        if detections:
+            conf_values = [d.get("conf", 0.0) for d in detections]
+            max_conf = max(conf_values)
+            avg_conf = sum(conf_values) / len(conf_values)
+        else:
+            max_conf = 0.0
+            avg_conf = 0.0
         sweep_data.append({
             "conf": conf,
-            "count": len(res["detections"]),
-            "max_conf": res["max_conf"],
-            "avg_conf": res["avg_conf"]
+            "count": len(detections),
+            "max_conf": max_conf,
+            "avg_conf": avg_conf
         })
     return sweep_data
 
