@@ -14,6 +14,20 @@ import hbmon.worker as worker
 # Mark as integration test
 pytestmark = pytest.mark.integration
 
+
+@pytest.fixture(scope="session")
+def bioclip_ready() -> None:
+    try:
+        from huggingface_hub import hf_hub_download
+    except Exception as exc:
+        pytest.skip(f"Hugging Face Hub dependency unavailable: {exc}")
+
+    try:
+        hf_hub_download("imageomics/bioclip", "open_clip_config.json")
+    except Exception as exc:
+        pytest.skip(f"Bioclip model not available: {exc}")
+
+
 def get_e2e_cases():
     """Discover E2E test cases in tests/integration/test_data/e2e/"""
     base_dir = Path(__file__).parent / "test_data" / "e2e"
@@ -26,7 +40,7 @@ def get_e2e_cases():
 
 @pytest.mark.parametrize("case_dir", get_e2e_cases(), ids=lambda p: p.name)
 @pytest.mark.anyio
-async def test_worker_e2e_data_driven(tmp_path, monkeypatch, case_dir):
+async def test_worker_e2e_data_driven(tmp_path, monkeypatch, case_dir, bioclip_ready):
     """
     Data-driven E2E worker test.
     Reads metadata.json and config.json from case_dir, runs worker against clip.mp4.

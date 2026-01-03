@@ -49,6 +49,7 @@ from contextlib import asynccontextmanager
 import csv
 from datetime import date, datetime, timedelta, timezone
 from functools import partial
+import hashlib
 import importlib.util
 import io
 import json
@@ -151,6 +152,13 @@ from hbmon.clustering import l2_normalize, suggest_split_two_groups
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Derived from this module path; not user-controlled, safe for git cwd.
 _GIT_PATH = shutil.which("git")
+
+# Stream quality presets: CRF values for high/balanced/low quality
+_STREAM_QUALITY_CRF_MAP = {
+    "high": 18,
+    "balanced": 23,
+    "low": 28,
+}
 
 
 def _load_cv2() -> Any:
@@ -576,6 +584,35 @@ def _normalize_candidate_label(raw: str | None) -> str:
         return ""
     clean = raw.strip().lower().replace(" ", "_")
     return clean
+
+
+def _resolve_stream_quality(quality: str | None) -> tuple[str, int, str]:
+    preset = os.getenv("HBMON_VIDEO_PRESET", "fast")
+    default_crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
+    normalized = (quality or "auto").strip().lower()
+    if normalized in _STREAM_QUALITY_CRF_MAP:
+        return normalized, _STREAM_QUALITY_CRF_MAP[normalized], preset
+    return "auto", default_crf, preset
+
+
+def _get_cached_video_path(obs_id: int, quality: str | None, source_path: Path) -> Path:
+    """
+    Generate cached compressed video path for an observation.
+    
+    Args:
+        obs_id: Observation ID
+        quality: Quality preset (high/balanced/low/auto or None)
+        source_path: Path to the original uncompressed video file
+        
+    Returns:
+        Path to the cached compressed video file
+    """
+    _, crf, preset = _resolve_stream_quality(quality)
+    cache_key = f"{obs_id}_{crf}_{preset}"
+    cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
+    
+    temp_dir = media_dir() / ".cache" / "compressed"
+    return temp_dir / f"{source_path.stem}_{cache_hash}.mp4"
 
 
 async def select_prototype_observations(
@@ -3274,6 +3311,7 @@ def make_app() -> Any:
     async def stream_video(
         obs_id: int,
         request: Request,
+        quality: str | None = None,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> Any:
         """
@@ -3318,19 +3356,12 @@ def make_app() -> Any:
         # For range requests, we need to pre-compress to a temp file to support seeking
         # (FFmpeg streaming output doesn't support random access)
         
-        import hashlib
-        
-        # Create cache key from observation ID and compression settings
-        crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
-        preset = os.getenv("HBMON_VIDEO_PRESET", "fast")  # Use "fast" for on-the-fly to reduce latency
-        cache_key = f"{obs_id}_{crf}_{preset}"
-        cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
-        
-        # Use temp directory for compressed cache
+        # Get quality-specific cache path
+        _, crf, preset = _resolve_stream_quality(quality)
         temp_dir = media_dir() / ".cache" / "compressed"
         await _run_blocking(temp_dir.mkdir, parents=True, exist_ok=True)
         
-        cached_path = temp_dir / f"{full_path.stem}_{cache_hash}.mp4"
+        cached_path = _get_cached_video_path(obs_id, quality, full_path)
         
         # Check if cached compressed version exists and is newer than source
         needs_compression = True
@@ -3404,6 +3435,7 @@ def make_app() -> Any:
     @app.get("/api/streaming_bitrate/{obs_id}")
     async def streaming_bitrate(
         obs_id: int,
+        quality: str | None = None,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> dict[str, Any]:
         """
@@ -3425,14 +3457,7 @@ def make_app() -> Any:
             return {"bitrate_mbps": None}
         
         # Get cached compressed video path
-        import hashlib
-        crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
-        preset = os.getenv("HBMON_VIDEO_PRESET", "fast")
-        cache_key = f"{obs_id}_{crf}_{preset}"
-        cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
-        
-        temp_dir = media_dir() / ".cache" / "compressed"
-        cached_path = temp_dir / f"{full_path.stem}_{cache_hash}.mp4"
+        cached_path = _get_cached_video_path(obs_id, quality, full_path)
         
         # Check if cached version exists
         if not await _run_blocking(cached_path.exists):
