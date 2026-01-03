@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from concurrent.futures import Future
 import io
@@ -652,6 +653,29 @@ def test_observation_detail_page(tmp_path, monkeypatch):
     r = client.get(f"/observations/{obs_id}")
     assert r.status_code == 200
     assert "Anna" in r.text
+
+
+def test_observation_detail_prev_next_links(tmp_path, monkeypatch):
+    """Ensure the observation detail page links to adjacent observations."""
+    client = _setup_app(tmp_path, monkeypatch)
+
+    now = datetime.now(timezone.utc)
+    with session_scope() as db:
+        older = Observation(snapshot_path="snap1.jpg", video_path="vid1.mp4", ts=now - timedelta(minutes=2))
+        current = Observation(snapshot_path="snap2.jpg", video_path="vid2.mp4", ts=now - timedelta(minutes=1))
+        newer = Observation(snapshot_path="snap3.jpg", video_path="vid3.mp4", ts=now)
+        db.add_all([older, current, newer])
+        db.commit()
+        older_id = older.id
+        current_id = current.id
+        newer_id = newer.id
+
+    r = client.get(f"/observations/{current_id}")
+    assert r.status_code == 200
+    # Verify that the Previous link points to the older observation
+    assert re.search(rf'<a[^>]+href="/observations/{older_id}"[^>]*>.*?Previous.*?</a>', r.text, re.DOTALL | re.IGNORECASE)
+    # Verify that the Next link points to the newer observation
+    assert re.search(rf'<a[^>]+href="/observations/{newer_id}"[^>]*>.*?Next.*?</a>', r.text, re.DOTALL | re.IGNORECASE)
 
 
 def test_observation_detail_not_found(tmp_path, monkeypatch):

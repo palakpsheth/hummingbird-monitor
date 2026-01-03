@@ -88,11 +88,12 @@ The web UI is optimized for **Android Chrome** and is intentionally **no-login /
 - **Utilities**: Batch processing tools in `observation_tools.py` for extracting and updating video metadata
 
 ### Web UI pages
-- **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for auto-refresh with configurable refresh rate (1s, 2s, 5s, 10s), a live/fallback source indicator, and a detection health indicator); recent observations are paginated with a per-page selector
+- **Dashboard**: recent observations + top individuals (shows a live snapshot with ROI overlay, play/pause controls for auto-refresh with configurable refresh rate (1s, 2s, 5s, 10s), a live/fallback source indicator, and a detection health indicator); recent observations include detection confidence, clip length, and review badges, and both recent observations and top individuals are paginated with per-page selectors
 - **Observations**: filterable, sortable table (including dynamic extra metadata fields such as
   detector confidence) with compact thumbnails, a per-page selector, column visibility checklist (sensitivity
-  fields hidden by default), links to raw/annotated/clip snapshots + video, multi-select + bulk delete, and
-  horizontal scrolling for wide metadata + detail page
+  fields hidden by default), list/card view toggle, links to raw/annotated/clip snapshots + video, multi-select
+  + bulk delete, and horizontal scrolling for wide metadata + detail page (including floating previous/next
+  arrows for easy browsing)
 - **Candidates**: motion-rejected detections for review (thumbnails, overlap/confidence, label form, bulk delete)
 - **Individuals**: sortable list + detail page with prototypical snapshot and a paginated observations table with a per-page selector
 - **ROI calibration**: draw a box on the latest snapshot

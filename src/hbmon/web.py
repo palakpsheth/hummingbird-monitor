@@ -106,7 +106,7 @@ except Exception:  # pragma: no cover
     _FASTAPI_AVAILABLE = False
 
 try:
-    from sqlalchemy import JSON, Integer, cast, delete, desc, func, select  # type: ignore
+    from sqlalchemy import JSON, Integer, and_, cast, delete, desc, func, or_, select  # type: ignore
     from sqlalchemy.dialects.postgresql import JSONB  # type: ignore
     from sqlalchemy.exc import OperationalError  # type: ignore
     from sqlalchemy.orm import Session  # type: ignore
@@ -546,6 +546,30 @@ def get_observation_media_paths(obs: Observation) -> dict[str, str]:
     if not isinstance(media, dict):
         return {}
     return {k: v for k, v in media.items() if isinstance(v, str) and v}
+
+
+def _extract_observation_metrics(obs: Observation) -> tuple[Any | None, Any | None]:
+    """Extracts detection confidence and video duration from observation extra data.
+    
+    Args:
+        obs: Observation instance with extra_json field
+        
+    Returns:
+        Tuple of (detection_confidence, video_duration), either or both may be None
+    """
+    extra = obs.get_extra() or {}
+    detection_confidence = None
+    video_duration = None
+    if isinstance(extra, dict):
+        detection = extra.get("detection")
+        if isinstance(detection, dict):
+            detection_confidence = detection.get("box_confidence")
+        media = extra.get("media")
+        if isinstance(media, dict):
+            video = media.get("video")
+            if isinstance(video, dict):
+                video_duration = video.get("duration")
+    return detection_confidence, video_duration
 
 
 def _normalize_candidate_label(raw: str | None) -> str:
@@ -1223,12 +1247,14 @@ def make_app() -> Any:
         request: Request,
         page: int = 1,
         page_size: int = 10,
+        ind_page: int = 1,
+        ind_page_size: int = 10,
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
         title = os.getenv("HBMON_TITLE", "Hummingbird Monitor")
 
-        cache_key = f"hbmon:index:{page}:{page_size}"
+        cache_key = f"hbmon:index:{page}:{page_size}:{ind_page}:{ind_page_size}"
         cached = await cache_get_json(cache_key)
         if cached:
             top_inds_out = cached["top_inds_out"]
@@ -1237,13 +1263,22 @@ def make_app() -> Any:
             clamped_page_size = cached["clamped_page_size"]
             total_pages = cached["total_pages"]
             total_recent = cached["total_recent"]
+            ind_current_page = cached["ind_current_page"]
+            ind_clamped_page_size = cached["ind_clamped_page_size"]
+            ind_total_pages = cached["ind_total_pages"]
+            total_individuals = cached["total_individuals"]
             last_capture_utc = cached["last_capture_utc"]
         else:
+            total_individuals = (await db.execute(select(func.count(Individual.id)))).scalar_one()
+            ind_current_page, ind_clamped_page_size, ind_total_pages, ind_offset = paginate(
+                total_individuals, page=ind_page, page_size=ind_page_size, max_page_size=100
+            )
             top_inds = (
                 await db.execute(
                     select(Individual.id, Individual.name, Individual.visit_count, Individual.last_seen_at)
-                    .order_by(desc(Individual.visit_count))
-                    .limit(20)
+                    .order_by(desc(Individual.visit_count), desc(Individual.id))
+                    .offset(ind_offset)
+                    .limit(ind_clamped_page_size)
                 )
             ).all()
 
@@ -1273,6 +1308,7 @@ def make_app() -> Any:
                 # Use annotated snapshot if available, otherwise fall back to raw
                 annotated = get_annotated_snapshot_path(o)
                 o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
+                detection_confidence, video_duration = _extract_observation_metrics(o)
                 recent.append(
                     {
                         "id": int(o.id),
@@ -1284,6 +1320,11 @@ def make_app() -> Any:
                         "display_snapshot_path": o.display_snapshot_path,  # type: ignore[attr-defined]
                         "video_path": o.video_path,
                         "species_css": o.species_css,  # type: ignore[attr-defined]
+                        "detection_confidence": (
+                            float(detection_confidence) if detection_confidence is not None else None
+                        ),
+                        "video_duration": float(video_duration) if video_duration is not None else None,
+                        "review_label": o.review_label,
                     }
                 )
 
@@ -1299,6 +1340,10 @@ def make_app() -> Any:
                     "clamped_page_size": clamped_page_size,
                     "total_pages": total_pages,
                     "total_recent": int(total_recent),
+                    "ind_current_page": ind_current_page,
+                    "ind_clamped_page_size": ind_clamped_page_size,
+                    "ind_total_pages": ind_total_pages,
+                    "total_individuals": int(total_individuals),
                     "last_capture_utc": last_capture_utc,
                 },
             )
@@ -1322,6 +1367,11 @@ def make_app() -> Any:
                 recent_total_pages=total_pages,
                 recent_total=int(total_recent),
                 recent_page_size_options=PAGE_SIZE_OPTIONS,
+                ind_page=ind_current_page,
+                ind_page_size=ind_clamped_page_size,
+                ind_total_pages=ind_total_pages,
+                ind_total=int(total_individuals),
+                ind_page_size_options=PAGE_SIZE_OPTIONS,
                 roi=roi,
                 roi_str=roi_str,
                 rtsp_url=rtsp,
@@ -1337,9 +1387,11 @@ def make_app() -> Any:
         individual_id: int | None = None,
         page: int = 1,
         page_size: int = 10,
+        view: str = "list",
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> HTMLResponse:
         s = load_settings()
+        view_mode = "cards" if view == "cards" else "list"
 
         count_query = select(func.count(Observation.id))
         if individual_id is not None:
@@ -1363,6 +1415,9 @@ def make_app() -> Any:
             o.annotated_snapshot_path = annotated  # type: ignore[attr-defined]
             o.clip_snapshot_path = get_clip_snapshot_path(o)  # type: ignore[attr-defined]
             o.background_snapshot_path = get_background_snapshot_path(o)  # type: ignore[attr-defined]
+            detection_confidence, video_duration = _extract_observation_metrics(o)
+            o.detection_confidence = detection_confidence  # type: ignore[attr-defined]
+            o.video_duration = video_duration  # type: ignore[attr-defined]
 
         extra_columns, extra_sort_types, extra_labels = _prepare_observation_extras(obs)
         extra_column_defaults = _default_extra_column_visibility(extra_columns)
@@ -1400,6 +1455,7 @@ def make_app() -> Any:
                 obs_page=current_page,
                 obs_page_size=clamped_page_size,
                 obs_total_pages=total_pages,
+                obs_view=view_mode,
                 limit_options=PAGE_SIZE_OPTIONS,
                 count_shown=len(obs),
                 count_total=int(total),
@@ -1480,6 +1536,36 @@ def make_app() -> Any:
                 "fourcc": fourcc,
             }
 
+        prev_obs_id: int | None = None
+        next_obs_id: int | None = None
+        if _SQLA_AVAILABLE:
+            next_obs_stmt = (
+                select(Observation.id)
+                .where(
+                    or_(
+                        Observation.ts > o.ts,
+                        and_(Observation.ts == o.ts, Observation.id > o.id),
+                    )
+                )
+                .order_by(Observation.ts.asc(), Observation.id.asc())
+                .limit(1)
+            )
+            prev_obs_stmt = (
+                select(Observation.id)
+                .where(
+                    or_(
+                        Observation.ts < o.ts,
+                        and_(Observation.ts == o.ts, Observation.id < o.id),
+                    )
+                )
+                .order_by(Observation.ts.desc(), Observation.id.desc())
+                .limit(1)
+            )
+            prev_result = await db.execute(prev_obs_stmt)
+            next_result = await db.execute(next_obs_stmt)
+            prev_obs_id = prev_result.scalar_one_or_none()
+            next_obs_id = next_result.scalar_one_or_none()
+
         return templates.TemplateResponse(
             request,
             "observation_detail.html",
@@ -1496,6 +1582,8 @@ def make_app() -> Any:
                 background_snapshot_path=background_snapshot_path,
                 mask_path=mask_path,
                 mask_overlay_path=mask_overlay_path,
+                prev_obs_id=prev_obs_id,
+                next_obs_id=next_obs_id,
             ),
         )
 
