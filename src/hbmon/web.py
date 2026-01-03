@@ -1400,7 +1400,7 @@ def make_app() -> Any:
     @app.get("/observations", response_class=HTMLResponse)
     async def observations(
         request: Request,
-        individual_id: int | None = None,
+        individual_id: str | None = None,
         page: int = 1,
         page_size: int = 10,
         view: str = "list",
@@ -1409,9 +1409,19 @@ def make_app() -> Any:
         s = load_settings()
         view_mode = "cards" if view == "cards" else "list"
 
+        # Handle empty string from HTML form for "all" option
+        clean_individual_id: int | None = None
+        if individual_id and individual_id.strip():
+            try:
+                clean_individual_id = int(individual_id)
+            except ValueError:
+                clean_individual_id = None
+        
+        selected_individual = clean_individual_id
+
         count_query = select(func.count(Observation.id))
-        if individual_id is not None:
-            count_query = count_query.where(Observation.individual_id == individual_id)
+        if selected_individual is not None:
+            count_query = count_query.where(Observation.individual_id == selected_individual)
         total = (await db.execute(count_query)).scalar_one()
 
         current_page, clamped_page_size, total_pages, offset = paginate(
@@ -1419,8 +1429,8 @@ def make_app() -> Any:
         )
 
         q = select(Observation).order_by(desc(Observation.ts)).offset(offset).limit(clamped_page_size)
-        if individual_id is not None:
-            q = q.where(Observation.individual_id == individual_id)
+        if selected_individual is not None:
+            q = q.where(Observation.individual_id == selected_individual)
 
         obs = (await db.execute(q)).scalars().all()
         for o in obs:
@@ -1467,7 +1477,7 @@ def make_app() -> Any:
                 extra_column_sort_types=extra_sort_types,
                 extra_column_labels=extra_labels,
                 extra_column_defaults=extra_column_defaults,
-                selected_individual=individual_id,
+                selected_individual=selected_individual,
                 obs_page=current_page,
                 obs_page_size=clamped_page_size,
                 obs_total_pages=total_pages,
