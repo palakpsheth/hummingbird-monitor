@@ -247,11 +247,16 @@ a:hover {
   grid-template-columns: 80px 84px 1fr 120px 220px;
 }
 
+.top-individuals-table {
+  overflow-x: auto;
+}
+
 .top-individuals-table .row {
-  grid-template-columns: 60px minmax(150px, 1fr) 72px minmax(230px, 1.25fr) minmax(200px, 1.05fr) minmax(220px, 1.1fr);
+  grid-template-columns: 60px minmax(150px, 1fr) 72px 240px 210px 230px;
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
+  min-width: 1000px;
 }
 
 .top-individuals-table .row>div {
@@ -270,6 +275,14 @@ a:hover {
 .top-individuals-table .row>div:nth-child(5),
 .top-individuals-table .row>div:nth-child(6) {
   overflow: visible;
+}
+
+@media (max-width: 900px) {
+  .top-individuals-table .row {
+    grid-template-columns: 50px minmax(120px, 1fr) 60px 200px 180px 200px;
+    gap: 10px;
+    min-width: 820px;
+  }
 }
 
 .row.head {
