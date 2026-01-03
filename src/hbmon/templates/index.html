@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from '_macros.html' import observation_card %}
 {% block content %}
 <div class="page-header">
   <h1 class="page-title">Dashboard</h1>
@@ -166,61 +167,7 @@
 </div>
 <div class="gallery">
   {% for o in recent %}
-  {% set hue = ((o.individual_id or 0) * 47) % 360 %}
-  <div class="thumb">
-    <div class="thumb-media">
-      <a href="/observations/{{ o.id }}"><img src="/media/{{ o.display_snapshot_path }}" loading="lazy"
-          alt="Observation {{ o.id }}" /></a>
-      {% if o.review_label %}
-      {% set review_label = o.review_label %}
-      {% if review_label == "true_positive" %}
-      <span class="thumb-status-badge thumb-status-badge--tp">TP</span>
-      {% elif review_label == "false_positive" %}
-      <span class="thumb-status-badge thumb-status-badge--fp">FP</span>
-      {% elif review_label == "unknown" %}
-      <span class="thumb-status-badge thumb-status-badge--unknown">U</span>
-      {% endif %}
-      {% endif %}
-    </div>
-    <div class="meta">
-      <div>
-        <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
-        <span class="muted">({{ "%.2f"|format(o.species_prob) }})</span>
-      </div>
-
-      <div>
-        Ind:
-        <a href="/individuals/{{ o.individual_id }}">
-          <span class="badge ind-pill" style="--ind-hue: {{ hue }};">{{ o.individual_id }}</span>
-        </a>
-        · sim {{ "%.3f"|format(o.match_score) }}
-      </div>
-
-      <div class="thumb-metrics">
-        <span>Conf:
-          {% if o.detection_confidence is not none %}
-          <strong>{{ "%.3f"|format(o.detection_confidence) }}</strong>
-          {% else %}
-          —
-          {% endif %}
-        </span>
-        <span>Clip:
-          {% if o.video_duration is not none %}
-          <strong>{{ "%.1f"|format(o.video_duration) }}s</strong>
-          {% else %}
-          —
-          {% endif %}
-        </span>
-      </div>
-
-      <div><span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span></div>
-
-      <div>
-        <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a>
-        · <a href="/observations/{{ o.id }}">Details</a>
-      </div>
-    </div>
-  </div>
+  {{ observation_card(o) }}
   {% endfor %}
 </div>
 {% endblock %}
