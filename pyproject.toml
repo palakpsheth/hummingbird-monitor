@@ -65,6 +65,13 @@ markers = [
     "unit: marks tests as unit tests (lightweight, no ML dependencies)",
 ]
 # All tests run by default. Use -m 'not integration' to skip integration tests locally.
+filterwarnings = [
+    # Ignore websockets deprecation warnings from uvicorn (external dependency)
+    "ignore:websockets.legacy is deprecated:DeprecationWarning:websockets.legacy",
+    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning:uvicorn.protocols.websockets.websockets_impl",
+    # Ignore PyTorch tracer warnings from ultralytics YOLO (external dependency)
+    "ignore:Iterating over a tensor might cause the trace to be incorrect:torch.jit.TracerWarning:ultralytics.utils.tal",
+]
 
 [tool.coverage.report]
 show_missing = true
