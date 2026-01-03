@@ -58,8 +58,14 @@ class HealthChecker:
         icon = {"PASS": "✓", "FAIL": "✗", "WARN": "⚠"}.get(status, "?")
         print(f"  [{icon}] {component}: {message}")
         if details:
+            # Sensitive keys that should be redacted when logging
+            sensitive_keys = {"password", "passwd", "secret", "token", "api_key", "auth"}
             for k, v in details.items():
-                print(f"       {k}: {v}")
+                # Redact sensitive values
+                if k.lower() in sensitive_keys or any(s in k.lower() for s in sensitive_keys):
+                    print(f"       {k}: [REDACTED]")
+                else:
+                    print(f"       {k}: {v}")
     
     def check_database(self) -> bool:
         """Check database connectivity and recent write activity."""
