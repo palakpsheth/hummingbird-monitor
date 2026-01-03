@@ -548,6 +548,30 @@ def get_observation_media_paths(obs: Observation) -> dict[str, str]:
     return {k: v for k, v in media.items() if isinstance(v, str) and v}
 
 
+def _extract_observation_metrics(obs: Observation) -> tuple[Any | None, Any | None]:
+    """Extracts detection confidence and video duration from observation extra data.
+    
+    Args:
+        obs: Observation instance with extra_json field
+        
+    Returns:
+        Tuple of (detection_confidence, video_duration), either or both may be None
+    """
+    extra = obs.get_extra() or {}
+    detection_confidence = None
+    video_duration = None
+    if isinstance(extra, dict):
+        detection = extra.get("detection")
+        if isinstance(detection, dict):
+            detection_confidence = detection.get("box_confidence")
+        media = extra.get("media")
+        if isinstance(media, dict):
+            video = media.get("video")
+            if isinstance(video, dict):
+                video_duration = video.get("duration")
+    return detection_confidence, video_duration
+
+
 def _normalize_candidate_label(raw: str | None) -> str:
     if not raw:
         return ""
@@ -1284,18 +1308,7 @@ def make_app() -> Any:
                 # Use annotated snapshot if available, otherwise fall back to raw
                 annotated = get_annotated_snapshot_path(o)
                 o.display_snapshot_path = annotated if annotated else o.snapshot_path  # type: ignore[attr-defined]
-                extra = o.get_extra() or {}
-                detection_confidence = None
-                video_duration = None
-                if isinstance(extra, dict):
-                    detection = extra.get("detection")
-                    if isinstance(detection, dict):
-                        detection_confidence = detection.get("box_confidence")
-                    media = extra.get("media")
-                    if isinstance(media, dict):
-                        video = media.get("video")
-                        if isinstance(video, dict):
-                            video_duration = video.get("duration")
+                detection_confidence, video_duration = _extract_observation_metrics(o)
                 recent.append(
                     {
                         "id": int(o.id),
@@ -1402,18 +1415,7 @@ def make_app() -> Any:
             o.annotated_snapshot_path = annotated  # type: ignore[attr-defined]
             o.clip_snapshot_path = get_clip_snapshot_path(o)  # type: ignore[attr-defined]
             o.background_snapshot_path = get_background_snapshot_path(o)  # type: ignore[attr-defined]
-            extra = o.get_extra() or {}
-            detection_confidence = None
-            video_duration = None
-            if isinstance(extra, dict):
-                detection = extra.get("detection")
-                if isinstance(detection, dict):
-                    detection_confidence = detection.get("box_confidence")
-                media = extra.get("media")
-                if isinstance(media, dict):
-                    video = media.get("video")
-                    if isinstance(video, dict):
-                        video_duration = video.get("duration")
+            detection_confidence, video_duration = _extract_observation_metrics(o)
             o.detection_confidence = detection_confidence  # type: ignore[attr-defined]
             o.video_duration = video_duration  # type: ignore[attr-defined]
 
