@@ -171,7 +171,7 @@
 <script>
     const observationId = {{ observation.id }};
     let currentFrameId = {{ current_frame.id if current_frame else 'null' }};
-    let boxes = {{ current_frame.boxes | tojson if current_frame else '[]' }};
+    let boxes = {{ current_frame.box_data | tojson if current_frame else '[]' }};
     let birdPresent = {{ 'true' if current_frame and current_frame.bird_present else 'false' }};
 
     const canvas = document.getElementById('annotationCanvas');

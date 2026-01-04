@@ -891,6 +891,27 @@ def test_health_endpoint(tmp_path, monkeypatch):
     assert "version" in data
 
 
+def test_system_load_endpoint(tmp_path, monkeypatch):
+    """Test the system load API endpoint."""
+    import hbmon.utils as utils_module
+    
+    # Mock psutil to avoid timing issues in tests
+    class MockMem:
+        percent = 60.0
+    
+    monkeypatch.setattr(utils_module.psutil, "cpu_percent", lambda interval=None: 25.5)
+    monkeypatch.setattr(utils_module.psutil, "virtual_memory", lambda: MockMem())
+    monkeypatch.setattr(utils_module.shutil, "which", lambda x: None)  # No GPU tools available
+    
+    client = _setup_app(tmp_path, monkeypatch)
+    r = client.get("/api/system_load")
+    assert r.status_code == 200
+    data = r.json()
+    assert "cpu" in data
+    assert "mem" in data
+    assert data["gpu_intel"] is None
+    assert data["gpu_nvidia"] is None
+
 def test_get_roi_endpoint(tmp_path, monkeypatch):
     """Test the get ROI API endpoint."""
     client = _setup_app(tmp_path, monkeypatch)

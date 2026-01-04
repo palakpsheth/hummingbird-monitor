@@ -26,6 +26,7 @@ else:  # pragma: no cover - optional dependency
     RedisError = Exception  # type: ignore
 
 _REDIS_CLIENT: "redis.Redis | None" = None
+_REDIS_SYNC_CLIENT: "Any | None" = None
 
 
 def get_cache_ttl() -> int:
@@ -46,6 +47,21 @@ def get_redis_client() -> "redis.Redis | None":
     if _REDIS_CLIENT is None:
         _REDIS_CLIENT = redis.from_url(url, decode_responses=True)
     return _REDIS_CLIENT
+
+
+def get_redis_sync_client() -> "Any | None":
+    """Get synchronous Redis client for use in non-async contexts (threads)."""
+    global _REDIS_SYNC_CLIENT
+    if not _REDIS_AVAILABLE:
+        return None
+    url = get_redis_url()
+    if not url:
+        return None
+    if _REDIS_SYNC_CLIENT is None:
+        # Import synchronous Redis client
+        import redis as redis_sync
+        _REDIS_SYNC_CLIENT = redis_sync.from_url(url, decode_responses=True)
+    return _REDIS_SYNC_CLIENT
 
 
 async def cache_get_json(key: str) -> Any | None:
@@ -74,3 +90,21 @@ async def cache_set_json(key: str, value: Any, ttl_seconds: int | None = None) -
         await client.setex(key, ttl, payload)
     except RedisError:
         return None
+
+
+def cache_set_json_sync(key: str, value: Any, ttl_seconds: int | None = None) -> bool:
+    """
+    Synchronous version for use in threads (annotator monitoring).
+    Returns True if successful, False otherwise.
+    """
+    client = get_redis_sync_client()
+    if not client:
+        return False
+    
+    ttl = int(ttl_seconds or get_cache_ttl())
+    try:
+        data = json.dumps(value, separators=(",", ":"))
+        client.setex(key, ttl, data)
+        return True
+    except (RedisError, Exception):
+        return False

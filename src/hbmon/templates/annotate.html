@@ -155,6 +155,13 @@
     </div>
     {% endif %}
 
+    <!-- Observation Cards -->
+    <div class="gallery" id="annotation-gallery">
+        {% from '_macros.html' import observation_card %}
+        {% for o in observations %}
+        {{ observation_card(o) }}
+        {% endfor %}
+    </div>
 </div>
 
 <script>
@@ -173,6 +180,87 @@
         }
         window.location = url;
     }
+
+    // Auto-refresh annotation cards every 5 seconds
+    (function () {
+        const gallery = document.getElementById('annotation-gallery');
+        if (!gallery) return;
+
+        let refreshTimer = null;
+        let queueStatusCache = {};
+
+        async function fetchQueueStatus() {
+            try {
+                const response = await fetch('/api/annotate/queue_status', { cache: 'no-store' });
+                if (!response.ok) return {};
+                queueStatusCache = await response.json();
+                return queueStatusCache;
+            } catch (e) {
+                console.error('Failed to fetch queue status:', e);
+                return {};
+            }
+        }
+
+        async function refreshCards() {
+            // Fetch queue status
+            const queueStatus = await fetchQueueStatus();
+
+            // Update badges for preprocessing observations
+            const cards = document.querySelectorAll('[data-obs-id][data-annotation-state="preprocessing"]');
+            cards.forEach(card => {
+                const obsId = card.dataset.obsId;
+                const badgeEl = card.querySelector('.badge');
+
+                if (!badgeEl) return;
+
+                const status = queueStatus[obsId];
+                if (status === 'queued') {
+                    badgeEl.textContent = 'Queued';
+                    badgeEl.className = 'badge badge-info';
+                } else if (status === 'processing') {
+                    badgeEl.textContent = 'Processing';
+                    badgeEl.className = 'badge badge-warning';
+                } else if (status === 'failed') {
+                    badgeEl.textContent = 'Failed';
+                    badgeEl.className = 'badge badge-danger';
+                }
+            });
+
+            // Refresh progress bars by fetching updated page
+            try {
+                const url = new URL(window.location.href);
+                const response = await fetch(url.pathname + url.search, { cache: 'no-store' });
+                if (!response.ok) return;
+
+                const html = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const newGallery = doc.getElementById('annotation-gallery');
+
+                if (newGallery && gallery) {
+                    const scrollY = window.scrollY;
+                    gallery.innerHTML = newGallery.innerHTML;
+                    window.scrollTo(0, scrollY);
+                }
+            } catch (e) {
+                console.error('Failed to refresh cards:', e);
+            }
+        }
+
+        // Start auto-refresh
+        refreshTimer = setInterval(refreshCards, 5000);
+        fetchQueueStatus(); // Initial fetch
+
+        // Stop refreshing when page is hidden
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'hidden') {
+                if (refreshTimer) clearInterval(refreshTimer);
+            } else {
+                refreshTimer = setInterval(refreshCards, 5000);
+                refreshCards();
+            }
+        });
+    })();
 
     async function resetAnnotation(obsId, event) {
         event.preventDefault();

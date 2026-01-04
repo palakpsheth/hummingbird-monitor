@@ -12,6 +12,12 @@ This repository contains **hbmon** (`hummingbird-monitor`), a LAN-only hummingbi
 - **Cache/Queue**: Redis
 - **Deployment**: Docker Compose (multi-container: web, stream, worker, proxy, db, redis, wyze-bridge)
 
+## Instructions for AI Agents
+
+- **Deployments**: ALWAYS use the `Makefile` to control deployments (e.g., `make docker-up-intel`). Do not call `docker compose` directly for deployments as the `Makefile` handles critical build arguments like `INSTALL_OPENVINO`.
+- **Accessing the App**: For browser-based testing or verification, the web application is located at `http://localhost:8000`.
+- **Source Code Syncing**: The `src/` directory is **NOT** bind-mounted into the containers. For any changes in the source code to take effect, you **MUST** restart the deployment (e.g., `make docker-up-intel`) to rebuild the images and recreate the containers.
+
 ## Code Style & Conventions
 
 ### General Python Style

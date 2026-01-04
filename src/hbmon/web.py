@@ -145,8 +145,9 @@ from hbmon.db import (
     is_async_db_available,
 )
 from hbmon.models import Candidate, Embedding, Individual, Observation, _to_utc
-from hbmon.schema import HealthOut, RoiOut
+from hbmon.schema import HealthOut, RoiOut, SystemLoad
 from hbmon.clustering import l2_normalize, suggest_split_two_groups
+from hbmon.utils import get_system_stats
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Derived from this module path; not user-controlled, safe for git cwd.
@@ -1877,7 +1878,7 @@ def make_app() -> Any:
                     select(AnnotationBox)
                     .where(AnnotationBox.frame_id == current_frame.id)
                 )).scalars().all()
-                current_frame.boxes = [  # type: ignore[attr-defined]
+                current_frame.box_data = [  # type: ignore[attr-defined]
                     {
                         "class_id": b.class_id,
                         "x": b.x,
@@ -1890,7 +1891,7 @@ def make_app() -> Any:
                     for b in box_rows
                 ]
             else:
-                current_frame.boxes = []  # type: ignore[attr-defined]
+                current_frame.box_data = []  # type: ignore[attr-defined]
 
         frames_total = len(frames)
         frames_reviewed = sum(1 for f in frames if f.status == "complete")
@@ -2249,6 +2250,104 @@ def make_app() -> Any:
             )
         except ImportError:
             raise HTTPException(status_code=501, detail="Job queue not available")
+
+    @app.get("/api/annotate/queue_status")
+    async def get_annotation_queue_status() -> dict[str, Any]:
+        """
+        Get RQ job status for all active annotation preprocessing jobs.
+        Returns a mapping of {obs_id: job_status} for observations with jobs.
+        """
+        from hbmon.annotation_jobs import _get_queue
+        
+        queue = _get_queue()
+        if not queue:
+            return {}
+        
+        try:
+            from rq.job import Job
+            from rq.registry import StartedJobRegistry, FinishedJobRegistry, FailedJobRegistry
+            
+            status_map: dict[str, str] = {}
+            
+            # Get all job IDs from different registries
+            started_reg = StartedJobRegistry(queue=queue)
+            finished_reg = FinishedJobRegistry(queue=queue)
+            failed_reg = FailedJobRegistry(queue=queue)
+            
+            # Check queued jobs
+            for job_id in queue.job_ids:
+                try:
+                    job = Job.fetch(job_id, connection=queue.connection)
+                    obs_id = job.kwargs.get("obs_id") if job.kwargs else None
+                    if obs_id:
+                        status_map[str(obs_id)] = "queued"
+                except Exception:
+                    continue
+            
+            # Check started jobs (currently processing)
+            for job_id in started_reg.get_job_ids():
+                try:
+                    job = Job.fetch(job_id, connection=queue.connection)
+                    obs_id = job.kwargs.get("obs_id") if job.kwargs else None
+                    if obs_id:
+                        status_map[str(obs_id)] = "processing"
+                except Exception:
+                    continue
+            
+            # Check finished jobs (recently completed)
+            for job_id in finished_reg.get_job_ids():
+                try:
+                    job = Job.fetch(job_id, connection=queue.connection)
+                    obs_id = job.kwargs.get("obs_id") if job.kwargs else None
+                    if obs_id:
+                        status_map[str(obs_id)] = "finished"
+                except Exception:
+                    continue
+                    
+            # Check failed jobs
+            for job_id in failed_reg.get_job_ids():
+                try:
+                    job = Job.fetch(job_id, connection=queue.connection)
+                    obs_id = job.kwargs.get("obs_id") if job.kwargs else None
+                    if obs_id:
+                        status_map[str(obs_id)] = "failed"
+                except Exception:
+                    continue
+                    
+            # Check for stalled jobs based on last_updated timestamp
+            # Jobs in preprocessing state that haven't updated in STALL_TIMEOUT are considered stalled
+            import os
+            from datetime import datetime, timezone, timedelta
+            stall_timeout_minutes = int(os.environ.get("HBMON_ANNOTATION_STALL_TIMEOUT_MINUTES", "15"))
+            stall_threshold = datetime.now(timezone.utc) - timedelta(minutes=stall_timeout_minutes)
+            
+            async with get_async_db() as db:
+                # Get observations in preprocessing state
+                preprocessing_obs = await db.execute(
+                    select(Observation).where(
+                        Observation.id.in_([int(k) for k in status_map.keys() if status_map[k] == "processing"])
+                    )
+                )
+                for obs in preprocessing_obs.scalars():
+                    extra = obs.get_extra() or {}
+                    ann_summary = extra.get("annotation_summary", {})
+                    last_updated_str = ann_summary.get("last_updated")
+                    
+                    if last_updated_str:
+                        try:
+                            # Parse ISO format with Z suffix
+                            last_updated = datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
+                            if last_updated < stall_threshold:
+                                status_map[str(obs.id)] = "failed"
+                        except Exception:
+                            # If timestamp parsing fails, keep current status
+                            pass
+                    
+            return status_map
+            
+        except Exception as e:
+            logger.error(f"Error getting queue status: {e}")
+            return {}
 
     @app.post("/api/annotate/{obs_id}/reset")
     async def api_annotate_reset(
@@ -3710,13 +3809,29 @@ def make_app() -> Any:
             db_ok = False
             latest_data = None
 
+        load_data = await cache_get_json("system_load")
+        system_load = None
+        if load_data:
+            system_load = SystemLoad(**load_data)
+
         return HealthOut(
             ok=True,
             version="0.1.0",
             db_ok=db_ok,
             last_observation_utc=(latest_data["ts_utc"] if latest_data else None),
             rtsp_url=(s.rtsp_url or None),
+            system_load=system_load,
         )
+
+    @app.get("/api/system_load", response_model=SystemLoad)
+    async def get_system_load() -> SystemLoad:
+        """Get real-time system load statistics.
+        
+        Returns CPU, memory, and GPU utilization percentages.
+        GPU fields are None if no supported GPU is detected.
+        """
+        stats = await _run_blocking(get_system_stats)
+        return SystemLoad(**stats)
 
     @app.get("/api/roi", response_model=RoiOut)
     async def get_roi() -> RoiOut:

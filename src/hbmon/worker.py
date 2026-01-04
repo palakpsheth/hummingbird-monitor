@@ -77,6 +77,7 @@ from hbmon.config import (
     load_settings,
     media_dir,
 )
+from hbmon.utils import log_system_stats_from_api
 from hbmon.db import async_session_scope, init_async_db
 from hbmon.models import Candidate, Embedding, Individual, Observation
 from hbmon.observation_tools import extract_video_metadata
@@ -1439,6 +1440,15 @@ async def run_worker() -> None:
     arrival_window_frames = int(20.0 * arr_sec)
     arrival_buffer: deque[np.ndarray] = deque(maxlen=arrival_window_frames)
     logger.info(f"Arrival buffer initialized: {arrival_window_frames} frames ({arr_sec:.1f}s)")
+    
+    # Create readiness signal file for healthchecks
+    try:
+        with open("/tmp/ready", "w") as f:
+            f.write("OK")
+        logger.info("Worker ready: Created /tmp/ready")
+    except Exception as e:
+        logger.error(f"Failed to create readiness signal file: {e}")
+
     while True:
         s = get_settings()
         if not s.rtsp_url:
@@ -1490,6 +1500,12 @@ async def run_worker() -> None:
         xoff, yoff = 0, 0
         if s.roi:
             roi_frame, (xoff, yoff) = _apply_roi(frame, s)
+
+        # Log system stats periodically (fetches from web API, non-blocking)
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, log_system_stats_from_api)
+        except Exception:
+            pass
 
         # Debug Logging
         debug_every = float(os.getenv("HBMON_DEBUG_EVERY_SECONDS", "10"))

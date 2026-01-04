@@ -21,6 +21,22 @@ except ImportError:
     # Fallback import if running from scripts dir
     from download_annotation_models import download_models
 
+from hbmon.utils import log_system_stats_from_api
+import threading
+import time
+
+
+def monitor_loop():
+    """Background thread to periodically log system stats (non-blocking to main worker)."""
+    logger = logging.getLogger("system_monitor")
+    while True:
+        try:
+            log_system_stats_from_api()
+        except Exception as e:
+            logger.debug(f"Monitor error: {e}")
+        time.sleep(10)  # Check every 10s, function throttles to 60s
+
+
 def main():
     debug = os.environ.get("HBMON_ANNOTATOR_DEBUG", "0") == "1"
     
@@ -60,11 +76,18 @@ def main():
         worker = Worker(queues)
         logger.info(f"Worker {worker.key} started, listening on {queues}")
         
-        # Start work loop
-        # We pass logging_level to let RQ configure its internal logger mostly,
-        # but our root logger set via basicConfig should handle app logs.
-        # Note: RQ might fork for jobs (default). 
-        # Forked processes inherit file descriptors (logs), so it should work.
+        # Start monitoring thread (daemon - won't block shutdown)
+        t = threading.Thread(target=monitor_loop, daemon=True)
+        t.start()
+        
+        # Create readiness signal file for healthchecks
+        try:
+            with open("/tmp/ready", "w") as f:
+                f.write("OK")
+            logger.info("Annotator ready: Created /tmp/ready")
+        except Exception as e:
+            logger.error(f"Failed to create readiness signal file: {e}")
+
         try:
              worker.work(logging_level="DEBUG" if debug else "INFO")
         except Exception as e:

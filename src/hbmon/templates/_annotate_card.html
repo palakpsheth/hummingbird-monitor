@@ -1,11 +1,12 @@
 {# Annotation observation card - used in annotate.html #}
-<div class="annotate-card" data-state="{{ obs.annotation_state }}">
+<div class="annotate-card" data-obs-id="{{ obs.id }}" data-annotation-state="{{ obs.annotation_state }}"
+    data-state="{{ obs.annotation_state }}">
     <a href="/annotate/{{ obs.id }}">
         <div class="card-thumb">
             <img src="/media/{{ obs.display_snapshot_path }}" alt="Observation {{ obs.id }}" loading="lazy"
                 style="width: 100%; height: 100%; object-fit: cover;" />
             {% if obs.annotation_state == 'preprocessing' %}
-            <div class="card-overlay">⏳ Processing...</div>
+            <div class="card-overlay" id="overlay-{{ obs.id }}">⏳ Processing...</div>
             {% endif %}
         </div>
     </a>
@@ -31,12 +32,16 @@
         {% set summary = obs.annotation_summary %}
         {% set total = summary.get('total_frames', 0) if summary is mapping else summary.total_frames %}
         {% set reviewed = summary.get('reviewed_frames', 0) if summary is mapping else summary.reviewed_frames %}
+        {% set detected = summary.get('frames_detected', 0) if summary is mapping else summary.get('frames_detected', 0)
+        %}
+        {% set current = detected if obs.annotation_state == 'preprocessing' else reviewed %}
+
         <div class="progress-bar">
-            <div class="progress-fill" style="width: {{ (reviewed / total * 100) if total > 0 else 0 }}%">
+            <div class="progress-fill" style="width: {{ (current / total * 100) if total > 0 else 0 }}%">
             </div>
         </div>
         <div class="progress-text">
-            {{ reviewed }} / {{ total }} frames
+            {{ current }} / {{ total }} frames
         </div>
         {% else %}
         <div class="progress-text muted">Not started</div>
@@ -46,7 +51,10 @@
             {% if obs.annotation_state == 'available' or obs.annotation_state == 'pending' %}
             <a href="/api/annotate/{{ obs.id }}/start" class="btn btn-sm">Start Annotation</a>
             {% elif obs.annotation_state == 'preprocessing' %}
-            <span class="status-text">⏳ Processing...</span>
+            <span class="status-text" id="status-{{ obs.id }}">⏳ Processing...</span>
+            <button class="btn btn-sm btn-warning" id="requeue-{{ obs.id }}"
+                onclick="requeueAnnotation({{ obs.id }}, event)" style="display:none;"
+                title="Resume from checkpoint">Requeue</button>
             <button class="btn btn-sm btn-danger" onclick="resetAnnotation({{ obs.id }}, event)">Reset</button>
             {% elif obs.annotation_state == 'in_review' %}
             <a href="/annotate/{{ obs.id }}" class="btn btn-sm btn-primary">Review</a>

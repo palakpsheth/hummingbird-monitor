@@ -88,6 +88,34 @@ class AnnotationDetector:
         self._yolo = None
         self._sam = None
         self._initialized = False
+        self.bird_class_id: int | None = None
+
+    def _resolve_bird_class_id(self) -> None:
+        """Resolve the class ID for 'bird' (or 'hummingbird') from the model."""
+        if self._yolo is None:
+            return
+            
+        # Default COCO bird class is usually 14, but we check names dynamically
+        names = getattr(self._yolo, 'names', {})
+        target_id = None
+        
+        # Handle dict or list names
+        if isinstance(names, dict):
+            for k, v in names.items():
+                if str(v).strip().lower() in ('bird', 'hummingbird'):
+                    target_id = int(k)
+                    break
+        elif isinstance(names, (list, tuple)):
+            for i, v in enumerate(names):
+                if str(v).strip().lower() in ('bird', 'hummingbird'):
+                    target_id = int(i)
+                    break
+                    
+        if target_id is not None:
+            self.bird_class_id = target_id
+            logger.info(f"Resolved annotator bird_class_id={target_id} from model")
+        else:
+            logger.warning("Could not resolve 'bird' class ID from model names. Detections will be unfiltered.")
 
     def _load_yolo(self) -> Any:
         """Load YOLO model for annotation detection."""
@@ -194,6 +222,7 @@ class AnnotationDetector:
             return
             
         self._load_yolo()
+        self._resolve_bird_class_id()
         if self.use_sam:
             self._load_sam()
         
@@ -225,7 +254,8 @@ class AnnotationDetector:
         predict_imgsz = resolve_predict_imgsz(imgsz_env, frame.shape)
         
         # Run YOLO detection
-        results = yolo(frame, conf=self.confidence, verbose=False, imgsz=predict_imgsz)
+        classes = [self.bird_class_id] if self.bird_class_id is not None else None
+        results = yolo(frame, conf=self.confidence, verbose=False, imgsz=predict_imgsz, classes=classes)
         
         if not results or len(results) == 0:
             return []
@@ -368,7 +398,8 @@ class AnnotationDetector:
         # Run batch detection
         debug = os.environ.get("HBMON_ANNOTATOR_DEBUG", "0") == "1"
         t0 = time.time()
-        results = yolo(frames, conf=self.confidence, verbose=debug, imgsz=predict_imgsz)
+        classes = [self.bird_class_id] if self.bird_class_id is not None else None
+        results = yolo(frames, conf=self.confidence, verbose=debug, imgsz=predict_imgsz, classes=classes)
         t_infer = (time.time() - t0) * 1000
         
         backend = os.environ.get("HBMON_INFERENCE_BACKEND", "cpu").upper()

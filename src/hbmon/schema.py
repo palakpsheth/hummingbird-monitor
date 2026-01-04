@@ -71,12 +71,19 @@ if _PYDANTIC_AVAILABLE:
         x2: float
         y2: float
 
+    class SystemLoad(BaseModel):
+        cpu: float
+        mem: float
+        gpu_intel: float | None = None
+        gpu_nvidia: float | None = None
+
     class HealthOut(BaseModel):
         ok: bool
         version: str
         db_ok: bool
         last_observation_utc: str | None = None
         rtsp_url: str | None = None
+        system_load: SystemLoad | None = None
 
     class ObservationOut(BaseModel):
         id: int
@@ -126,12 +133,20 @@ else:
         y2: float
 
     @_dataclass
+    class SystemLoad:
+        cpu: float
+        mem: float
+        gpu_intel: Optional[float] = None
+        gpu_nvidia: Optional[float] = None
+
+    @_dataclass
     class HealthOut:
         ok: bool
         version: str
         db_ok: bool
         last_observation_utc: Optional[str] = None
         rtsp_url: Optional[str] = None
+        system_load: Optional[SystemLoad] = None
 
     @_dataclass
     class ObservationOut:

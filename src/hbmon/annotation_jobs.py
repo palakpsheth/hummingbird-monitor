@@ -362,45 +362,61 @@ def preprocess_observation_job(obs_id: int, resume: bool = False) -> dict[str, A
             })
             db.commit()
         
-        # Step 1: Extract frames
-        logger.info(f"Extracting frames from {video_path}")
-        frames_data = _extract_frames_sync(obs_id, video_path)
-        result["frames_extracted"] = len(frames_data)
-        
-        if not frames_data:
-            result["status"] = "error"
-            result["error"] = "No frames extracted"
-            return result
-        
-        # Step 2: Create AnnotationFrame records
-        with get_sync_session() as db:
-            for idx, frame_path in frames_data:
-                db_frame = AnnotationFrame(
-                    observation_id=obs_id,
-                    frame_index=idx,
-                    frame_path=str(frame_path),
-                    bird_present=False,
-                    status="queued",
-                )
-                db.add(db_frame)
-            db.commit()
-            
-            # Update summary with frame counts so UI shows progress immediately
+        # Step 1: Extract frames (skip if resuming from checkpoint)
+        if checkpoint:
+            # Resuming - fetch existing frames from database
+            logger.info(f"Resuming from checkpoint - loading existing frames from DB")
+            from sqlalchemy import select
             with get_sync_session() as db:
-                obs = db.get(Observation, obs_id)
-                if obs:
-                    total_count = len(frames_data)
-                    # Keep state as preprocessing while detection runs
-                    current_summary = (obs.get_extra() or {}).get("annotation_summary", {})
-                    obs.merge_extra({
-                        "annotation_summary": {
-                            **current_summary,
-                            "total_frames": total_count,
-                            "pending_frames": total_count,
-                            "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
-                        }
-                    })
-                    db.commit()
+                existing_frames = db.execute(
+                    select(AnnotationFrame)
+                    .where(AnnotationFrame.observation_id == obs_id)
+                    .order_by(AnnotationFrame.frame_index)
+                ).scalars().all()
+                
+                frames_data = [(f.frame_index, Path(f.frame_path)) for f in existing_frames]
+                result["frames_extracted"] = len(frames_data)
+                logger.info(f"Loaded {len(frames_data)} existing frames, will resume from frame {checkpoint.get('last_frame_idx', -1) + 1}")
+        else:
+            # Fresh start - extract frames from video
+            logger.info(f"Extracting frames from {video_path}")
+            frames_data = _extract_frames_sync(obs_id, video_path)
+            result["frames_extracted"] = len(frames_data)
+            
+            if not frames_data:
+                result["status"] = "error"
+                result["error"] = "No frames extracted"
+                return result
+            
+            # Step 2: Create AnnotationFrame records
+            with get_sync_session() as db:
+                for idx, frame_path in frames_data:
+                    db_frame = AnnotationFrame(
+                        observation_id=obs_id,
+                        frame_index=idx,
+                        frame_path=str(frame_path),
+                        bird_present=False,
+                        status="queued",
+                    )
+                    db.add(db_frame)
+                db.commit()
+                
+                # Update summary with frame counts so UI shows progress immediately
+                with get_sync_session() as db:
+                    obs = db.get(Observation, obs_id)
+                    if obs:
+                        total_count = len(frames_data)
+                        # Keep state as preprocessing while detection runs
+                        current_summary = (obs.get_extra() or {}).get("annotation_summary", {})
+                        obs.merge_extra({
+                            "annotation_summary": {
+                                **current_summary,
+                                "total_frames": total_count,
+                                "pending_frames": total_count,
+                                "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                            }
+                        })
+                        db.commit()
         
         # Step 3: Run auto-detection
         logger.info(f"Running detection on {len(frames_data)} frames")
@@ -493,19 +509,19 @@ def preprocess_observation_job(obs_id: int, resume: bool = False) -> dict[str, A
                 pct = (result["frames_detected"] / len(frames_data)) * 100
                 logger.info(f"Obs {obs_id}: Processed {result['frames_detected']}/{len(frames_data)} frames ({pct:.1f}%)")
 
-                # Update DB progress every 5 batches (approx 40 frames)
-                if (i // batch_size) % 5 == 0:
-                    obs_update = db.get(Observation, obs_id)
-                    if obs_update:
-                        current_summary = (obs_update.get_extra() or {}).get("annotation_summary", {})
-                        obs_update.merge_extra({
-                            "annotation_summary": {
-                                **current_summary,
-                                "frames_detected": result["frames_detected"],
-                                "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
-                            }
-                        })
-                        db.commit()
+                # Update DB progress every batch (since batch_size=1)
+                # if (i // batch_size) % 1 == 0:
+                obs_update = db.get(Observation, obs_id)
+                if obs_update:
+                    current_summary = (obs_update.get_extra() or {}).get("annotation_summary", {})
+                    obs_update.merge_extra({
+                        "annotation_summary": {
+                            **current_summary,
+                            "frames_detected": result["frames_detected"],
+                            "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                        }
+                    })
+                    db.commit()
                 
                 # Checkpoint every CHECKPOINT_INTERVAL batches
                 if (i // batch_size) % CHECKPOINT_INTERVAL == 0:
