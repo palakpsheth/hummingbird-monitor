@@ -24,15 +24,18 @@ except ImportError:
 from hbmon.utils import log_system_stats_from_api
 import threading
 import time
+from pathlib import Path
 
 
 def monitor_loop():
-    """Background thread to periodically log system stats (non-blocking to main worker)."""
+    """Background thread to periodically log system stats and update heartbeat."""
     logger = logging.getLogger("system_monitor")
 
     while True:
         try:
             log_system_stats_from_api()
+            # Update heartbeat file for liveness check
+            Path("/tmp/ready").touch()
         except Exception as e:
             logger.debug(f"Monitor error: {e}")
         time.sleep(10)  # Check every 10s, function throttles to 60s
@@ -60,6 +63,15 @@ def main():
         download_models()
     except Exception as e:
         logger.error(f"Error downloading models: {e}")
+
+    # Create models_ready signal for Docker healthcheck (readiness probe)
+    # This indicates all models are downloaded and ready
+    try:
+        with open("/tmp/models_ready", "w") as f:
+            f.write("OK")
+        logger.info("Annotator models ready: Created /tmp/models_ready")
+    except Exception as e:
+        logger.error(f"Failed to create models_ready signal: {e}")
 
     # Setup Redis connection
     redis_url = os.environ.get("HBMON_REDIS_URL", "redis://hbmon-redis:6379/0")

@@ -123,20 +123,27 @@ The `docker-compose.yml` uses healthchecks to ensure containers start in the cor
 
 ```
 wyze-bridge (healthy) ─┐
-hbmon-db (healthy) ─────┼─→ hbmon-web (healthy) ─→ hbmon-worker
+hbmon-db (healthy) ─────┼─→ hbmon-web (healthy) ─→ hbmon-worker (healthy) ─→ hbmon-annotator
 hbmon-redis (healthy) ──┘                      └─→ hbmon-proxy
 ```
 
-| Container     | Healthcheck                           | Wait for                       |
-|---------------|---------------------------------------|--------------------------------|
-| wyze-bridge   | HTTP check on port 5000               | -                              |
-| hbmon-db      | `pg_isready`                          | -                              |
-| hbmon-redis   | `redis-cli ping`                      | -                              |
-| hbmon-web     | HTTP check on `/api/health` endpoint  | wyze-bridge + db + redis       |
-| hbmon-worker  | Process check for `hbmon.worker`      | wyze-bridge + hbmon-web + db   |
-| hbmon-proxy   | HTTP check on port 80                 | hbmon-web                      |
+| Container       | Healthcheck                                          | Wait for                       |
+|-----------------|------------------------------------------------------|--------------------------------|
+| wyze-bridge     | HTTP check on port 5000                              | -                              |
+| hbmon-db        | `pg_isready`                                         | -                              |
+| hbmon-redis     | `redis-cli ping`                                     | -                              |
+| hbmon-web       | HTTP check on `/api/health` endpoint                 | wyze-bridge + db + redis       |
+| hbmon-worker    | `/tmp/models_ready` AND `/tmp/ready` files exist     | wyze-bridge + hbmon-web + db   |
+| hbmon-annotator | `/tmp/models_ready` AND `/tmp/ready` files exist     | hbmon-worker + db + redis      |
+| hbmon-proxy     | HTTP check on port 80                                | hbmon-web                      |
 
-This ensures the database is initialized by hbmon-web before the worker starts.
+**Two-Signal Healthcheck (Worker & Annotator):**
+- `/tmp/models_ready`: Created after all ML models are downloaded, converted, and loaded (readiness)
+- `/tmp/ready`: Touched periodically by the background monitor loop (liveness heartbeat)
+
+The healthcheck verifies that `/tmp/ready` was modified within the last 60 seconds (`find -mmin -1`), which detects frozen threads or hung processes even though the process may still be running.
+
+This ensures the database is initialized by hbmon-web before the worker starts, and that the worker's models are fully loaded before the annotator begins downloading its models (preventing resource contention).
 
 ### Persistent storage
 - `/data` (volume): `config.json`, exports, background image

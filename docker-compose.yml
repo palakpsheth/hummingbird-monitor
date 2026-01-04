@@ -152,7 +152,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 90s
 
   hbmon-worker:
     build:
@@ -219,12 +219,13 @@ services:
       hbmon-web:
         condition: service_healthy
     restart: unless-stopped
-    # Healthcheck: worker is healthy if process is running
+    # Healthcheck: worker is healthy if models are loaded AND heartbeat is recent
+    # The heartbeat file is touched every ~1s by monitor_loop
     healthcheck:
-      test: [ "CMD", "test", "-f", "/tmp/ready" ]
+      test: [ "CMD-SHELL", "test -f /tmp/models_ready && find /tmp/ready -mmin -1 | grep -q ready" ]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
       start_period: 300s # longer start for model download
 
   hbmon-proxy:
@@ -353,9 +354,10 @@ services:
         reservations:
           cpus: '${HBMON_ANNOTATOR_CPU_RESERVE:-1}' # Reserve 1 CPU
           memory: ${HBMON_ANNOTATOR_MEMORY_RESERVE:-4G} # Reserve 4GB
-    # Healthcheck: RQ worker is healthy if process is running
+    # Healthcheck: annotator is healthy if models are loaded AND heartbeat is recent
+    # The heartbeat file is touched every ~10s by monitor_loop
     healthcheck:
-      test: [ "CMD", "test", "-f", "/tmp/ready" ]
+      test: [ "CMD-SHELL", "test -f /tmp/models_ready && find /tmp/ready -mmin -1 | grep -q ready" ]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -7,7 +7,7 @@ High-level pipeline per loop:
 - Read frame from RTSP
 - Apply ROI crop (if configured)
 - Run YOLO (ultralytics) to detect "bird" class (COCO 'bird' class)
-- Pick best detection (largest area)
+- Pick best detection (confidence > area)
 - If not in cooldown: save snapshots (raw, annotated, CLIP crop) + record clip
 - Crop around bbox (with configurable padding) for CLIP classification + embedding
 - Match embedding to an Individual prototype (cosine distance threshold)
@@ -587,8 +587,19 @@ def _collect_bird_detections(
     return detections
 
 
+def calculate_detection_score(det: Det) -> tuple[float, int]:
+    """
+    Calculate the score for a detection.
+    
+    Returns (confidence, area) tuple.
+    Prioritizes confidence first, then bbox area as a tiebreaker.
+    """
+    return (det.conf, det.area)
+
+
 def _select_best_detection(entries: list[tuple[Det, dict[str, float | int]]]) -> tuple[Det, dict[str, float | int]]:
-    return max(entries, key=lambda item: (item[0].area, item[0].conf))
+    """Select the best detection by confidence first, then bbox area as tiebreaker."""
+    return max(entries, key=lambda item: calculate_detection_score(item[0]))
 
 
 def _write_jpeg(path: Path, frame_bgr: np.ndarray) -> None:
@@ -1293,7 +1304,7 @@ def _load_yolo_model() -> tuple[Any, str]:
 
 
 async def monitor_loop() -> None:
-    """Background task to push GPU stats and log system load."""
+    """Background task to push GPU stats, log system load, and update heartbeat."""
     logger.info("Starting background system monitoring task")
     while True:
         try:
@@ -1301,11 +1312,15 @@ async def monitor_loop() -> None:
            # This allows inference to continue while we wait for intel_gpu_top (5s)
            await asyncio.get_running_loop().run_in_executor(None, cache_gpu_stats)
            await asyncio.get_running_loop().run_in_executor(None, log_system_stats_from_api)
+           
+           # Update heartbeat file for liveness check
+           # Healthcheck can verify this file was modified recently
+           Path("/tmp/ready").touch()
         except Exception as e:
            logger.error(f"Monitor loop error: {e}")
         
         # cache_gpu_stats throttles to 10s, log throttles to 60s
-        # We can check every 1s
+        # Heartbeat updates every ~1s for responsive liveness checks
         await asyncio.sleep(1.0)
 
 
@@ -1388,6 +1403,15 @@ async def run_worker() -> None:
         "clip_pretrained": clip_pretrained if clip_pretrained else "",
         "clip_backend": clip_backend_label,
     }
+    
+    # Create models_ready signal for Docker healthcheck (readiness probe)
+    # This indicates all models are downloaded, converted, and loaded
+    try:
+        with open("/tmp/models_ready", "w") as f:
+            f.write("OK")
+        logger.info("Models ready: Created /tmp/models_ready")
+    except Exception as e:
+        logger.error(f"Failed to create models_ready signal: {e}")
     
     asyncio.create_task(processing_dispatcher(queue, clip))
 
@@ -1480,7 +1504,7 @@ async def run_worker() -> None:
     visit_start_ts = 0.0
     visit_last_seen_ts = 0.0
     visit_best_candidate: CandidateItem | None = None
-    visit_best_score = 0.0
+    visit_best_score: tuple[float, int] = (-1.0, 0)  # (confidence, area)
     last_observation_ts: float | None = None
     
     # Arrival buffer: capture context before detection.
@@ -1739,7 +1763,7 @@ async def run_worker() -> None:
                  
                  # Reset best candidate tracking
                  visit_best_candidate = None
-                 visit_best_score = -1.0
+                 visit_best_score = (-1.0, 0)  # Reset to min
              
              if visit_state in (VisitState.RECORDING, VisitState.FINALIZING):
                  if visit_state == VisitState.FINALIZING:
@@ -1748,8 +1772,7 @@ async def run_worker() -> None:
                       logger.info("Visit RESUMED")
 
                  # Update best candidate: prefer large, high-confidence detections
-                 # Score is proportional to bounding-box area scaled by confidence.
-                 score = det.area * det.conf
+                 score = calculate_detection_score(det)
 
                  if score > visit_best_score:
                      visit_best_score = score
