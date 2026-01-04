@@ -29,6 +29,8 @@ import time
 def monitor_loop():
     """Background thread to periodically log system stats (non-blocking to main worker)."""
     logger = logging.getLogger("system_monitor")
+
+    while True:
         try:
             log_system_stats_from_api()
         except Exception as e:

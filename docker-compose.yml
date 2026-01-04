@@ -330,6 +330,7 @@ services:
     volumes:
       - ./data:/data
       - ./src:/app/src
+      - ./scripts:/app/scripts
     depends_on:
       hbmon-db:
         condition: service_healthy
