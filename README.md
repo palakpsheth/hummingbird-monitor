@@ -797,7 +797,44 @@ The annotation pipeline enables frame-level labeling for model fine-tuning and h
 4. When complete, run the export script and train
 
 ### API Endpoints
-### API Endpoints
+See the Swagger UI (`/docs`) for full API documentation.
+
+---
+
+## 🏷️ Annotation Pipeline
+
+The annotation pipeline enables frame-level labeling for model fine-tuning and hard-negative mining. It uses a high-accuracy **SAHI + SAM** workflow to generate initial labels.
+
+### Features
+- **SAHI (Slicing Aided Hyper Inference)**: Detects small birds by slicing 1080p/4k frames into 640x640 patches.
+- **SAM (Segment Anything Model)**: Refines YOLO bounding boxes to be pixel-perfect.
+- **Frame extraction**: Extract frames from observation videos for annotation.
+- **Manual review UI**: Canvas-based box editing with keyboard shortcuts.
+- **Hard-negative mining**: Mark boxes as false positives to explicitly train the model what *not* to detect.
+- **YOLO export**: Export annotated data in YOLO format with train/val split.
+
+### Workflow
+1. Navigate to **Annotate** tab → select an observation → click "Start Annotation".
+2. **Preprocessing**: The worker extracts frames and runs SAHI + SAM detection.
+3. **Review**: Toggle "Bird present", draw/adjust boxes, mark false positives.
+4. **Export**: Run the export script to generate a training dataset.
+
+### Configuration
+Key environment variables (see `.env.example`):
+```bash
+# High-accuracy YOLO for initial detection
+HBMON_ANNOTATION_YOLO_MODEL=yolo11l.pt
+
+# SAHI Sliced Inference (for small objects)
+HBMON_ANNOTATION_USE_SAHI=1
+HBMON_SAHI_SLICE_HEIGHT=640
+
+# SAM Refinement (for tight boxes)
+HBMON_ANNOTATION_USE_SAM=1
+HBMON_ANNOTATION_SAM_MODEL=sam_b
+```
+
+See [docs/model_fine_tuning_cookbook.md](docs/model_fine_tuning_cookbook.md) for a complete guide on fine-tuning your model.
 - `GET /api/annotate/{obs_id}/frames` - List frames for observation
 
 ### Configuration (Environment Variables)

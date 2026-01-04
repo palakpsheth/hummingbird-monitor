@@ -2,7 +2,6 @@
 """
 Tests for system stats collection utilities.
 """
-import pytest
 from unittest.mock import MagicMock
 import hbmon.utils as utils
 import subprocess

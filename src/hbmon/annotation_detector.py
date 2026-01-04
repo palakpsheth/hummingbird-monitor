@@ -22,6 +22,7 @@ from typing import Any
 import time
 
 import numpy as np
+import math
 
 from hbmon.yolo_utils import resolve_predict_imgsz
 
@@ -40,6 +41,12 @@ ANNOTATION_USE_SAM = os.environ.get("HBMON_ANNOTATION_USE_SAM", "1") == "1"
 ANNOTATION_SAM_MODEL = os.environ.get("HBMON_ANNOTATION_SAM_MODEL", "sam_b")
 ANNOTATION_CONFIDENCE = float(os.environ.get("HBMON_ANNOTATION_CONFIDENCE", "0.15"))
 ANNOTATION_BATCH_SIZE = int(os.environ.get("HBMON_ANNOTATION_BATCH_SIZE", "8"))
+
+# SAHI Configuration
+ANNOTATION_USE_SAHI = os.environ.get("HBMON_ANNOTATION_USE_SAHI", "1") == "1"
+SAHI_SLICE_HEIGHT = int(os.environ.get("HBMON_SAHI_SLICE_HEIGHT", "640"))
+SAHI_SLICE_WIDTH = int(os.environ.get("HBMON_SAHI_SLICE_WIDTH", "640"))
+SAHI_OVERLAP_RATIO = float(os.environ.get("HBMON_SAHI_OVERLAP_RATIO", "0.2"))
 
 
 @dataclass
@@ -65,12 +72,14 @@ class AnnotationDetector:
     detection accuracy than real-time detection.
     """
     
+    
     def __init__(
         self,
         yolo_model: str | None = None,
         use_sam: bool | None = None,
         sam_model: str | None = None,
         confidence: float | None = None,
+        use_sahi: bool | None = None,
     ):
         """Initialize the annotation detector.
         
@@ -79,13 +88,16 @@ class AnnotationDetector:
             use_sam: Whether to use SAM refinement (default from env)
             sam_model: SAM model variant (default from env)
             confidence: Detection confidence threshold (default from env)
+            use_sahi: Whether to use SAHI sliced inference (default from env)
         """
         self.yolo_model_name = yolo_model or ANNOTATION_YOLO_MODEL
         self.use_sam = use_sam if use_sam is not None else ANNOTATION_USE_SAM
         self.sam_model_name = sam_model or ANNOTATION_SAM_MODEL
         self.confidence = confidence if confidence is not None else ANNOTATION_CONFIDENCE
+        self.use_sahi = use_sahi if use_sahi is not None else ANNOTATION_USE_SAHI
         
         self._yolo = None
+        self._sahi_model = None
         self._sam = None
         self._initialized = False
         self.bird_class_id: int | None = None
@@ -115,7 +127,13 @@ class AnnotationDetector:
             self.bird_class_id = target_id
             logger.info(f"Resolved annotator bird_class_id={target_id} from model")
         else:
-            logger.warning("Could not resolve 'bird' class ID from model names. Detections will be unfiltered.")
+            logger.warning("Could not resolve 'bird' class ID from model names. Falling back to COCO default (14).")
+            self.bird_class_id = 14
+        
+        # Override to 14 for COCO models to be safe
+        if self.bird_class_id != 14:
+            logger.info(f"Overriding bird_class_id {self.bird_class_id} with COCO standard 14")
+            self.bird_class_id = 14
 
     def _load_yolo(self) -> Any:
         """Load YOLO model for annotation detection."""
@@ -179,6 +197,60 @@ class AnnotationDetector:
         
         return self._get_openvino_model_path()
 
+    def _load_sahi_model(self) -> Any:
+        """Load AutoDetectionModel for SAHI."""
+        if self._sahi_model is not None:
+            return self._sahi_model
+
+        if not self.use_sahi:
+            return None
+            
+        try:
+            from sahi import AutoDetectionModel
+        except ImportError:
+            logger.warning("sahi package not installed, skipping SAHI")
+            self.use_sahi = False
+            return None
+
+        # Ensure we have the base YOLO model loaded (to ensure download/export logic runs)
+        self._load_yolo()
+        
+        logger.info(f"Loading SAHI detection model wrapping: {self.yolo_model_name}")
+        
+        # Determine model path similar to _load_yolo
+        model_path = self.yolo_model_name
+        backend = os.environ.get("HBMON_INFERENCE_BACKEND", "cpu")
+        
+        # SAHI supports 'yolov8' model type which uses ultralytics under the hood
+        # If we have an OpenVINO model path, SAHI's AutoDetectionModel might not support it directly
+        # without custom configuration. For now, we will stick to the PyTorch model path
+        # or the OpenVINO model path if SAHI/Ultralytics supports it.
+        # Ultralytics YOLO() can load OpenVINO paths, and SAHI uses YOLO().
+        
+        if "openvino" in backend.lower():
+             ov_path = self._get_openvino_model_path()
+             if ov_path and ov_path.exists():
+                 model_path = str(ov_path)
+        
+        try:
+            self._sahi_model = AutoDetectionModel.from_pretrained(
+                model_type="yolov8",
+                model_path=model_path,
+                confidence_threshold=self.confidence,
+                device="cpu", # Let Ultralytics handle device (or set cuda/mps if needed)
+            )
+            # Ensure classes are populated
+            if self.bird_class_id is not None:
+                 # SAHI might need specific class mapping but it usually respects the model's
+                 pass
+                 
+        except Exception as e:
+            logger.error(f"Failed to load SAHI model: {e}")
+            self.use_sahi = False
+            return None
+            
+        return self._sahi_model
+
     def _load_sam(self) -> Any:
         """Load SAM model for box refinement."""
         if self._sam is not None:
@@ -225,6 +297,8 @@ class AnnotationDetector:
         self._resolve_bird_class_id()
         if self.use_sam:
             self._load_sam()
+        if self.use_sahi:
+            self._load_sahi_model()
         
         self._initialized = True
 
@@ -245,6 +319,113 @@ class AnnotationDetector:
         if not self._initialized:
             self.initialize()
         
+        # Resolving dependencies and loading models
+        boxes = []
+        sahi_success = False
+        
+        if self.use_sahi:
+             # Try SAHI first if enabled
+             try:
+                 boxes = self._detect_with_sahi(frame)
+                 sahi_success = True
+             except Exception as e:
+                 logger.debug(f"SAHI detection failed, falling back: {e}")
+                 sahi_success = False
+        
+        # If SAHI was not used or failed (and we didn't get results), use standard YOLO
+        if not sahi_success:
+            boxes = self._detect_standard_yolo(frame)
+            
+        # Optionally refine with SAM
+        use_sam = refine_with_sam if refine_with_sam is not None else self.use_sam
+        if use_sam and boxes:
+            boxes = self._refine_boxes_with_sam(frame, boxes)
+        
+        return boxes
+
+    def _detect_with_sahi(self, frame: np.ndarray) -> list[DetectedBox]:
+        """Run detection using SAHI sliced inference."""
+        sahi_model = self._load_sahi_model()
+        if sahi_model is None:
+            return self._detect_standard_yolo(frame)
+            
+        try:
+            from sahi.predict import get_sliced_prediction
+        except ImportError:
+            return self._detect_standard_yolo(frame)
+            
+        # Sliced prediction
+        t0 = time.time()
+        
+        result = get_sliced_prediction(
+            frame,
+            sahi_model,
+            slice_height=SAHI_SLICE_HEIGHT,
+            slice_width=SAHI_SLICE_WIDTH,
+            overlap_height_ratio=SAHI_OVERLAP_RATIO,
+            overlap_width_ratio=SAHI_OVERLAP_RATIO,
+            verbose=0
+        )
+        
+        t_sahi = (time.time() - t0) * 1000
+        debug = os.environ.get("HBMON_ANNOTATOR_DEBUG", "0") == "1"
+        if debug:
+            backend = os.environ.get("HBMON_INFERENCE_BACKEND", "cpu").upper()
+            if "OPENVINO" in backend:
+                backend = "OpenVINO-GPU" if "GPU" in backend or "OPEN" in backend else "OpenVINO-CPU"
+            
+            # Estimate slice count (SAHI doesn't directly expose this in PredictionResult but we can infer from dimensions)
+            h_img, w_img = frame.shape[:2]
+            cols = math.ceil((w_img - SAHI_SLICE_WIDTH * SAHI_OVERLAP_RATIO) / (SAHI_SLICE_WIDTH * (1 - SAHI_OVERLAP_RATIO)))
+            rows = math.ceil((h_img - SAHI_SLICE_HEIGHT * SAHI_OVERLAP_RATIO) / (SAHI_SLICE_HEIGHT * (1 - SAHI_OVERLAP_RATIO)))
+            slice_count = max(1, rows * cols)
+            
+            logger.info(f"SAHI Sliced Inference ({backend}): {t_sahi:.2f}ms for ~{slice_count} slices")
+        
+        boxes = []
+        h_img, w_img = frame.shape[:2]
+        
+        if debug:
+            logger.debug(f"SAHI found {len(result.object_prediction_list)} raw objects")
+
+        for prediction in result.object_prediction_list:
+            if debug:
+                logger.debug(f"Raw SAHI object: {prediction.category.name} (id={prediction.category.id}) score={prediction.score.value:.2f}")
+            
+            # Filter by class if needed
+            if self.bird_class_id is not None:
+                 if prediction.category.id != self.bird_class_id:
+                     # Check name as fallback
+                     if prediction.category.name.lower() not in ('bird', 'hummingbird'):
+                         continue
+            
+            # SAHI returns absolute coordinates
+            bbox = prediction.bbox
+            x_min = bbox.minx
+            y_min = bbox.miny
+            x_max = bbox.maxx
+            y_max = bbox.maxy
+            
+            # Normalize
+            cx = ((x_min + x_max) / 2) / w_img
+            cy = ((y_min + y_max) / 2) / h_img
+            bw = (x_max - x_min) / w_img
+            bh = (y_max - y_min) / h_img
+            
+            boxes.append(DetectedBox(
+                class_id=prediction.category.id,
+                x=cx,
+                y=cy,
+                w=bw,
+                h=bh,
+                confidence=prediction.score.value,
+                source="sahi-auto",
+            ))
+            
+        return boxes
+
+    def _detect_standard_yolo(self, frame: np.ndarray) -> list[DetectedBox]:
+        """Run standard YOLO detection (original implementation)."""
         yolo = self._load_yolo()
         if yolo is None:
             return []
@@ -287,12 +468,9 @@ class AnnotationDetector:
                 source="auto",
             ))
         
-        # Optionally refine with SAM
-        use_sam = refine_with_sam if refine_with_sam is not None else self.use_sam
-        if use_sam and boxes:
-            boxes = self._refine_boxes_with_sam(frame, boxes)
-        
         return boxes
+        
+
 
     def _refine_boxes_with_sam(
         self,
@@ -367,6 +545,22 @@ class AnnotationDetector:
 
         return refined
 
+    def _is_bird(self, class_id: int, class_name: str | None = None) -> bool:
+        """Helper to determine if a detection is likely a bird."""
+        # Check against resolved class ID
+        if self.bird_class_id is not None and class_id == self.bird_class_id:
+            return True
+        
+        # Check by name if available
+        if class_name and str(class_name).strip().lower() in ('bird', 'hummingbird'):
+            return True
+            
+        # Fallback for COCO bird ID (14) if not explicitly resolved
+        if class_id == 14:
+            return True
+            
+        return False
+
     def detect_batch(
         self,
         frames: list[np.ndarray],
@@ -389,48 +583,67 @@ class AnnotationDetector:
             return [[] for _ in frames]
         
         # Resolve image size
-        # Use first frame for auto-size calculation (assuming uniform batch)
         imgsz_env = os.environ.get("HBMON_YOLO_IMGSZ", "auto")
         predict_imgsz = resolve_predict_imgsz(imgsz_env, frames[0].shape if frames else None)
         
-        # Run batch detection
-        # Resolves logic: if env sends "auto" and we have frame shape, it returns stride-aligned [h, w]
-        # Run batch detection
         debug = os.environ.get("HBMON_ANNOTATOR_DEBUG", "0") == "1"
+        use_sam = refine_with_sam if refine_with_sam is not None else self.use_sam
+        
+        if self.use_sahi and self._sahi_model is not None:
+            t0 = time.time()
+            all_boxes = []
+            for frame in frames:
+                boxes = self._detect_with_sahi(frame)
+                
+                # Optionally refine with SAM
+                if use_sam and boxes:
+                    boxes = self._refine_boxes_with_sam(frame, boxes)
+                
+                all_boxes.append(boxes)
+                
+            t_total = (time.time() - t0) * 1000
+            if debug:
+                backend = os.environ.get("HBMON_INFERENCE_BACKEND", "cpu").upper()
+                if "OPENVINO" in backend:
+                    backend = "OpenVINO-GPU" if "GPU" in backend or "OPEN" in backend else "OpenVINO-CPU"
+                logger.info(f"SAHI Sliced Inference ({backend}) (Batch of {len(frames)}): {t_total:.2f}ms")
+            
+            return all_boxes
+            
+        # Standard batched YOLO
         t0 = time.time()
-        classes = [self.bird_class_id] if self.bird_class_id is not None else None
-        results = yolo(frames, conf=self.confidence, verbose=debug, imgsz=predict_imgsz, classes=classes)
+        # Note: We filter manually below to be more robust than strict YOLO class filtering
+        results = yolo(frames, conf=self.confidence, verbose=debug, imgsz=predict_imgsz)
         t_infer = (time.time() - t0) * 1000
         
         backend = os.environ.get("HBMON_INFERENCE_BACKEND", "cpu").upper()
-        # If openvino backend, enhance label
         if "OPENVINO" in backend:
-             # Check if we forced GPU
-             # Ideally we check device, but env var is close enough for log matching
-             backend = "OpenVINO-GPU" if "GPU" in backend or "OPEN" in backend else "OpenVINO-CPU"
+            backend = "OpenVINO-GPU" if "GPU" in backend or "OPEN" in backend else "OpenVINO-CPU"
              
         if debug:
-             logger.info(f"YOLO Inference ({backend}): {t_infer:.2f}ms")
-             # Also log image size used for verification
-             if isinstance(predict_imgsz, list):
-                 sz_str = f"{predict_imgsz[0]}x{predict_imgsz[1]}"
-             else:
-                 sz_str = f"{predict_imgsz}x{predict_imgsz}"
-             logger.debug(f"YOLO predict_imgsz: {sz_str}")
-        
+            logger.info(f"YOLO Inference ({backend}): {t_infer:.2f}ms")
+            logger.debug(f"YOLO results contain {len(results)} items")
+
         all_boxes = []
-        use_sam = refine_with_sam if refine_with_sam is not None else self.use_sam
-        
         for i, result in enumerate(results):
             frame = frames[i]
             h, w = frame.shape[:2]
             boxes = []
             
+            names = getattr(result, 'names', {})
+
             for box in result.boxes:
+                # Get normalized coordinates
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                 conf = float(box.conf[0].cpu().numpy())
                 cls_id = int(box.cls[0].cpu().numpy())
+                cls_name = names.get(cls_id)
                 
+                # Filter by bird class using robust helper
+                if not self._is_bird(cls_id, cls_name):
+                    continue
+                
+                # Convert to center format and normalize
                 cx = ((x1 + x2) / 2) / w
                 cy = ((y1 + y2) / 2) / h
                 bw = (x2 - x1) / w
@@ -446,24 +659,37 @@ class AnnotationDetector:
                     source="auto",
                 ))
             
+            if debug:
+                logger.debug(f"Frame {i}: found {len(boxes)} boxes after filtering")
+
+            if debug:
+                logger.debug(f"Frame {i}: YOLO found {len(boxes)} boxes before SAM")
+            
             # Optionally refine with SAM
             if use_sam and boxes:
                 boxes = self._refine_boxes_with_sam(frame, boxes)
+                if debug:
+                    logger.debug(f"Frame {i}: YOLO found {len(boxes)} boxes after SAM")
             
             all_boxes.append(boxes)
         
+        if debug:
+            logger.debug(f"detect_batch returning boxes for {len(all_boxes)} frames")
+
         return all_boxes
 
 
 def create_detector(
     yolo_model: str | None = None,
     use_sam: bool | None = None,
+    use_sahi: bool | None = None,
 ) -> AnnotationDetector:
     """Factory function to create an annotation detector.
     
     Args:
         yolo_model: Override YOLO model (default from env)
         use_sam: Override SAM usage (default from env)
+        use_sahi: Override SAHI usage (default from env)
         
     Returns:
         Configured AnnotationDetector instance
@@ -471,4 +697,5 @@ def create_detector(
     return AnnotationDetector(
         yolo_model=yolo_model,
         use_sam=use_sam,
+        use_sahi=use_sahi,
     )

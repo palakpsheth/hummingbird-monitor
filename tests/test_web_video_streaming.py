@@ -242,7 +242,8 @@ def test_streaming_bitrate_returns_metrics_when_cached(tmp_path, monkeypatch) ->
         extra={"media": {"video": {"duration": 2.0}}},
     )
 
-    cache_key = f"{obs_id}_23_fast"
+    # Cache key now includes quality parameter (high=23)
+    cache_key = f"{obs_id}_high_23_fast"
     cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
     cached_path = hbmon.config.media_dir() / ".cache" / "compressed" / f"{video_path.stem}_{cache_hash}.mp4"
     cached_path.parent.mkdir(parents=True, exist_ok=True)

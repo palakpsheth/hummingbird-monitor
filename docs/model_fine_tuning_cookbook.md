@@ -21,6 +21,27 @@ This guide walks you through fine-tuning a YOLO model using your annotated hummi
    - Mark false-positive boxes with the FP checkbox
 4. Save each frame and continue to the next
 
+### 1.2 Enhancing Initial Detections (Auto-Annotation)
+
+To minimize manual work, configure the annotator to use high-accuracy models:
+
+```bash
+# In .env
+
+# High-accuracy YOLO (Large)
+HBMON_ANNOTATION_YOLO_MODEL=yolo11l.pt
+
+# SAHI (Slicing Aided Hyper Inference) - Critical for identifying small birds
+# Slices large frames into smaller patches to detect small objects without detail loss
+HBMON_ANNOTATION_USE_SAHI=1
+HBMON_SAHI_SLICE_HEIGHT=640
+
+# SAM (Segment Anything Model) - Refines boxes to be pixel-perfect
+HBMON_ANNOTATION_USE_SAM=1
+```
+
+Using SAHI and SAM ensures your starting point is as accurate as possible, often requiring only validation rather than drawing from scratch.
+
 ### 1.2 Verify Annotation Completeness
 
 Before training, ensure no observations are partially labeled:

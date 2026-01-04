@@ -4,7 +4,6 @@ Tests for synchronous Redis cache helper behavior.
 """
 from __future__ import annotations
 
-import pytest
 import hbmon.cache as cache
 
 class _RecordingSyncRedis:

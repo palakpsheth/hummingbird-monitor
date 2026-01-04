@@ -14,15 +14,13 @@
 {% if prev_obs_id or next_obs_id %}
 <div class="obs-nav-arrows" data-obs-nav>
   {% if prev_obs_id %}
-  <a class="obs-nav-arrow obs-nav-arrow--prev" href="/observations/{{ prev_obs_id }}"
-    aria-label="Previous observation">
+  <a class="obs-nav-arrow obs-nav-arrow--prev" href="/observations/{{ prev_obs_id }}" aria-label="Previous observation">
     <span aria-hidden="true">←</span>
     <span class="obs-nav-label">Previous</span>
   </a>
   {% endif %}
   {% if next_obs_id %}
-  <a class="obs-nav-arrow obs-nav-arrow--next" href="/observations/{{ next_obs_id }}"
-    aria-label="Next observation">
+  <a class="obs-nav-arrow obs-nav-arrow--next" href="/observations/{{ next_obs_id }}" aria-label="Next observation">
     <span aria-hidden="true">→</span>
     <span class="obs-nav-label">Next</span>
   </a>
@@ -239,7 +237,7 @@
 
     {% if video_info and video_info.exists %}
     <div style="margin-top:16px;">
-      <h3 style="margin-top:0;">Video Clip</h3>
+      <h3 style="margin:0 0 8px 0;">Video Clip</h3>
       <div id="video-error"
         style="display:none; padding:12px; background:#fee; border:1px solid #c00; border-radius:8px; margin-bottom:8px;">
         <strong>⚠️ Video playback error:</strong> <span id="video-error-msg"></span>
@@ -249,19 +247,134 @@
             diagnostics</a>.
         </div>
       </div>
-      <video id="clip-player" controls preload="metadata"
-        style="width:100%; max-width:100%; height:auto; border-radius:8px; background:#000;">
-        <source src="/api/video/{{ o.id }}" type="video/mp4">
-        Your browser does not support the video tag.
-      </video>
+
+      <!-- Custom Video Player Container -->
+      <div class="video-player-container" id="video-player-container"
+        style="position:relative; border-radius:8px; overflow:hidden; background:#000;">
+        <video id="clip-player" preload="metadata"
+          style="width:100%; display:block; border-radius:8px; background:#000;">
+          <source id="video-source" src="/api/video/{{ o.id }}?quality=high" type="video/mp4">
+          Your browser does not support the video tag.
+        </video>
+
+        <!-- Custom Controls Overlay -->
+        <div class="video-controls" id="video-controls" style="
+          position:absolute; bottom:0; left:0; right:0;
+          background:linear-gradient(transparent, rgba(0,0,0,0.75));
+          padding:12px 10px 10px;
+          display:flex; align-items:center; gap:8px;
+          opacity:1; transition:opacity 0.2s;
+        ">
+          <!-- Play/Pause Button -->
+          <button type="button" id="play-pause-btn" class="video-ctrl-btn" aria-label="Play/Pause" style="
+            background:none; border:none; color:#fff; font-size:18px; cursor:pointer; padding:4px 6px;
+          ">▶</button>
+
+          <!-- Progress Bar -->
+          <div id="progress-container"
+            style="flex:1; height:4px; background:rgba(255,255,255,0.3); border-radius:2px; cursor:pointer; position:relative;">
+            <div id="progress-bar"
+              style="height:100%; background:#fff; border-radius:2px; width:0%; transition:width 0.1s;"></div>
+          </div>
+
+          <!-- Time Display -->
+          <span id="time-display" style="color:#fff; font-size:12px; min-width:70px; text-align:center;">0:00 /
+            0:00</span>
+
+          <!-- Volume Button -->
+          <button type="button" id="volume-btn" class="video-ctrl-btn" aria-label="Mute/Unmute" style="
+            background:none; border:none; color:#fff; font-size:16px; cursor:pointer; padding:4px 6px;
+          ">🔊</button>
+
+          <!-- Settings Button (opens unified menu) -->
+          <button type="button" id="settings-btn" class="video-ctrl-btn" aria-label="Settings" title="Settings" style="
+            background:none; border:none; color:#fff; font-size:18px; cursor:pointer; padding:4px 6px;
+          ">⚙️</button>
+
+          <!-- PIP Button -->
+          <button type="button" id="pip-btn" class="video-ctrl-btn" aria-label="Picture-in-Picture"
+            title="Picture-in-Picture" style="
+            background:none; border:none; color:#fff; font-size:16px; cursor:pointer; padding:4px 6px;
+          ">⧉</button>
+
+          <!-- Fullscreen Button -->
+          <button type="button" id="fullscreen-btn" class="video-ctrl-btn" aria-label="Fullscreen" title="Fullscreen"
+            style="
+            background:none; border:none; color:#fff; font-size:16px; cursor:pointer; padding:4px 6px;
+          ">⛶</button>
+        </div>
+
+        <!-- Settings Menu Overlay -->
+        <div id="settings-menu" style="
+          display:none; position:absolute; bottom:50px; right:10px;
+          background:var(--card, rgba(30,30,40,0.95)); color:var(--text, #fff);
+          border:1px solid var(--border, rgba(255,255,255,0.2)); border-radius:8px;
+          box-shadow:0 4px 16px rgba(0,0,0,0.3); min-width:200px; z-index:100;
+          backdrop-filter:blur(10px);
+        ">
+          <div style="padding:8px 0;">
+            <!-- Playback Speed -->
+            <div style="padding:8px 12px; border-bottom:1px solid var(--border, rgba(255,255,255,0.1));">
+              <div style="font-size:11px; color:var(--muted, rgba(255,255,255,0.6)); margin-bottom:6px;">Playback Speed
+              </div>
+              <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                <button type="button" class="speed-option" data-speed="0.25"
+                  style="padding:4px 8px; border:1px solid var(--border, rgba(255,255,255,0.2)); border-radius:4px; background:var(--btn-bg, rgba(255,255,255,0.1)); color:var(--text, #fff); cursor:pointer; font-size:12px;">0.25x</button>
+                <button type="button" class="speed-option" data-speed="0.5"
+                  style="padding:4px 8px; border:1px solid var(--border, rgba(255,255,255,0.2)); border-radius:4px; background:var(--btn-bg, rgba(255,255,255,0.1)); color:var(--text, #fff); cursor:pointer; font-size:12px;">0.5x</button>
+                <button type="button" class="speed-option speed-active" data-speed="1"
+                  style="padding:4px 8px; border:1px solid var(--border, rgba(255,255,255,0.2)); border-radius:4px; background:var(--btn-bg-hover, rgba(255,255,255,0.2)); color:var(--text, #fff); cursor:pointer; font-size:12px;">1x</button>
+                <button type="button" class="speed-option" data-speed="1.5"
+                  style="padding:4px 8px; border:1px solid var(--border, rgba(255,255,255,0.2)); border-radius:4px; background:var(--btn-bg, rgba(255,255,255,0.1)); color:var(--text, #fff); cursor:pointer; font-size:12px;">1.5x</button>
+                <button type="button" class="speed-option" data-speed="2"
+                  style="padding:4px 8px; border:1px solid var(--border, rgba(255,255,255,0.2)); border-radius:4px; background:var(--btn-bg, rgba(255,255,255,0.1)); color:var(--text, #fff); cursor:pointer; font-size:12px;">2x</button>
+              </div>
+            </div>
+
+            <!-- Quality -->
+            <div style="padding:8px 12px; border-bottom:1px solid var(--border, rgba(255,255,255,0.1));">
+              <div style="font-size:11px; color:var(--muted, rgba(255,255,255,0.6)); margin-bottom:6px;">Quality</div>
+              <div style="display:flex; flex-direction:column; gap:2px;">
+                <button type="button" class="quality-option" data-quality="original"
+                  style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border:none; background:none; color:var(--text, #fff); cursor:pointer; font-size:13px; text-align:left;">
+                  <span>Original</span><span
+                    style="font-size:11px; color:var(--muted, rgba(255,255,255,0.5));">Uncompressed</span>
+                </button>
+                <button type="button" class="quality-option" data-quality="high"
+                  style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border:none; background:none; color:var(--text, #fff); cursor:pointer; font-size:13px; text-align:left;">
+                  <span>High</span><span style="font-size:11px; color:var(--muted, rgba(255,255,255,0.5));">Best
+                    quality</span>
+                </button>
+                <button type="button" class="quality-option" data-quality="medium"
+                  style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border:none; background:none; color:var(--text, #fff); cursor:pointer; font-size:13px; text-align:left;">
+                  <span>Medium</span><span
+                    style="font-size:11px; color:var(--muted, rgba(255,255,255,0.5));">Balanced</span>
+                </button>
+                <button type="button" class="quality-option" data-quality="low"
+                  style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border:none; background:none; color:var(--text, #fff); cursor:pointer; font-size:13px; text-align:left;">
+                  <span>Low</span><span style="font-size:11px; color:var(--muted, rgba(255,255,255,0.5));">Smaller
+                    file</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Download -->
+            <a href="/media/{{ o.video_path }}" download
+              style="display:block; padding:10px 12px; color:var(--text, #fff); text-decoration:none; font-size:13px;">
+              📥 Download Video
+            </a>
+          </div>
+        </div>
+      </div>
+
       <div id="video-dimensions" class="muted" style="margin-top:8px;">
         File: {{ video_info.size_kb }} KB
         {% if video_info.suffix %} · Format: {{ video_info.suffix }}{% endif %}
-        {% if video_info.width and video_info.height %} · Resolution: {{ video_info.width }}×{{ video_info.height }}{% endif %}
+        {% if video_info.width and video_info.height %} · Resolution: {{ video_info.width }}×{{ video_info.height }}{%
+        endif %}
         {% if video_info.duration %} · Duration: {{ "%.1f"|format(video_info.duration) }}s{% endif %}
         {% if video_info.fps %} · FPS: {{ "%.1f"|format(video_info.fps) }}{% endif %}
         {% if video_info.fourcc %} · Codec: {{ video_info.fourcc }}{% endif %}
-        · <a href="/media/{{ o.video_path }}" download>Download video</a>
       </div>
       <div id="streaming-bitrate-{{ o.id }}" class="muted" style="margin-top:4px; display:none;">
         <span class="streaming-bitrate-value"></span>
@@ -269,39 +382,202 @@
       <script>
         (function () {
           var video = document.getElementById('clip-player');
+          var container = document.getElementById('video-player-container');
+          var controls = document.getElementById('video-controls');
           var errorDiv = document.getElementById('video-error');
           var errorMsg = document.getElementById('video-error-msg');
+          var playPauseBtn = document.getElementById('play-pause-btn');
+          var progressContainer = document.getElementById('progress-container');
+          var progressBar = document.getElementById('progress-bar');
+          var timeDisplay = document.getElementById('time-display');
+          var volumeBtn = document.getElementById('volume-btn');
+          var settingsBtn = document.getElementById('settings-btn');
+          var settingsMenu = document.getElementById('settings-menu');
+          var pipBtn = document.getElementById('pip-btn');
+          var fullscreenBtn = document.getElementById('fullscreen-btn');
+          var videoSource = document.getElementById('video-source');
+          var qualityOptions = document.querySelectorAll('.quality-option');
+          var speedOptions = document.querySelectorAll('.speed-option');
+          var obsId = {{ o.id }};
 
-          video.addEventListener('error', function (e) {
-            var msg = 'Unknown error';
-            if (video.error) {
-              switch (video.error.code) {
-                case 1: msg = 'MEDIA_ERR_ABORTED: Playback aborted'; break;
-                case 2: msg = 'MEDIA_ERR_NETWORK: Network error'; break;
-                case 3: msg = 'MEDIA_ERR_DECODE: Decoding error (unsupported codec)'; break;
-                case 4: msg = 'MEDIA_ERR_SRC_NOT_SUPPORTED: Format not supported'; break;
-              }
+        // Error handling
+        video.addEventListener('error', function (e) {
+          var msg = 'Unknown error';
+          if (video.error) {
+            switch (video.error.code) {
+              case 1: msg = 'MEDIA_ERR_ABORTED: Playback aborted'; break;
+              case 2: msg = 'MEDIA_ERR_NETWORK: Network error'; break;
+              case 3: msg = 'MEDIA_ERR_DECODE: Decoding error (unsupported codec)'; break;
+              case 4: msg = 'MEDIA_ERR_SRC_NOT_SUPPORTED: Format not supported'; break;
             }
-            errorMsg.textContent = msg;
-            errorDiv.style.display = 'block';
-          });
+          }
+          errorMsg.textContent = msg;
+          errorDiv.style.display = 'block';
+        });
 
-          // Fetch and display streaming bitrate after video loads
-          video.addEventListener('loadedmetadata', function () {
-            fetch('/api/streaming_bitrate/{{ o.id }}')
-              .then(response => response.json())
-              .then(data => {
-                if (data.bitrate_mbps) {
-                  var bitrateDiv = document.getElementById('streaming-bitrate-{{ o.id }}');
-                  var bitrateValue = bitrateDiv.querySelector('.streaming-bitrate-value');
-                  bitrateValue.textContent = 'Streaming: ' + data.bitrate_mbps.toFixed(2) + ' Mbps (' + 
-                    data.compression_ratio.toFixed(1) + 'x smaller)';
-                  bitrateDiv.style.display = 'block';
-                }
-              })
-              .catch(err => console.log('Bitrate fetch failed:', err));
+        // Format time as M:SS
+        function formatTime(seconds) {
+          if (!seconds || isNaN(seconds)) return '0:00';
+          var mins = Math.floor(seconds / 60);
+          var secs = Math.floor(seconds % 60);
+          return mins + ':' + (secs < 10 ? '0' : '') + secs;
+        }
+
+        // Update time display
+        function updateTimeDisplay() {
+          timeDisplay.textContent = formatTime(video.currentTime) + ' / ' + formatTime(video.duration);
+        }
+
+        // Play/Pause
+        playPauseBtn.addEventListener('click', function () {
+          if (video.paused) {
+            video.play();
+          } else {
+            video.pause();
+          }
+        });
+
+        video.addEventListener('play', function () {
+          playPauseBtn.textContent = '⏸';
+        });
+
+        video.addEventListener('pause', function () {
+          playPauseBtn.textContent = '▶';
+        });
+
+        // Progress bar
+        video.addEventListener('timeupdate', function () {
+          var percent = (video.currentTime / video.duration) * 100;
+          progressBar.style.width = percent + '%';
+          updateTimeDisplay();
+        });
+
+        video.addEventListener('loadedmetadata', function () {
+          updateTimeDisplay();
+          // Fetch streaming bitrate
+          var currentQuality = localStorage.getItem('video-quality') || 'high';
+          fetch('/api/streaming_bitrate/{{ o.id }}?quality=' + currentQuality)
+            .then(function (response) { return response.json(); })
+            .then(function (data) {
+              if (data.bitrate_mbps) {
+                var bitrateDiv = document.getElementById('streaming-bitrate-{{ o.id }}');
+                var bitrateValue = bitrateDiv.querySelector('.streaming-bitrate-value');
+                bitrateValue.textContent = 'Streaming: ' + data.bitrate_mbps.toFixed(2) + ' Mbps (' +
+                  data.compression_ratio.toFixed(1) + 'x smaller)';
+                bitrateDiv.style.display = 'block';
+              }
+            })
+            .catch(function (err) { console.log('Bitrate fetch failed:', err); });
+        });
+
+        // Seek via progress bar
+        progressContainer.addEventListener('click', function (e) {
+          var rect = progressContainer.getBoundingClientRect();
+          var percent = (e.clientX - rect.left) / rect.width;
+          video.currentTime = percent * video.duration;
+        });
+
+        // Volume toggle
+        volumeBtn.addEventListener('click', function () {
+          video.muted = !video.muted;
+          volumeBtn.textContent = video.muted ? '🔇' : '🔊';
+        });
+
+        // Settings menu toggle
+        settingsBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          settingsMenu.style.display = settingsMenu.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Close settings when clicking outside
+        document.addEventListener('click', function (e) {
+          if (!settingsMenu.contains(e.target) && e.target !== settingsBtn) {
+            settingsMenu.style.display = 'none';
+          }
+        });
+
+        // Quality options
+        var savedQuality = localStorage.getItem('video-quality') || 'high';
+
+        function setQuality(quality) {
+          var currentTime = video.currentTime;
+          var wasPlaying = !video.paused;
+          videoSource.src = '/api/video/' + obsId + '?quality=' + quality;
+          video.load();
+          video.currentTime = currentTime;
+          if (wasPlaying) video.play();
+          localStorage.setItem('video-quality', quality);
+          qualityOptions.forEach(function (opt) {
+            opt.style.background = opt.dataset.quality === quality ? 'var(--btn-bg-hover, rgba(255,255,255,0.2))' : 'none';
           });
-        })();
+        }
+
+        qualityOptions.forEach(function (opt) {
+          if (opt.dataset.quality === savedQuality) {
+            opt.style.background = 'var(--btn-bg-hover, rgba(255,255,255,0.2))';
+          }
+          opt.addEventListener('click', function () {
+            setQuality(this.dataset.quality);
+            settingsMenu.style.display = 'none';
+          });
+        });
+
+        // Apply saved quality on load
+        setQuality(savedQuality);
+
+        // Speed options
+        speedOptions.forEach(function (opt) {
+          opt.addEventListener('click', function () {
+            var speed = parseFloat(this.dataset.speed);
+            video.playbackRate = speed;
+            speedOptions.forEach(function (o) {
+              o.style.background = o.dataset.speed === String(speed) ? 'var(--btn-bg-hover, rgba(255,255,255,0.2))' : 'var(--btn-bg, rgba(255,255,255,0.1))';
+            });
+          });
+        });
+
+        // Picture-in-Picture
+        pipBtn.addEventListener('click', function () {
+          if (document.pictureInPictureElement) {
+            document.exitPictureInPicture();
+          } else if (video.requestPictureInPicture) {
+            video.requestPictureInPicture();
+          }
+        });
+
+        // Fullscreen
+        fullscreenBtn.addEventListener('click', function () {
+          if (document.fullscreenElement) {
+            document.exitFullscreen();
+          } else if (container.requestFullscreen) {
+            container.requestFullscreen();
+          }
+        });
+
+        // Show/hide controls on hover
+        var hideTimeout;
+        function showControls() {
+          controls.style.opacity = '1';
+          clearTimeout(hideTimeout);
+          hideTimeout = setTimeout(function () {
+            if (!video.paused) controls.style.opacity = '0';
+          }, 2500);
+        }
+        container.addEventListener('mousemove', showControls);
+        container.addEventListener('mouseleave', function () {
+          if (!video.paused) controls.style.opacity = '0';
+        });
+        video.addEventListener('pause', function () { controls.style.opacity = '1'; });
+
+        // Click to play/pause on video
+        video.addEventListener('click', function () {
+          if (video.paused) {
+            video.play();
+          } else {
+            video.pause();
+          }
+        });
+        }) ();
       </script>
     </div>
     {% elif video_info and not video_info.exists %}
@@ -372,7 +648,7 @@
         }
       });
 
-      cancelButton.addEventListener('click', function () {
+      cancelButton.addEventListener('click', nction() {
         fields.style.display = 'none';
         button.style.display = 'inline-block';
       });
@@ -553,12 +829,11 @@
               clearTimeout(resetLabel);
             }
             copyButton.textContent = copyButton.dataset.copiedLabel || 'Copied';
-            resetLabel = setTimeout(function () {
-              copyButton.textContent = '📋';
-            }, 1500);
-          });
+            resetLabel = setTimeoutction(copyButton.textContent = '📋';
+          }, 1500);
         });
-      })();
+      });
+      }) ();
     </script>
     {% endif %}
     {% else %}

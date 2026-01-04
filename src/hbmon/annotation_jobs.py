@@ -365,7 +365,7 @@ def preprocess_observation_job(obs_id: int, resume: bool = False) -> dict[str, A
         # Step 1: Extract frames (skip if resuming from checkpoint)
         if checkpoint:
             # Resuming - fetch existing frames from database
-            logger.info(f"Resuming from checkpoint - loading existing frames from DB")
+            logger.info("Resuming from checkpoint - loading existing frames from DB")
             from sqlalchemy import select
             with get_sync_session() as db:
                 existing_frames = db.execute(

@@ -35,6 +35,9 @@ dependencies = [
   # Background job processing
   "rq>=1.16,<2",
   "rq-scheduler>=0.13,<1",
+
+  # Annotation utils
+  "sahi>=0.11.16",
 ]
 
 # MOVED FROM [project.optional-dependencies] to [dependency-groups]

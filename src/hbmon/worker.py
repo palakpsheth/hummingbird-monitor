@@ -134,6 +134,21 @@ class VisitState(Enum):
 DEFAULT_BIRD_CLASS_ID = 14
 
 
+def _is_bird(cls_id: int, bird_class_id: int | None, names: dict[int, str] | None) -> bool:
+    """Robustly check if a class ID corresponds to a bird."""
+    # 1. Direct match with resolved ID
+    if bird_class_id is not None and cls_id == bird_class_id:
+        return True
+    # 2. Match with names mapping
+    if names and cls_id in names:
+        if str(names[cls_id]).lower() in ("bird", "hummingbird"):
+            return True
+    # 3. Fallback to common COCO bird ID if we suspect a COCO-based model
+    if cls_id == 14:
+        return True
+    return False
+
+
 @dataclass
 class Det:
     x1: int
@@ -502,11 +517,14 @@ def _pick_best_bird_det(
         return None
 
     best: Det | None = None
+    names = getattr(results[0], 'names', None) if results else None
+
     for b in boxes:
         try:
             cls = int(b.cls.item()) if hasattr(b.cls, "item") else int(b.cls)
             conf = float(b.conf.item()) if hasattr(b.conf, "item") else float(b.conf)
-            if cls != bird_class_id:
+            
+            if not _is_bird(cls, bird_class_id, names):
                 continue
 
             xyxy = b.xyxy[0].detach().cpu().numpy()
@@ -547,11 +565,14 @@ def _collect_bird_detections(
         return []
 
     detections: list[Det] = []
+    names = getattr(results[0], 'names', None) if results else None
+
     for b in boxes:
         try:
             cls = int(b.cls.item()) if hasattr(b.cls, "item") else int(b.cls)
             conf = float(b.conf.item()) if hasattr(b.conf, "item") else float(b.conf)
-            if cls != bird_class_id:
+            
+            if not _is_bird(cls, bird_class_id, names):
                 continue
 
             xyxy = b.xyxy[0].detach().cpu().numpy()
@@ -1339,6 +1360,13 @@ async def run_worker() -> None:
     else:
         logger.info(f'Resolved bird_class_id={bird_class_id} from model names')
 
+    # We'll use a set of classes for YOLO filtering to be robust (COCO 14 + resolved)
+    bird_classes = {14}
+    if bird_class_id is not None:
+        bird_classes.add(bird_class_id)
+    bird_class_list = list(bird_classes)
+    logger.info(f"YOLO bird filter classes: {bird_class_list}")
+
     # Start dispatcher
     queue: asyncio.Queue = asyncio.Queue()
     # Initialize CLIP model with backend selection
@@ -1556,7 +1584,7 @@ async def run_worker() -> None:
              predict_imgsz = resolve_predict_imgsz(imgsz_env, roi_frame.shape)
 
              t0_yolo = time.perf_counter()
-             results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=[bird_class_id], imgsz=predict_imgsz, verbose=yolo_verbose)
+             results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=bird_class_list, imgsz=predict_imgsz, verbose=yolo_verbose)
              dt_yolo = (time.perf_counter() - t0_yolo) * 1000
              
              if yolo_verbose:

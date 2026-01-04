@@ -4239,6 +4239,7 @@ def make_app() -> Any:
     async def stream_video(
         obs_id: int,
         request: Request,
+        quality: str = "high",
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> Any:
         """
@@ -4271,7 +4272,23 @@ def make_app() -> Any:
         # Check if on-the-fly compression is enabled
         enable_compression = os.getenv("HBMON_VIDEO_STREAM_COMPRESSION", "1") in ("1", "true", "yes", "on")
         
-        if not enable_compression:
+        # Map quality parameter to CRF values
+        # Lower CRF = better quality, higher file size
+        # Higher CRF = lower quality, smaller file size
+        quality_map = {
+            "low": 31,      # Smaller file, faster streaming
+            "medium": 27,   # Balanced
+            "high": 23,     # Better quality (default)
+            "original": 0,  # Special: serve uncompressed
+        }
+        
+        # Normalize quality parameter
+        quality_normalized = quality.lower().strip()
+        if quality_normalized not in quality_map:
+            quality_normalized = "high"
+        
+        # Handle original quality request
+        if quality_normalized == "original" or not enable_compression:
             # Serve uncompressed video directly
             return FileResponse(
                 str(full_path),
@@ -4285,10 +4302,10 @@ def make_app() -> Any:
         
         import hashlib
         
-        # Create cache key from observation ID and compression settings
-        crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
+        # Create cache key from observation ID, quality, and compression settings
+        crf = quality_map[quality_normalized]
         preset = os.getenv("HBMON_VIDEO_PRESET", "fast")  # Use "fast" for on-the-fly to reduce latency
-        cache_key = f"{obs_id}_{crf}_{preset}"
+        cache_key = f"{obs_id}_{quality_normalized}_{crf}_{preset}"
         cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
         
         # Use temp directory for compressed cache
@@ -4369,6 +4386,7 @@ def make_app() -> Any:
     @app.get("/api/streaming_bitrate/{obs_id}")
     async def streaming_bitrate(
         obs_id: int,
+        quality: str = "high",
         db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
     ) -> dict[str, Any]:
         """
@@ -4376,6 +4394,10 @@ def make_app() -> Any:
         
         Returns bitrate and compression ratio if cached version exists.
         This is called by the UI after video loads to show streaming efficiency.
+        
+        Args:
+            quality: Streaming quality level (low, medium, high). Must match the
+                quality used when streaming the video to find the correct cache file.
         """
         o = await db.get(Observation, obs_id)
         if o is None:
@@ -4389,11 +4411,16 @@ def make_app() -> Any:
         if not await _run_blocking(full_path.exists):
             return {"bitrate_mbps": None}
         
-        # Get cached compressed video path
+        # Get cached compressed video path - must match video endpoint's cache key format
         import hashlib
-        crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
+        # Map quality to CRF (same as video endpoint)
+        quality_map = {"low": 31, "medium": 27, "high": 23}
+        quality_normalized = quality.lower().strip()
+        if quality_normalized not in quality_map:
+            quality_normalized = "high"
+        crf = quality_map[quality_normalized]
         preset = os.getenv("HBMON_VIDEO_PRESET", "fast")
-        cache_key = f"{obs_id}_{crf}_{preset}"
+        cache_key = f"{obs_id}_{quality_normalized}_{crf}_{preset}"
         cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
         
         temp_dir = media_dir() / ".cache" / "compressed"

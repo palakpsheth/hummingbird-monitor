@@ -194,7 +194,7 @@ def log_system_stats_from_api(api_url: str = "http://hbmon-web:8000/api/system_l
     _LAST_LOG_TIME = now
     
     try:
-        with urlopen(api_url, timeout=5) as resp:
+        with urlopen(api_url, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         
         stats = [f"CPU: {data['cpu']:.1f}%", f"Mem: {data['mem']:.1f}%"]
@@ -204,11 +204,6 @@ def log_system_stats_from_api(api_url: str = "http://hbmon-web:8000/api/system_l
             stats.append(f"Nvidia GPU: {data['gpu_nvidia']:.1f}%")
         
         logger.info("System Load: " + " | ".join(stats))
-    except (URLError, json.JSONDecodeError, KeyError) as e:
-        logger.debug(f"Failed to fetch system stats from API: {e}")
-    except Exception as e:
-        logger.debug(f"Error logging system stats: {e}")
-
     except (URLError, json.JSONDecodeError, KeyError) as e:
         logger.debug(f"Failed to fetch system stats from API: {e}")
     except Exception as e:

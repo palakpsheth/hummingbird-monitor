@@ -1830,7 +1830,6 @@ def test_streaming_bitrate_with_cache(tmp_path, monkeypatch):
     # Calculate cache filename (matching the logic in web.py)
     import hashlib
     import os
-    crf = int(os.getenv("HBMON_VIDEO_CRF", "23"))
     preset = os.getenv("HBMON_VIDEO_PRESET", "fast")
     
     with session_scope() as db:
@@ -1853,7 +1852,8 @@ def test_streaming_bitrate_with_cache(tmp_path, monkeypatch):
         db.commit()
         obs_id = obs.id
     
-    cache_key = f"{obs_id}_{crf}_{preset}"
+    # Cache key now includes quality parameter (high=23)
+    cache_key = f"{obs_id}_high_23_{preset}"
     cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:12]
     cached_file = cache_dir / f"test_{cache_hash}.mp4"
     cached_file.write_bytes(b"y" * 30000)  # 30KB compressed (~3x compression)

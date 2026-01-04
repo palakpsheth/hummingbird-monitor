@@ -72,3 +72,4 @@ docker-compose.override.yml
 
 # models
 yolo*.pt
+sam*.pt
