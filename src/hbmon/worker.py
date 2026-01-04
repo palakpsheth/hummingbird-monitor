@@ -77,7 +77,10 @@ from hbmon.config import (
     load_settings,
     media_dir,
 )
-from hbmon.utils import log_system_stats_from_api
+from hbmon.utils import (
+    log_system_stats_from_api,
+    cache_gpu_stats,
+)
 from hbmon.db import async_session_scope, init_async_db
 from hbmon.models import Candidate, Embedding, Individual, Observation
 from hbmon.observation_tools import extract_video_metadata
@@ -1267,6 +1270,24 @@ def _load_yolo_model() -> tuple[Any, str]:
         return YOLO(model_name, task="detect"), "PyTorch"  # type: ignore[misc]
 
 
+
+async def monitor_loop() -> None:
+    """Background task to push GPU stats and log system load."""
+    logger.info("Starting background system monitoring task")
+    while True:
+        try:
+           # Run blocking stats collection in executor so we don't block the event loop
+           # This allows inference to continue while we wait for intel_gpu_top (5s)
+           await asyncio.get_running_loop().run_in_executor(None, cache_gpu_stats)
+           await asyncio.get_running_loop().run_in_executor(None, log_system_stats_from_api)
+        except Exception as e:
+           logger.error(f"Monitor loop error: {e}")
+        
+        # cache_gpu_stats throttles to 10s, log throttles to 60s
+        # We can check every 1s
+        await asyncio.sleep(1.0)
+
+
 async def run_worker() -> None:
     """
     Main loop for the hummingbird monitoring worker.  Requires OpenCV,
@@ -1449,6 +1470,9 @@ async def run_worker() -> None:
     except Exception as e:
         logger.error(f"Failed to create readiness signal file: {e}")
 
+    logger.info("Starting background system monitoring task")
+    asyncio.create_task(monitor_loop())
+
     while True:
         s = get_settings()
         if not s.rtsp_url:
@@ -1501,11 +1525,7 @@ async def run_worker() -> None:
         if s.roi:
             roi_frame, (xoff, yoff) = _apply_roi(frame, s)
 
-        # Log system stats periodically (fetches from web API, non-blocking)
-        try:
-            await asyncio.get_running_loop().run_in_executor(None, log_system_stats_from_api)
-        except Exception:
-            pass
+
 
         # Debug Logging
         debug_every = float(os.getenv("HBMON_DEBUG_EVERY_SECONDS", "10"))

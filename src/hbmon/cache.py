@@ -108,3 +108,20 @@ def cache_set_json_sync(key: str, value: Any, ttl_seconds: int | None = None) ->
         return True
     except (RedisError, Exception):
         return False
+
+
+def cache_get_json_sync(key: str, default: Any = None) -> Any:
+    """
+    Synchronous get for use in threads or non-async contexts.
+    """
+    client = get_redis_sync_client()
+    if not client:
+        return default
+    
+    try:
+        payload = client.get(key)
+        if not payload:
+            return default
+        return json.loads(payload)
+    except (RedisError, json.JSONDecodeError, Exception):
+        return default

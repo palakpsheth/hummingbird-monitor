@@ -113,8 +113,8 @@ The web UI is optimized for 📱 **Android Chrome** and is intentionally **no-lo
 - **wyze-bridge**: logs into Wyze and exposes RTSP streams (using [IDisposable fork](https://github.com/IDisposable/docker-wyze-bridge) for improved performance and camera support)
 - **hbmon-db**: PostgreSQL database for concurrent reads/writes with pooling
 - **hbmon-redis**: Redis cache for hot query results (latest observations, health checks)
-- **hbmon-worker**: reads RTSP, runs detection + CLIP + re-ID, writes to PostgreSQL
-- **hbmon-web**: FastAPI + Jinja UI served by Gunicorn + Uvicorn workers, serves `/media`, exports, and handles video streaming
+- **hbmon-worker**: reads RTSP, runs detection + CLIP + re-ID, writes to PostgreSQL, and periodically pushes GPU stats to Redis (hybrid monitoring)
+- **hbmon-web**: FastAPI + Jinja UI served by Gunicorn + Uvicorn workers. Serves `/media`, exports, and `/api/system_load` (reads CPU/Mem locally + GPU from Redis).
 - **hbmon-proxy** (nginx): reverse proxy on port 80 (nice "just open IP" UX)
 
 ### Container Startup Order & Healthchecks

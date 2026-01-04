@@ -138,9 +138,9 @@
     <div class="muted">ROI: {{ roi_str or "(not set)" }}</div>
     <div class="muted" id="system-load-info">
       Load: CPU --% · Mem --%
-      <button id="system-load-refresh" class="icon-button" aria-label="Refresh system load"
-        style="vertical-align: middle; margin-left: 4px; padding: 2px 6px; font-size: 0.875rem;"
-        title="Refresh now">🔄</button>
+      <button id="system-load-refresh" aria-label="Refresh system load"
+        style="border: none; background: transparent; cursor: pointer; padding: 0 4px; font-size: 1.1em; vertical-align: middle;"
+        onclick="fetchSystemLoad()" title="Refresh now">🔄</button>
     </div>
     <div class="muted">
       Last capture:
@@ -361,12 +361,49 @@
       }
       // Preserve the refresh button when updating text
       loadEl.innerHTML = 'Load: ' + loadParts.join(' · ') + ' ';
+      // Append a fresh button if we wiped it, though usually we modify in place.
+      // But here we are wiping innerHTML.
+      // A better way is to only update the text node, but this is legacy code style.
+      // We need to re-attach the event listener or just re-create the button.
+      // Since innerHTML wipes it, let's just re-create it or assume static HTML structure?
+      // Wait, the button is INSIDE existing HTML?
+      // line 350: var loadEl = document.getElementById('system-load-info');
+      // line 351: var refreshBtn = document.getElementById('system-load-refresh');
+      // If we overwrite loadEl.innerHTML, refreshBtn is lost (garbage collected), unless we append it back (which we do).
+      // But event listeners might be lost if we don't handle it carefully.
+      // The button has onclick="fetchSystemLoad()" in HTML usually. Let's check.
+
+      // Let's create a new button if needed, or re-append the old element.
       if (refreshBtn) {
         loadEl.appendChild(refreshBtn);
+      } else {
+        // Create it if missing (shouldn't happen if template is correct)
+        var newBtn = document.createElement('button');
+        newBtn.id = 'system-load-refresh';
+        newBtn.className = '';
+        newBtn.style.cssText = 'border: none; background: transparent; cursor: pointer; padding: 0 4px; font-size: 1.1em; vertical-align: middle;';
+        newBtn.onclick = fetchSystemLoad;
+        newBtn.textContent = '🔄';
+        newBtn.title = 'Refresh system load';
+        loadEl.appendChild(newBtn);
       }
     }
 
     function fetchSystemLoad() {
+      var btn = document.getElementById('system-load-refresh');
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+        // Simple rotation animation
+        btn.animate([
+          { transform: 'rotate(0deg)' },
+          { transform: 'rotate(360deg)' }
+        ], {
+          duration: 1000,
+          iterations: Infinity
+        });
+      }
+
       fetch('/api/system_load', { cache: 'no-store' })
         .then(function (res) {
           if (!res.ok) throw new Error('bad response');
@@ -374,6 +411,14 @@
         })
         .then(function (data) {
           updateSystemLoadDisplay(data);
+        })
+        .finally(function () {
+          if (btn) {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            var animations = btn.getAnimations();
+            animations.forEach(function (anim) { anim.cancel(); });
+          }
         });
     }
 
