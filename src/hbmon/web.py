@@ -1870,7 +1870,8 @@ def make_app() -> Any:
             if frame:
                 current_frame = next((f for f in frames if f.id == frame), frames[0])
             else:
-                current_frame = frames[0]
+                # Default to first frame with detections, or first frame if none
+                current_frame = next((f for f in frames if f.bird_present), frames[0])
 
             # Get boxes for current frame
             if current_frame and _SQLA_AVAILABLE:
@@ -2084,7 +2085,7 @@ def make_app() -> Any:
                         "reviewed_frames": reviewed,
                         "pending_frames": pending,
                         "state": state,
-                        "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                        "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                     }
                 })
                 await _commit_with_retry(db)
@@ -2124,6 +2125,24 @@ def make_app() -> Any:
         if not frame_path.exists():
             raise HTTPException(status_code=404, detail="Frame image not found")
 
+        if thumb:
+            # Generate or retrieve thumbnail
+            from hbmon.thumbnail import get_or_create_thumbnail
+            
+            # Use relative path for thumbnail cache key
+            # frame_path is absolute, need to make it relative to media_dir
+            # But the thumbnail logic expects relative path to media_dir
+            # Assuming frame_path is inside media_dir
+            try:
+                from hbmon.config import media_dir
+                rel_path = frame_path.relative_to(media_dir())
+                thumb_path = await _run_blocking(get_or_create_thumbnail, str(rel_path))
+                if thumb_path and thumb_path.exists():
+                    return FileResponse(str(thumb_path), media_type="image/jpeg")
+            except Exception as e:
+                logger.warning(f"Failed to generate thumbnail for {frame_path}: {e}")
+                # Fall back to full image
+        
         return FileResponse(str(frame_path), media_type="image/jpeg")
 
     @app.get("/api/annotate/{obs_id}/start")
@@ -2164,7 +2183,7 @@ def make_app() -> Any:
                         "annotation_summary": {
                             "state": "preprocessing",
                             "job_id": job_id,
-                            "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                            "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                         }
                     })
                     await _commit_with_retry(db)
@@ -2226,7 +2245,7 @@ def make_app() -> Any:
                 "reviewed_frames": 0,
                 "pending_frames": total,
                 "state": "in_review",
-                "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             }
         })
 
@@ -2252,7 +2271,7 @@ def make_app() -> Any:
             raise HTTPException(status_code=501, detail="Job queue not available")
 
     @app.get("/api/annotate/queue_status")
-    async def get_annotation_queue_status() -> dict[str, Any]:
+    async def get_annotation_queue_status(db: AsyncSession = Depends(get_async_db)) -> dict[str, Any]:
         """
         Get RQ job status for all active annotation preprocessing jobs.
         Returns a mapping of {obs_id: job_status} for observations with jobs.
@@ -2265,89 +2284,161 @@ def make_app() -> Any:
         
         try:
             from rq.job import Job
-            from rq.registry import StartedJobRegistry, FinishedJobRegistry, FailedJobRegistry
-            
-            status_map: dict[str, str] = {}
-            
-            # Get all job IDs from different registries
-            started_reg = StartedJobRegistry(queue=queue)
-            finished_reg = FinishedJobRegistry(queue=queue)
-            failed_reg = FailedJobRegistry(queue=queue)
-            
-            # Check queued jobs
-            for job_id in queue.job_ids:
-                try:
-                    job = Job.fetch(job_id, connection=queue.connection)
-                    obs_id = job.kwargs.get("obs_id") if job.kwargs else None
-                    if obs_id:
-                        status_map[str(obs_id)] = "queued"
-                except Exception:
-                    continue
-            
-            # Check started jobs (currently processing)
-            for job_id in started_reg.get_job_ids():
-                try:
-                    job = Job.fetch(job_id, connection=queue.connection)
-                    obs_id = job.kwargs.get("obs_id") if job.kwargs else None
-                    if obs_id:
-                        status_map[str(obs_id)] = "processing"
-                except Exception:
-                    continue
-            
-            # Check finished jobs (recently completed)
-            for job_id in finished_reg.get_job_ids():
-                try:
-                    job = Job.fetch(job_id, connection=queue.connection)
-                    obs_id = job.kwargs.get("obs_id") if job.kwargs else None
-                    if obs_id:
-                        status_map[str(obs_id)] = "finished"
-                except Exception:
-                    continue
-                    
-            # Check failed jobs
-            for job_id in failed_reg.get_job_ids():
-                try:
-                    job = Job.fetch(job_id, connection=queue.connection)
-                    obs_id = job.kwargs.get("obs_id") if job.kwargs else None
-                    if obs_id:
-                        status_map[str(obs_id)] = "failed"
-                except Exception:
-                    continue
-                    
-            # Check for stalled jobs based on last_updated timestamp
-            # Jobs in preprocessing state that haven't updated in STALL_TIMEOUT are considered stalled
-            import os
+            from rq.registry import FailedJobRegistry
             from datetime import datetime, timezone, timedelta
+            import os
+            
+            status_map = {}
             stall_timeout_minutes = int(os.environ.get("HBMON_ANNOTATION_STALL_TIMEOUT_MINUTES", "15"))
             stall_threshold = datetime.now(timezone.utc) - timedelta(minutes=stall_timeout_minutes)
             
-            async with get_async_db() as db:
-                # Get observations in preprocessing state
-                preprocessing_obs = await db.execute(
-                    select(Observation).where(
-                        Observation.id.in_([int(k) for k in status_map.keys() if status_map[k] == "processing"])
-                    )
-                )
-                for obs in preprocessing_obs.scalars():
-                    extra = obs.get_extra() or {}
-                    ann_summary = extra.get("annotation_summary", {})
-                    last_updated_str = ann_summary.get("last_updated")
-                    
-                    if last_updated_str:
-                        try:
-                            # Parse ISO format with Z suffix
-                            last_updated = datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
-                            if last_updated < stall_threshold:
-                                status_map[str(obs.id)] = "failed"
-                        except Exception:
-                            # If timestamp parsing fails, keep current status
-                            pass
-                    
+            # 1. Get all observations currently in 'preprocessing' state from DB
+            # Use LIKE on extra_json since we don't have a dedicated column
+            preprocessing_obs = await db.execute(
+                select(Observation).where(Observation.extra_json.like('%"state": "preprocessing"%'))
+            )
+            
+            # For each preprocessing observation, check its last_updated timestamp
+            # If recent (within stall threshold), assume it's processing
+            # If old (beyond stall threshold), mark as failed/stalled
+            for obs in preprocessing_obs.scalars():
+                extra = obs.get_extra() or {}
+                ann_summary = extra.get("annotation_summary", {})
+                last_updated_str = ann_summary.get("last_updated")
+                
+                if last_updated_str:
+                    try:
+                        # Robust parsing for potentially malformed strings (e.g. +00:00Z)
+                        clean_str = last_updated_str.replace("Z", "+00:00")
+                        if clean_str.endswith("+00:00+00:00"):
+                            clean_str = clean_str[:-6] 
+                        last_updated = datetime.fromisoformat(clean_str)
+                        
+                        if last_updated >= stall_threshold:
+                            # Recent update - job is actively processing
+                            status_map[str(obs.id)] = "processing"
+                        else:
+                            # Old update - job is stalled/failed
+                            status_map[str(obs.id)] = "failed"
+                    except Exception:
+                        # Failed to parse timestamp - assume stalled
+                        status_map[str(obs.id)] = "failed"
+                else:
+                    # No timestamp - assume stalled
+                    status_map[str(obs.id)] = "failed"
+
+            # 2. Also check Redis for queued and explicitly failed jobs (override DB-based status)
+            try:
+                from hbmon.annotation_jobs import _get_redis
+                redis_conn = _get_redis()
+                if not redis_conn:
+                    raise Exception("Redis connection unavailable")
+                queue = Queue("annotation", connection=redis_conn)
+                failed_reg = FailedJobRegistry(queue.name, connection=redis_conn)
+                
+                # Helper to map job to obs_id
+                def get_obs_id(j):
+                    # Try args first (standard call)
+                    if j.args and len(j.args) > 0:
+                        return str(j.args[0])
+                    # Try kwargs
+                    if j.kwargs:
+                        return str(j.kwargs.get("obs_id"))
+                    return None
+
+                # Check Queued jobs - these are waiting, not yet processing
+                for job in queue.jobs:
+                    oid = get_obs_id(job)
+                    if oid:
+                        status_map[oid] = "queued"
+                        
+                # Check Explicitly Failed jobs (in case DB didn't catch it yet)
+                for job_id in failed_reg.get_job_ids():
+                    try:
+                        job = Job.fetch(job_id, connection=redis_conn)
+                        oid = get_obs_id(job)
+                        if oid and oid in status_map:
+                            status_map[oid] = "failed"
+                    except:
+                        continue
+
+            except Exception as e:
+                logger.error(f"Redis connection error in status check: {e}")
+                # If Redis is down, trust DB-based status determined above
+                pass
+
             return status_map
             
         except Exception as e:
             logger.error(f"Error getting queue status: {e}")
             return {}
+
+    @app.post("/api/annotate/{obs_id}/resume")
+    async def api_annotate_resume(
+        obs_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Response:
+        """Resume annotation job for an observation from last checkpoint."""
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+        
+        from hbmon.annotation_jobs import enqueue_preprocessing
+        
+        # Enqueue with resume=True
+        job_id = await _run_blocking(enqueue_preprocessing, obs_id, resume=True)
+        
+        if job_id:
+             # Update state to preprocessing immediately to avoid race condition with stall check
+             from datetime import datetime, timezone
+             o.merge_extra({
+                "annotation_summary": {
+                    "state": "preprocessing",
+                    "job_id": job_id,
+                    "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                }
+             })
+             await _commit_with_retry(db)
+             
+        return Response(
+            content=json.dumps({"status": "resumed", "observation_id": obs_id, "job_id": job_id}),
+            media_type="application/json",
+        )
+
+    @app.post("/api/annotate/{obs_id}/restart")
+    async def api_annotate_restart(
+        obs_id: int,
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> Response:
+        """Full restart of annotation job (clears data and starts fresh)."""
+        o = await db.get(Observation, obs_id)
+        if o is None:
+            raise HTTPException(status_code=404, detail="Observation not found")
+            
+        from hbmon.annotation_jobs import enqueue_preprocessing, reset_observation_annotation
+        
+        # 1. Reset data
+        await _run_blocking(reset_observation_annotation, obs_id)
+        
+        # 2. Enqueue fresh
+        job_id = await _run_blocking(enqueue_preprocessing, obs_id, resume=False)
+        
+        if job_id:
+             # Update state to preprocessing immediately
+             from datetime import datetime, timezone
+             o.merge_extra({
+                "annotation_summary": {
+                    "state": "preprocessing",
+                    "job_id": job_id,
+                    "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                }
+             })
+             await _commit_with_retry(db)
+
+        return Response(
+            content=json.dumps({"status": "restarted", "observation_id": obs_id, "job_id": job_id}),
+            media_type="application/json",
+        )
 
     @app.post("/api/annotate/{obs_id}/reset")
     async def api_annotate_reset(
@@ -2359,32 +2450,14 @@ def make_app() -> Any:
         This clears all frames and boxes, allowing the annotation to be restarted.
         Useful for stuck jobs or corrupted annotations.
         """
-        from hbmon.models import AnnotationFrame, AnnotationBox
-        
         o = await db.get(Observation, obs_id)
         if o is None:
             raise HTTPException(status_code=404, detail="Observation not found")
 
-        if _SQLA_AVAILABLE:
-            # Delete all boxes for this observation's frames
-            frames_subq = select(AnnotationFrame.id).where(
-                AnnotationFrame.observation_id == obs_id
-            ).scalar_subquery()
-            await db.execute(
-                delete(AnnotationBox).where(AnnotationBox.frame_id.in_(frames_subq))
-            )
-            
-            # Delete all frames
-            await db.execute(
-                delete(AnnotationFrame).where(AnnotationFrame.observation_id == obs_id)
-            )
-
-        # Clear annotation summary from observation
-        o.merge_extra({
-            "annotation_summary": None
-        })
-
-        await _commit_with_retry(db)
+        from hbmon.annotation_jobs import reset_observation_annotation
+        
+        # Use centralized reset helper
+        await _run_blocking(reset_observation_annotation, obs_id)
 
         return Response(
             content=json.dumps({"status": "reset", "observation_id": obs_id}),
@@ -4232,6 +4305,58 @@ def make_app() -> Any:
                 "Cache-Control": "no-cache, no-store, must-revalidate",
                 "Pragma": "no-cache",
                 "Expires": "0",
+            },
+        )
+
+    @app.get("/api/thumbnail/{path:path}")
+    async def serve_thumbnail(
+        path: str,
+        w: int = 300,
+    ) -> FileResponse:
+        """Serve a cached thumbnail of a media image.
+        
+        Thumbnails are generated on-demand and cached for future requests.
+        This dramatically reduces bandwidth for gallery pages.
+        
+        Args:
+            path: Relative path to the image within /media
+            w: Desired thumbnail width in pixels (default 300, max 600)
+        
+        Returns:
+            JPEG thumbnail image
+        """
+        from hbmon.thumbnail import (
+            get_or_create_thumbnail,
+            get_source_path,
+            MAX_THUMB_WIDTH,
+        )
+        
+        # Validate and normalize width
+        width = min(max(w, 50), MAX_THUMB_WIDTH)
+        
+        # Security: prevent path traversal
+        if ".." in path or path.startswith("/"):
+            raise HTTPException(status_code=400, detail="Invalid path")
+        
+        # Check if source exists
+        source = get_source_path(path)
+        if not source.exists():
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        # Get or create thumbnail
+        thumb_path = await _run_blocking(get_or_create_thumbnail, path, width)
+        
+        if thumb_path is None or not thumb_path.exists():
+            # Fallback: serve original image if thumbnail generation fails
+            logger.warning(f"Thumbnail generation failed for {path}, serving original")
+            return FileResponse(str(source), media_type="image/jpeg")
+        
+        return FileResponse(
+            str(thumb_path),
+            media_type="image/jpeg",
+            headers={
+                # Cache for 1 hour (thumbnails rarely change)
+                "Cache-Control": "public, max-age=3600",
             },
         )
 

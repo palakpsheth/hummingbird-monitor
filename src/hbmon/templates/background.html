@@ -109,7 +109,9 @@
     {% for o in observations %}
     {% set hue = ((o.individual_id or 0) * 47) % 360 %}
     <div class="thumb">
-      <img src="/media/{{ o.snapshot_path }}" alt="Observation {{ o.id }}" loading="lazy" />
+      <img data-src="/api/thumbnail/{{ o.snapshot_path }}?w=300"
+        src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 169'%3E%3Crect width='100%25' height='100%25' fill='%2323243a'/%3E%3C/svg%3E"
+        alt="Observation {{ o.id }}" loading="lazy" class="lazy-thumb" />
       <div class="meta">
         <div>
           <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>

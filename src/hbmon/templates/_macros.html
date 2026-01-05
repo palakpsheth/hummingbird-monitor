@@ -22,7 +22,9 @@ o: Observation object or dict with fields:
 <div class="thumb">
   <div class="thumb-media">
     <a href="/observations/{{ o.id }}">
-      <img src="/media/{{ o.display_snapshot_path }}" alt="Observation {{ o.id }}" loading="lazy" />
+      <img data-src="/api/thumbnail/{{ o.display_snapshot_path }}?w=300"
+        src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 169'%3E%3Crect width='100%25' height='100%25' fill='%2323243a'/%3E%3C/svg%3E"
+        alt="Observation {{ o.id }}" class="lazy-thumb" loading="lazy" width="300" height="169" />
     </a>
   </div>
   <div class="meta">

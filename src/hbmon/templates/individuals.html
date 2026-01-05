@@ -73,8 +73,9 @@
           <td class="obs-thumb-cell">
             {% if proto_obs %}
             <a href="/observations/{{ proto_obs.id }}">
-              <img src="/media/{{ proto_obs.display_snapshot_path }}" alt="Prototype for {{ ind.id }}" loading="lazy"
-                class="ind-thumb" width="72" />
+              <img data-src="/api/thumbnail/{{ proto_obs.display_snapshot_path }}?w=144"
+                src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 144 108'%3E%3Crect width='100%25' height='100%25' fill='%2323243a'/%3E%3C/svg%3E"
+                alt="Prototype for {{ ind.id }}" loading="lazy" class="ind-thumb lazy-thumb" width="72" />
             </a>
             {% else %}
             <span class="muted">—</span>

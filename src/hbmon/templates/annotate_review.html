@@ -36,7 +36,9 @@
                 {% for frame in frames %}
                 <div class="frame-item {{ 'active' if frame.id == current_frame.id else '' }}"
                     data-frame-id="{{ frame.id }}" data-status="{{ frame.status }}" onclick="loadFrame({{ frame.id }})">
-                    <img src="{{ frame.thumbnail_url }}" alt="Frame {{ frame.frame_index }}" loading="lazy" />
+                    <img data-src="{{ frame.thumbnail_url }}"
+                        src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 169'%3E%3Crect width='100%25' height='100%25' fill='%2323243a'/%3E%3C/svg%3E"
+                        alt="Frame {{ frame.frame_index }}" class="lazy-thumb" loading="lazy" />
                     <div class="frame-info">
                         <span class="frame-index">#{{ frame.frame_index + 1 }}</span>
                         <span class="frame-status {{ 'reviewed' if frame.status == 'complete' else 'pending' }}">
@@ -46,6 +48,23 @@
                 </div>
                 {% endfor %}
             </div>
+            <script>
+                document.addEventListener('DOMContentLoaded', function () {
+                    const lazyImages = document.querySelectorAll('img.lazy-thumb');
+                    const observer = new IntersectionObserver((entries, observer) => {
+                        entries.forEach(entry => {
+                            if (entry.isIntersecting) {
+                                const img = entry.target;
+                                img.src = img.dataset.src;
+                                img.classList.remove('lazy-thumb');
+                                observer.unobserve(img);
+                            }
+                        });
+                    }, { root: document.getElementById('frameList'), rootMargin: '100px' });
+
+                    lazyImages.forEach(img => observer.observe(img));
+                });
+            </script>
             <div class="frame-progress">
                 <div class="progress-bar">
                     <div class="progress-fill"
@@ -80,9 +99,14 @@
                 </div>
 
                 <div class="box-list" id="boxList">
-                    <h4>Boxes</h4>
+                    <div class="inline" style="justify-content: space-between; align-items: center;">
+                        <h4 style="margin:0;">Boxes</h4>
+                        <button class="btn btn-sm" onclick="tidyBoxes()"
+                            title="Merge overlapping and remove tiny boxes">Tidy</button>
+                    </div>
                     <div id="boxItems"></div>
-                    <button class="btn btn-sm" onclick="addBox()">+ Add</button>
+                    <button class="btn btn-sm" onclick="addBox()" style="width:100%; margin-top:0.5rem;">+ Add
+                        Box</button>
                 </div>
 
                 <div class="action-buttons">
@@ -222,27 +246,61 @@
     window.addEventListener('resize', setupCanvas);
     setupCanvas();
 
+    function getBoxColor(idx) {
+        const hue = (idx * 137.508) % 360;
+        return {
+            solid: `hsl(${hue}, 80%, 50%)`,
+            alpha: `hsla(${hue}, 80%, 50%, 0.2)`
+        };
+    }
+
     // Drawing
     function drawBoxes() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         boxes.forEach((box, idx) => {
+            if (!box || isNaN(box.x) || box.w <= 0.001) return;
             const x = (box.x - box.w / 2) * canvas.width;
             const y = (box.y - box.h / 2) * canvas.height;
             const w = box.w * canvas.width;
             const h = box.h * canvas.height;
 
             const isSelected = idx === selectedBoxIndex;
-            ctx.strokeStyle = box.is_false_positive ? '#ff6b6b' : (isSelected ? '#fff' : '#4ecdc4');
+            const colors = getBoxColor(idx);
+
+            ctx.strokeStyle = colors.solid;
             ctx.lineWidth = isSelected ? 4 : 3;
             ctx.strokeRect(x, y, w, h);
 
-            ctx.fillStyle = box.is_false_positive ? 'rgba(255,107,107,0.2)' : 'rgba(78,205,196,0.2)';
+            ctx.fillStyle = colors.alpha;
             ctx.fillRect(x, y, w, h);
 
-            // Label
+            // Label with background for readability
+            const label = `#${idx + 1}${box.is_false_positive ? ' (FP)' : ''}`;
+            ctx.font = 'bold 20px sans-serif';
+            const textMetrics = ctx.measureText(label);
+            const textWidth = textMetrics.width;
+            const textHeight = 24; // approx height
+
+            // Draw label background
+            ctx.fillStyle = colors.solid;
+            ctx.fillRect(x, y - textHeight, textWidth + 10, textHeight);
+
+            // Draw text
             ctx.fillStyle = '#fff';
-            ctx.font = 'bold 16px sans-serif';
-            ctx.fillText(`#${idx + 1}${box.is_false_positive ? ' (FP)' : ''}`, x + 4, y + 20);
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(label, x + 5, y - 4);
+
+            // Draw strikethrough "X" for FP boxes
+            if (box.is_false_positive) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#ff6b6b';
+                ctx.lineWidth = 4; // Thicker for better visibility
+                ctx.moveTo(x, y);
+                ctx.lineTo(x + w, y + h);
+                ctx.moveTo(x + w, y);
+                ctx.lineTo(x, y + h);
+                ctx.stroke();
+            }
 
             // Draw resize handles for selected box
             if (isSelected) {
@@ -266,16 +324,21 @@
     function updateBoxList() {
         const container = document.getElementById('boxItems');
         if (!container) return;
-        container.innerHTML = boxes.map((box, idx) => `
+        container.innerHTML = boxes.map((box, idx) => {
+            const colors = getBoxColor(idx);
+            return `
             <div class="box-item ${box.is_false_positive ? 'false-positive' : ''} ${idx === selectedBoxIndex ? 'selected' : ''}"
-                 onclick="selectBox(${idx})">
-                <span>Box #${idx + 1}</span>
+                 onclick="selectBox(${idx})"
+                 style="border-left: 5px solid ${colors.solid};">
+                <span class="badge" style="background: ${colors.solid}; color: #fff; margin-right: 8px;">#${idx + 1}</span>
+                <span style="flex: 1;">Box #${idx + 1}</span>
                 <label onclick="event.stopPropagation()">
                     <input type="checkbox" ${box.is_false_positive ? 'checked' : ''} onchange="toggleFP(${idx})"> FP
                 </label>
                 <button class="btn-sm" onclick="event.stopPropagation(); deleteBox(${idx})">×</button>
             </div>
-        `).join('');
+        `;
+        }).join('');
     }
 
     function updateBoxCount() {
@@ -300,9 +363,12 @@
         const scaleY = canvas.height / rect.height;
 
         let clientX, clientY;
-        if (e.touches) {
+        if (e.touches && e.touches.length > 0) {
             clientX = e.touches[0].clientX;
             clientY = e.touches[0].clientY;
+        } else if (e.changedTouches && e.changedTouches.length > 0) {
+            clientX = e.changedTouches[0].clientX;
+            clientY = e.changedTouches[0].clientY;
         } else {
             clientX = e.clientX;
             clientY = e.clientY;
@@ -329,14 +395,38 @@
         return -1;
     }
 
+    function findResizeHandle(px, py) {
+        if (selectedBoxIndex < 0) return null;
+        const box = boxes[selectedBoxIndex];
+        const x = (box.x - box.w / 2) * canvas.width;
+        const y = (box.y - box.h / 2) * canvas.height;
+        const w = box.w * canvas.width;
+        const h = box.h * canvas.height;
+        const handleSize = isTouchDevice ? 30 : 15; // Slightly larger hit area
+
+        const corners = [
+            { name: 'tl', x: x, y: y },
+            { name: 'tr', x: x + w, y: y },
+            { name: 'bl', x: x, y: y + h },
+            { name: 'br', x: x + w, y: y + h }
+        ];
+
+        for (const corner of corners) {
+            if (Math.abs(px - corner.x) < handleSize && Math.abs(py - corner.y) < handleSize) {
+                return corner.name;
+            }
+        }
+        return null;
+    }
+
     canvas.addEventListener('mousedown', handlePointerDown);
     canvas.addEventListener('mousemove', handlePointerMove);
-    canvas.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('mouseup', handlePointerUp);
 
     // Touch events
     canvas.addEventListener('touchstart', handlePointerDown, { passive: false });
     canvas.addEventListener('touchmove', handlePointerMove, { passive: false });
-    canvas.addEventListener('touchend', handlePointerUp, { passive: false });
+    window.addEventListener('touchend', handlePointerUp, { passive: false });
 
     function handlePointerDown(e) {
         e.preventDefault();
@@ -344,7 +434,14 @@
         startX = coords.x;
         startY = coords.y;
 
-        // Check if clicking on existing box
+        // 1. Check for resize handles first (if a box is selected)
+        const handle = findResizeHandle(coords.x, coords.y);
+        if (handle) {
+            isResizing = handle;
+            return;
+        }
+
+        // 2. Check for box selection/dragging
         const boxIdx = findBoxAtPoint(coords.x, coords.y);
         if (boxIdx >= 0) {
             selectedBoxIndex = boxIdx;
@@ -363,7 +460,27 @@
         e.preventDefault();
         const coords = getCanvasCoords(e);
 
-        if (isDragging && selectedBoxIndex >= 0) {
+        if (isResizing && selectedBoxIndex >= 0) {
+            const box = boxes[selectedBoxIndex];
+            let x1 = (box.x - box.w / 2) * canvas.width;
+            let y1 = (box.y - box.h / 2) * canvas.height;
+            let x2 = x1 + box.w * canvas.width;
+            let y2 = y1 + box.h * canvas.height;
+
+            if (isResizing === 'tl') { x1 = coords.x; y1 = coords.y; }
+            if (isResizing === 'tr') { x2 = coords.x; y1 = coords.y; }
+            if (isResizing === 'bl') { x1 = coords.x; y2 = coords.y; }
+            if (isResizing === 'br') { x2 = coords.x; y2 = coords.y; }
+
+            // Convert back to center format
+            const newW = Math.abs(x2 - x1);
+            const newH = Math.abs(y2 - y1);
+            box.w = newW / canvas.width;
+            box.h = newH / canvas.height;
+            box.x = (Math.min(x1, x2) + newW / 2) / canvas.width;
+            box.y = (Math.min(y1, y2) + newH / 2) / canvas.height;
+            drawBoxes();
+        } else if (isDragging && selectedBoxIndex >= 0) {
             // Move selected box
             const box = boxes[selectedBoxIndex];
             box.x = (coords.x - dragOffset.x) / canvas.width;
@@ -382,6 +499,20 @@
             ctx.setLineDash([5, 5]);
             ctx.strokeRect(startX, startY, coords.x - startX, coords.y - startY);
             ctx.setLineDash([]);
+        }
+
+        // Cursor feedback
+        if (!isDrawing && !isDragging && !isResizing) {
+            const handle = findResizeHandle(coords.x, coords.y);
+            const boxIdx = findBoxAtPoint(coords.x, coords.y);
+
+            if (handle) {
+                canvas.style.cursor = (handle === 'tl' || handle === 'br') ? 'nwse-resize' : 'nesw-resize';
+            } else if (boxIdx >= 0) {
+                canvas.style.cursor = 'move';
+            } else {
+                canvas.style.cursor = 'crosshair';
+            }
         }
     }
 
@@ -796,6 +927,60 @@
         }
     });
 
+    function getOverlapMetrics(b1, b2) {
+        const x1min = b1.x - b1.w / 2, y1min = b1.y - b1.h / 2;
+        const x1max = b1.x + b1.w / 2, y1max = b1.y + b1.h / 2;
+        const x2min = b2.x - b2.w / 2, y2min = b2.y - b2.h / 2;
+        const x2max = b2.x + b2.w / 2, y2max = b2.y + b2.h / 2;
+        const xIm = Math.max(x1min, x2min), yIm = Math.max(y1min, y2min);
+        const xIx = Math.min(x1max, x2max), yIx = Math.min(y1max, y2max);
+        const iw = Math.max(0, xIx - xIm), ih = Math.max(0, yIx - yIm);
+        const iA = iw * ih;
+
+        const area1 = b1.w * b1.h;
+        const area2 = b2.w * b2.h;
+        const uA = area1 + area2 - iA;
+
+        const iou = uA > 0 ? iA / uA : 0;
+        const smallerArea = Math.min(area1, area2);
+        const containment = smallerArea > 0 ? iA / smallerArea : 0;
+
+        return { iou, containment };
+    }
+
+    function tidyBoxes() {
+        if (!boxes.length) return;
+        const threshold = 0.4; // More aggressive merging
+        const countBefore = boxes.length;
+
+        // 1. Remove tiny boxes
+        boxes = boxes.filter(b => (b.w * b.h) >= 0.0001);
+
+        if (boxes.length > 1) {
+            // 2. Simple NMS
+            const sorted = boxes.slice().sort((a, b) => (b.confidence || 1) - (a.confidence || 1));
+            const kept = [];
+            while (sorted.length > 0) {
+                const head = sorted.shift();
+                kept.push(head);
+                for (let i = 0; i < sorted.length; i++) {
+                    const metrics = getOverlapMetrics(head, sorted[i]);
+                    if (metrics.iou > threshold || metrics.containment > 0.8) {
+                        sorted.splice(i, 1);
+                        i--;
+                    }
+                }
+            }
+            boxes = kept;
+        }
+
+        selectedBoxIndex = -1;
+        drawBoxes();
+        const removed = countBefore - boxes.length;
+        if (removed > 0) showToast(`Tidied: removed ${removed} box${removed > 1 ? 'es' : ''}`);
+        else showToast('Already tidy');
+    }
+
     // Initialize mobile UI
     updateFrameCounter();
     updateBirdToggleLabel();
@@ -1028,7 +1213,13 @@
     }
 
     .box-item.false-positive {
-        background: rgba(255, 107, 107, 0.2);
+        background: rgba(255, 107, 107, 0.1);
+        border: 1px dashed #ff6b6b;
+    }
+
+    .box-item.false-positive span {
+        text-decoration: line-through;
+        color: #ff6b6b;
     }
 
     .action-buttons {

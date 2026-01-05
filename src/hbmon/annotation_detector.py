@@ -41,6 +41,7 @@ ANNOTATION_USE_SAM = os.environ.get("HBMON_ANNOTATION_USE_SAM", "1") == "1"
 ANNOTATION_SAM_MODEL = os.environ.get("HBMON_ANNOTATION_SAM_MODEL", "sam_b")
 ANNOTATION_CONFIDENCE = float(os.environ.get("HBMON_ANNOTATION_CONFIDENCE", "0.15"))
 ANNOTATION_BATCH_SIZE = int(os.environ.get("HBMON_ANNOTATION_BATCH_SIZE", "8"))
+ANNOTATION_NMS_THRESHOLD = float(os.environ.get("HBMON_ANNOTATION_NMS_THRESHOLD", "0.5"))
 
 # SAHI Configuration
 ANNOTATION_USE_SAHI = os.environ.get("HBMON_ANNOTATION_USE_SAHI", "1") == "1"
@@ -323,23 +324,35 @@ class AnnotationDetector:
         boxes = []
         sahi_success = False
         
-        if self.use_sahi:
-             # Try SAHI first if enabled
-             try:
-                 boxes = self._detect_with_sahi(frame)
-                 sahi_success = True
-             except Exception as e:
-                 logger.debug(f"SAHI detection failed, falling back: {e}")
-                 sahi_success = False
+        # Step 1: Standard YOLO
+        boxes = self._detect_standard_yolo(frame)
         
-        # If SAHI was not used or failed (and we didn't get results), use standard YOLO
-        if not sahi_success:
-            boxes = self._detect_standard_yolo(frame)
-            
+        if os.environ.get("HBMON_ANNOTATOR_DEBUG", "0") == "1":
+            if boxes:
+                logger.info(f"Standard YOLO found {len(boxes)} boxes")
+            else:
+                logger.debug("Standard YOLO found 0 boxes")
+
+        # Step 2: Conditional SAHI "Rescue"
+        # Only run SAHI if standard YOLO found nothing (and SAHI is enabled)
+        if self.use_sahi and not boxes:
+             try:
+                 sahi_boxes = self._detect_with_sahi(frame)
+                 if sahi_boxes:
+                     if os.environ.get("HBMON_ANNOTATOR_DEBUG", "0") == "1":
+                         logger.info(f"SAHI rescue found {len(sahi_boxes)} boxes")
+                     boxes = sahi_boxes
+             except Exception as e:
+                 logger.debug(f"SAHI detection failed: {e}")
+        
         # Optionally refine with SAM
         use_sam = refine_with_sam if refine_with_sam is not None else self.use_sam
         if use_sam and boxes:
             boxes = self._refine_boxes_with_sam(frame, boxes)
+        
+        # Post-Process NMS
+        if boxes:
+            boxes = self._apply_nms(boxes, frame_debug=frame, frame_idx=0)
         
         return boxes
 
@@ -561,6 +574,149 @@ class AnnotationDetector:
             
         return False
 
+    def _apply_nms(self, boxes: list[DetectedBox], iou_threshold: float | None = None, frame_debug: np.ndarray | None = None, frame_idx: int = -1) -> list[DetectedBox]:
+        """
+        Apply Non-Maximum Suppression to merge overlapping boxes.
+        Useful after SAM refinement which might output overlapping masks/boxes.
+        """
+        thresh = iou_threshold if iou_threshold is not None else ANNOTATION_NMS_THRESHOLD
+        
+        # Filter out invalid/tiny boxes first (less than 0.1% of frame dimension)
+        boxes = [b for b in boxes if b.w > 0.001 and b.h > 0.001]
+        
+        if not boxes:
+            return boxes
+            
+        pre_count = len(boxes)
+        
+        # Debug Dump Logic (Pre-NMS)
+        debug_dump = os.environ.get("HBMON_DEBUG_DUMP_IMAGES", "0") == "1"
+        dump_dir = Path("/app/debug_output")
+        
+        if debug_dump and frame_debug is not None:
+             dump_dir.mkdir(parents=True, exist_ok=True)
+             import cv2
+             # Draw Pre-NMS (Red)
+             debug_img = frame_debug.copy()
+             h, w = debug_img.shape[:2]
+             for b in boxes:
+                 x1 = int((b.x - b.w/2) * w)
+                 y1 = int((b.y - b.h/2) * h)
+                 x2 = int((b.x + b.w/2) * w)
+                 y2 = int((b.y + b.h/2) * h)
+                 cv2.rectangle(debug_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                 cv2.putText(debug_img, f"{b.confidence:.2f}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+             cv2.imwrite(str(dump_dir / f"frame_{frame_idx}_pre_nms.jpg"), debug_img)
+
+        if len(boxes) < 2:
+             if os.environ.get("HBMON_ANNOTATOR_DEBUG", "0") == "1":
+                 logger.debug(f"NMS: {pre_count} -> {pre_count} (Single box)")
+             return boxes
+
+        try:
+            import torch
+            import torchvision
+            
+            # 1. Manual pass for containment (if one box is mostly inside another)
+            # This handles cases where IoU is low because of size difference
+            kept_after_containment = []
+            boxes_sorted = sorted(boxes, key=lambda b: b.confidence, reverse=True)
+            
+            indices_to_skip = set()
+            for i in range(len(boxes_sorted)):
+                if i in indices_to_skip:
+                    continue
+                b1 = boxes_sorted[i]
+                kept_after_containment.append(b1)
+                
+                for j in range(i + 1, len(boxes_sorted)):
+                    if j in indices_to_skip:
+                        continue
+                    b2 = boxes_sorted[j]
+                    
+                    # Compute Intersection over Area of the smaller box (Containment)
+                    x1min, y1min = b1.x - b1.w/2, b1.y - b1.h/2
+                    x1max, y1max = b1.x + b1.w/2, b1.y + b1.h/2
+                    x2min, y2min = b2.x - b2.w/2, b2.y - b2.h/2
+                    x2max, y2max = b2.x + b2.w/2, b2.y + b2.h/2
+                    
+                    inter_xmin = max(x1min, x2min)
+                    inter_ymin = max(y1min, y2min)
+                    inter_xmax = min(x1max, x2max)
+                    inter_ymax = min(y1max, y2max)
+                    
+                    inter_w = max(0, inter_xmax - inter_xmin)
+                    inter_h = max(0, inter_ymax - inter_ymin)
+                    inter_area = inter_w * inter_h
+                    
+                    area1 = b1.w * b1.h
+                    area2 = b2.w * b2.h
+                    smaller_area = min(area1, area2)
+                    
+                    if smaller_area > 0:
+                        containment = inter_area / smaller_area
+                        if containment > 0.8: # 80% contained
+                            indices_to_skip.add(j)
+            
+            boxes = kept_after_containment
+            if len(boxes) < 2:
+                return boxes
+
+            # 2. Standard IoU-based NMS
+            import torch
+            import torchvision
+            
+            # Prepare data for NMS
+            # torchvision.ops.nms expects boxes in (x1, y1, x2, y2) format
+            box_tensors = []
+            scores = []
+            
+            for b in boxes:
+                # Convert normalized center-xywh to xyxy
+                x1 = b.x - (b.w / 2)
+                y1 = b.y - (b.h / 2)
+                x2 = b.x + (b.w / 2)
+                y2 = b.y + (b.h / 2)
+                box_tensors.append([x1, y1, x2, y2])
+                scores.append(b.confidence)
+            
+            t_boxes = torch.tensor(box_tensors, dtype=torch.float32)
+            t_scores = torch.tensor(scores, dtype=torch.float32)
+            
+            # Run NMS
+            keep_indices = torchvision.ops.nms(t_boxes, t_scores, thresh)
+            keep_indices = keep_indices.tolist()
+            
+            final_boxes = [boxes[i] for i in keep_indices]
+            post_count = len(final_boxes)
+            
+            if os.environ.get("HBMON_ANNOTATOR_DEBUG", "0") == "1":
+                 logger.info(f"NMS Applied: {pre_count} boxes -> {post_count} boxes (Threshold: {thresh})")
+
+            # Debug Dump Logic (Post-NMS)
+            if debug_dump and frame_debug is not None:
+                 import cv2
+                 # Draw Post-NMS (Green)
+                 debug_img = frame_debug.copy()
+                 h, w = debug_img.shape[:2]
+                 for b in final_boxes:
+                     x1 = int((b.x - b.w/2) * w)
+                     y1 = int((b.y - b.h/2) * h)
+                     x2 = int((b.x + b.w/2) * w)
+                     y2 = int((b.y + b.h/2) * h)
+                     cv2.rectangle(debug_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                     cv2.putText(debug_img, f"{b.confidence:.2f}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                 cv2.imwrite(str(dump_dir / f"frame_{frame_idx}_post_nms.jpg"), debug_img)
+                 
+            return final_boxes
+            
+        except ImportError:
+            logger.warning("torchvision not found, skipping Post-SAM NMS")
+            return boxes
+        except Exception as e:
+            logger.warning(f"Post-SAM NMS failed: {e}")
+            return boxes
+
     def detect_batch(
         self,
         frames: list[np.ndarray],
@@ -589,28 +745,10 @@ class AnnotationDetector:
         debug = os.environ.get("HBMON_ANNOTATOR_DEBUG", "0") == "1"
         use_sam = refine_with_sam if refine_with_sam is not None else self.use_sam
         
-        if self.use_sahi and self._sahi_model is not None:
-            t0 = time.time()
-            all_boxes = []
-            for frame in frames:
-                boxes = self._detect_with_sahi(frame)
-                
-                # Optionally refine with SAM
-                if use_sam and boxes:
-                    boxes = self._refine_boxes_with_sam(frame, boxes)
-                
-                all_boxes.append(boxes)
-                
-            t_total = (time.time() - t0) * 1000
-            if debug:
-                backend = os.environ.get("HBMON_INFERENCE_BACKEND", "cpu").upper()
-                if "OPENVINO" in backend:
-                    backend = "OpenVINO-GPU" if "GPU" in backend or "OPEN" in backend else "OpenVINO-CPU"
-                logger.info(f"SAHI Sliced Inference ({backend}) (Batch of {len(frames)}): {t_total:.2f}ms")
-            
-            return all_boxes
-            
-        # Standard batched YOLO
+        # Standard batched YOLO (Run First)
+        if not yolo:
+             return [[] for _ in frames]
+
         t0 = time.time()
         # Note: We filter manually below to be more robust than strict YOLO class filtering
         results = yolo(frames, conf=self.confidence, verbose=debug, imgsz=predict_imgsz)
@@ -625,13 +763,16 @@ class AnnotationDetector:
             logger.debug(f"YOLO results contain {len(results)} items")
 
         all_boxes = []
+        sahi_rescues = 0
+        
         for i, result in enumerate(results):
             frame = frames[i]
             h, w = frame.shape[:2]
             boxes = []
             
             names = getattr(result, 'names', {})
-
+            
+            # Process YOLO results
             for box in result.boxes:
                 # Get normalized coordinates
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
@@ -659,22 +800,39 @@ class AnnotationDetector:
                     source="auto",
                 ))
             
-            if debug:
-                logger.debug(f"Frame {i}: found {len(boxes)} boxes after filtering")
-
-            if debug:
-                logger.debug(f"Frame {i}: YOLO found {len(boxes)} boxes before SAM")
+            if debug and boxes:
+                logger.info(f"Frame {i}: Standard YOLO found {len(boxes)} boxes")
             
+            # Conditional SAHI "Rescue"
+            # Only run SAHI if YOLO found no birds
+            if self.use_sahi and not boxes:
+                if self._sahi_model is not None:
+                    try:
+                        sahi_boxes = self._detect_with_sahi(frame)
+                        if sahi_boxes:
+                            if debug:
+                                logger.info(f"Frame {i}: SAHI rescue found {len(sahi_boxes)} boxes")
+                            boxes = sahi_boxes
+                            sahi_rescues += 1
+                    except Exception as e:
+                         # Log but don't crash batch
+                        logger.debug(f"Frame {i}: SAHI rescue failed: {e}")
+
             # Optionally refine with SAM
             if use_sam and boxes:
                 boxes = self._refine_boxes_with_sam(frame, boxes)
                 if debug:
-                    logger.debug(f"Frame {i}: YOLO found {len(boxes)} boxes after SAM")
+                    logger.debug(f"Frame {i}: Final count {len(boxes)} boxes after SAM")
             
+            # Post-Process NMS
+            if boxes:
+                boxes = self._apply_nms(boxes, frame_debug=frame, frame_idx=(current_batch_start_idx + i if 'current_batch_start_idx' in locals() else i)) # Using i is fine for batch context debugging if unique filenames not strictly required per global frame ID, but user just wants verification.
+
+
             all_boxes.append(boxes)
         
-        if debug:
-            logger.debug(f"detect_batch returning boxes for {len(all_boxes)} frames")
+        if debug and self.use_sahi:
+            logger.info(f"Batch completed: SAHI rescued {sahi_rescues}/{len(frames)} frames")
 
         return all_boxes
 

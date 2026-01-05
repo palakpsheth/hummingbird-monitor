@@ -1,5 +1,6 @@
 <!doctype html>
 <html data-theme="dark">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -11,7 +12,9 @@
 </head>
 {% set tz_value = timezone or "local" %}
 {% set tz_label = timezone_label or tz_value %}
-<body data-hbmon-tz="{{ tz_value }}" data-hbmon-tz-label="{{ tz_label }}" data-hbmon-version="{{ app_version }}" data-hbmon-commit="{{ git_commit }}">
+
+<body data-hbmon-tz="{{ tz_value }}" data-hbmon-tz-label="{{ tz_label }}" data-hbmon-version="{{ app_version }}"
+  data-hbmon-commit="{{ git_commit }}">
   <header class="topbar">
     <div class="brand">{{ title }}</div>
 
@@ -53,6 +56,8 @@
   <script src="/static/theme.js?v={{ app_version }}-{{ git_commit }}"></script>
   <script src="/static/timestamps.js?v={{ app_version }}-{{ git_commit }}"></script>
   <script src="/static/zoom.js?v={{ app_version }}-{{ git_commit }}"></script>
+  <script src="/static/lazy_load.js?v={{ app_version }}-{{ git_commit }}"></script>
   {% block scripts %}{% endblock %}
 </body>
+
 </html>

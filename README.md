@@ -363,20 +363,23 @@ The table below maps `.env.example` variables to their defaults and whether they
 
 | Variable | Default | Hot reloadable via Config UI |
 | --- | --- | --- |
-| `HBMON_ANNOTATION_YOLO_MODEL` | `yolo11l.pt` | No |
-| `HBMON_ANNOTATION_USE_SAM` | `1` | No |
-| `HBMON_ANNOTATION_SAM_MODEL` | `sam_b` | No |
-| `HBMON_ANNOTATION_CONFIDENCE` | `0.15` | No |
-| `HBMON_ANNOTATION_BATCH_SIZE` | `8` | No |
-| `HBMON_ANNOTATION_QUEUE_ENABLED` | `1` | No |
-| `HBMON_ANNOTATION_AUTO_EXTRACT` | `0` | No |
-| `HBMON_ANNOTATION_BATCH_HOUR` | `3` | No |
-| `HBMON_ANNOTATION_EXTRACTION_TIMEOUT` | `30m` | No |
-| `HBMON_ANNOTATION_DETECTION_TIMEOUT` | `60m` | No |
-| `HBMON_ANNOTATION_PROPAGATION_TIMEOUT` | `5m` | No |
-| `HBMON_ANNOTATION_MAX_RETRIES` | `3` | No |
-| `HBMON_ANNOTATION_RETRY_DELAY` | `60` | No |
-| `HBMON_ANNOTATION_CHECKPOINT_INTERVAL` | `10` | No |
+| `HBMON_ANNOTATION_YOLO_MODEL` | `yolo11l.pt` | YOLO model for annotation detection |
+| `HBMON_ANNOTATION_USE_SAM` | `1` | Enable SAM for box refinement |
+| `HBMON_ANNOTATION_SAM_MODEL` | `sam_b` | SAM model variant (sam_b, sam_l) |
+| `HBMON_ANNOTATION_USE_SAHI` | `1` | Enable SAHI sliced inference for small objects |
+| `HBMON_ANNOTATION_CONFIDENCE` | `0.15` | Minimum confidence for annotation detections |
+| `HBMON_ANNOTATION_BATCH_SIZE` | `1` | Frames per batch (1 for GPU memory safety) |
+| `HBMON_ANNOTATION_NMS_THRESHOLD` | `0.5` | Non-max suppression IoU threshold |
+| `HBMON_ANNOTATION_QUEUE_ENABLED` | `1` | Enable Redis job queue for annotation |
+| `HBMON_ANNOTATION_AUTO_EXTRACT` | `0` | Auto-start annotation on new observations |
+| `HBMON_ANNOTATION_BATCH_HOUR` | `3` | Hour (UTC) for scheduled batch processing |
+| `HBMON_ANNOTATION_EXTRACTION_TIMEOUT` | `30m` | Timeout for frame extraction step |
+| `HBMON_ANNOTATION_DETECTION_TIMEOUT` | `60m` | Timeout for detection step |
+| `HBMON_ANNOTATION_PROPAGATION_TIMEOUT` | `5m` | Timeout for box propagation step |
+| `HBMON_ANNOTATION_MAX_RETRIES` | `3` | Max retry attempts for failed jobs |
+| `HBMON_ANNOTATION_RETRY_DELAY` | `60` | Delay (seconds) between retries |
+| `HBMON_ANNOTATION_CHECKPOINT_INTERVAL` | `1` | Save checkpoint every N batches (1 = every frame) |
+| `HBMON_ANNOTATION_STALL_TIMEOUT_MINUTES` | `15` | Mark job as stalled after N minutes without update |
 
 ---
 

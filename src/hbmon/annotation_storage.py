@@ -84,6 +84,17 @@ def _sanitize_obs_id(obs_id: str | int) -> str:
     return clean
 
 
+def get_obs_dir(obs_id: str | int) -> Path:
+    """Get the base annotation directory for an observation.
+    
+    This is a convenience function that returns the frames directory,
+    which serves as the canonical "observation directory" for cleanup.
+    All observation-specific directories (frames/labels/boxes) use the same
+    sanitized obs_id, so they can be found via get_frame_dir, get_labels_dir, etc.
+    """
+    return FRAMES_DIR / _sanitize_obs_id(obs_id)
+
+
 def get_frame_dir(obs_id: str | int) -> Path:
     """Get the frames directory for an observation."""
     return FRAMES_DIR / _sanitize_obs_id(obs_id)

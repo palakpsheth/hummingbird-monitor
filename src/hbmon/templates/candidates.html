@@ -97,8 +97,9 @@
           </td>
           <td class="obs-thumb-cell">
             <a href="/candidates/{{ c.id }}">
-              <img src="/media/{{ c.display_snapshot_path }}" alt="candidate snapshot" loading="lazy" class="obs-thumb"
-                width="120" />
+              <img data-src="/api/thumbnail/{{ c.display_snapshot_path }}?w=240"
+                src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 135'%3E%3Crect width='100%25' height='100%25' fill='%2323243a'/%3E%3C/svg%3E"
+                alt="candidate snapshot" loading="lazy" class="obs-thumb lazy-thumb" width="120" />
             </a>
           </td>
           <td data-sort-value="{{ c.ts_utc }}">

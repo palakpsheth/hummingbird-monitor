@@ -129,6 +129,9 @@ services:
       HBMON_VIDEO_CACHE_MAX_AGE_DAYS: ${HBMON_VIDEO_CACHE_MAX_AGE_DAYS:-7}
       HBMON_VIDEO_CACHE_MAX_SIZE_GB: ${HBMON_VIDEO_CACHE_MAX_SIZE_GB:-10.0}
 
+      # Annotation stall detection (minutes before marking job as stalled)
+      HBMON_ANNOTATION_STALL_TIMEOUT_MINUTES: ${HBMON_ANNOTATION_STALL_TIMEOUT_MINUTES:-15}
+
     # GPU access for system monitoring (intel_gpu_top requires privileged for PMU access)
     privileged: true
     devices:
@@ -136,6 +139,7 @@ services:
     volumes:
       - ./data:/data
       - ./src:/app/src
+      - ./scripts:/app/scripts
     ports:
       - "8000:8000"
     depends_on:
@@ -209,6 +213,7 @@ services:
     volumes:
       - ./data:/data
       - ./src:/app/src
+      - ./scripts:/app/scripts
     depends_on:
       wyze-bridge:
         condition: service_healthy
@@ -308,6 +313,7 @@ services:
       HBMON_SAHI_OVERLAP_RATIO: ${HBMON_SAHI_OVERLAP_RATIO:-0.2}
       HBMON_ANNOTATION_CONFIDENCE: ${HBMON_ANNOTATION_CONFIDENCE:-0.15}
       HBMON_ANNOTATION_BATCH_SIZE: ${HBMON_ANNOTATION_BATCH_SIZE:-1}
+      HBMON_ANNOTATION_NMS_THRESHOLD: ${HBMON_ANNOTATION_NMS_THRESHOLD:-0.5}
 
       # Background job queue settings
       HBMON_ANNOTATION_QUEUE_ENABLED: ${HBMON_ANNOTATION_QUEUE_ENABLED:-1}
@@ -323,7 +329,7 @@ services:
       # Retry and recovery configuration
       HBMON_ANNOTATION_MAX_RETRIES: ${HBMON_ANNOTATION_MAX_RETRIES:-3}
       HBMON_ANNOTATION_RETRY_DELAY: ${HBMON_ANNOTATION_RETRY_DELAY:-60}
-      HBMON_ANNOTATION_CHECKPOINT_INTERVAL: ${HBMON_ANNOTATION_CHECKPOINT_INTERVAL:-10}
+      HBMON_ANNOTATION_CHECKPOINT_INTERVAL: ${HBMON_ANNOTATION_CHECKPOINT_INTERVAL:-1}
 
       # Model configuration (shared with worker)
       YOLO_CONFIG_DIR: ${YOLO_CONFIG_DIR:-/data/yolo}

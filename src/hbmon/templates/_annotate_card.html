@@ -3,8 +3,8 @@
     data-state="{{ obs.annotation_state }}">
     <a href="/annotate/{{ obs.id }}">
         <div class="card-thumb">
-            <img src="/media/{{ obs.display_snapshot_path }}" alt="Observation {{ obs.id }}" loading="lazy"
-                style="width: 100%; height: 100%; object-fit: cover;" />
+            <img src="/api/thumbnail/{{ obs.display_snapshot_path }}?w=300" alt="Observation {{ obs.id }}"
+                loading="lazy" width="300" height="169" onload="this.classList.add('loaded')" />
             {% if obs.annotation_state == 'preprocessing' %}
             <div class="card-overlay" id="overlay-{{ obs.id }}">⏳ Processing...</div>
             {% endif %}
@@ -52,18 +52,23 @@
             <a href="/api/annotate/{{ obs.id }}/start" class="btn btn-sm">Start Annotation</a>
             {% elif obs.annotation_state == 'preprocessing' %}
             <span class="status-text" id="status-{{ obs.id }}">⏳ Processing...</span>
-            <button class="btn btn-sm btn-warning" id="requeue-{{ obs.id }}"
-                onclick="requeueAnnotation({{ obs.id }}, event)" style="display:none;"
-                title="Resume from checkpoint">Requeue</button>
+            <button class="btn btn-sm btn-primary" id="resume-{{ obs.id }}"
+                onclick="resumeAnnotation({{ obs.id }}, event)" disabled title="Job is running">Resume</button>
+            <button class="btn btn-sm btn-warning" onclick="restartAnnotation({{ obs.id }}, event)"
+                title="Reset and start fresh">Restart</button>
             <button class="btn btn-sm btn-danger" onclick="resetAnnotation({{ obs.id }}, event)">Reset</button>
             {% elif obs.annotation_state == 'in_review' %}
             <a href="/annotate/{{ obs.id }}" class="btn btn-sm btn-primary">Review</a>
+            <button class="btn btn-sm btn-warning" onclick="restartAnnotation({{ obs.id }}, event)"
+                title="Reset and start fresh">Restart</button>
             <button class="btn btn-sm btn-secondary" onclick="resetAnnotation({{ obs.id }}, event)"
-                title="Clear and restart">↻</button>
+                title="Clear only">↻</button>
             {% elif obs.annotation_state == 'completed' %}
             <a href="/annotate/{{ obs.id }}" class="btn btn-sm">View</a>
+            <button class="btn btn-sm btn-warning" onclick="restartAnnotation({{ obs.id }}, event)"
+                title="Reset and start fresh">Restart</button>
             <button class="btn btn-sm btn-secondary" onclick="resetAnnotation({{ obs.id }}, event)"
-                title="Clear and restart">↻</button>
+                title="Clear only">↻</button>
             {% endif %}
         </div>
     </div>
@@ -87,12 +92,19 @@
         width: 100%;
         aspect-ratio: 16/9;
         overflow: hidden;
+        background: var(--surface-dark, #1a1a2e);
     }
 
     .card-thumb img {
         width: 100%;
         height: 100%;
         object-fit: cover;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .card-thumb img.loaded {
+        opacity: 1;
     }
 
     .card-overlay {
@@ -197,5 +209,23 @@
         display: inline-flex;
         vertical-align: middle;
         box-shadow: none;
+    }
+
+    /* Disabled button styles for clarity */
+    .card-actions button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        filter: grayscale(1);
+        pointer-events: none;
+    }
+
+    .btn-success {
+        background: #28a745;
+        color: white;
+        border: none;
+    }
+
+    .btn-success:hover {
+        background: #218838;
     }
 </style>

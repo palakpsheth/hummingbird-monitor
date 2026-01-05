@@ -181,6 +181,75 @@
         window.location = url;
     }
 
+    async function resumeAnnotation(obsId, event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        try {
+            const response = await fetch('/api/annotate/' + obsId + '/resume', {
+                method: 'POST',
+            });
+
+            if (response.ok) {
+                // Force immediate refresh
+                window.location.reload();
+            } else {
+                const error = await response.json();
+                alert('Failed to resume: ' + (error.detail || 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Failed to resume: ' + e.message);
+        }
+    }
+
+    async function restartAnnotation(obsId, event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (!confirm('Restart annotation for Obs #' + obsId + '?\n\nThis will delete all progress and start fresh from the beginning.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/annotate/' + obsId + '/restart', {
+                method: 'POST',
+            });
+
+            if (response.ok) {
+                window.location.reload();
+            } else {
+                const error = await response.json();
+                alert('Failed to restart: ' + (error.detail || 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Failed to restart: ' + e.message);
+        }
+    }
+
+    async function resetAnnotation(obsId, event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (!confirm('Reset annotation for Obs #' + obsId + '?\n\nThis will delete all extracted frames and boxes.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/annotate/' + obsId + '/reset', {
+                method: 'POST',
+            });
+
+            if (response.ok) {
+                window.location.reload();
+            } else {
+                const error = await response.json();
+                alert('Failed to reset: ' + (error.detail || 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Failed to reset: ' + e.message);
+        }
+    }
+
     // Auto-refresh annotation cards every 5 seconds
     (function () {
         const gallery = document.getElementById('annotation-gallery');
@@ -209,20 +278,49 @@
             const cards = document.querySelectorAll('[data-obs-id][data-annotation-state="preprocessing"]');
             cards.forEach(card => {
                 const obsId = card.dataset.obsId;
-                const badgeEl = card.querySelector('.badge');
+                const badgeEl = card.querySelector('#status-' + obsId);
+                const resumeBtn = card.querySelector('#resume-' + obsId);
+                const overlayEl = card.querySelector('#overlay-' + obsId);
 
                 if (!badgeEl) return;
 
                 const status = queueStatus[obsId];
+
+                // Reset state
+                let isStalled = false;
+
                 if (status === 'queued') {
-                    badgeEl.textContent = 'Queued';
-                    badgeEl.className = 'badge badge-info';
+                    badgeEl.textContent = '⏳ Queued';
+                    badgeEl.className = 'status-text text-info';
+                    if (overlayEl) overlayEl.textContent = '⏳ Queued';
                 } else if (status === 'processing') {
-                    badgeEl.textContent = 'Processing';
-                    badgeEl.className = 'badge badge-warning';
+                    badgeEl.textContent = '⚙️ Processing...';
+                    badgeEl.className = 'status-text text-warning';
+                    if (overlayEl) overlayEl.textContent = '⚙️ Processing...';
                 } else if (status === 'failed') {
-                    badgeEl.textContent = 'Failed';
-                    badgeEl.className = 'badge badge-danger';
+                    badgeEl.textContent = '⚠️ Stalled / Failed';
+                    badgeEl.className = 'status-text text-danger';
+                    if (overlayEl) overlayEl.textContent = '⚠️ Failed';
+                    isStalled = true;
+                } else if (status === 'finished') {
+                    // Logic would typically reload page or show "Ready"
+                    badgeEl.textContent = '✅ Finished';
+                }
+
+                // Show/hide resume button
+                if (resumeBtn) {
+                    resumeBtn.style.display = 'inline-block';
+                    if (isStalled) {
+                        resumeBtn.removeAttribute('disabled');
+                        resumeBtn.title = "Resume from last checkpoint";
+                        resumeBtn.classList.remove('btn-primary', 'btn-secondary');
+                        resumeBtn.classList.add('btn-success');
+                    } else {
+                        resumeBtn.setAttribute('disabled', 'disabled');
+                        resumeBtn.title = "Job is running";
+                        resumeBtn.classList.remove('btn-success', 'btn-secondary');
+                        resumeBtn.classList.add('btn-primary');
+                    }
                 }
             });
 
@@ -238,9 +336,10 @@
                 const newGallery = doc.getElementById('annotation-gallery');
 
                 if (newGallery && gallery) {
-                    const scrollY = window.scrollY;
-                    gallery.innerHTML = newGallery.innerHTML;
-                    window.scrollTo(0, scrollY);
+                    // Only update if we are not interacting (simple heuristic)
+                    if (!document.querySelector('.btn:active')) {
+                        gallery.innerHTML = newGallery.innerHTML;
+                    }
                 }
             } catch (e) {
                 console.error('Failed to refresh cards:', e);
@@ -261,30 +360,6 @@
             }
         });
     })();
-
-    async function resetAnnotation(obsId, event) {
-        event.preventDefault();
-        event.stopPropagation();
-
-        if (!confirm('Reset annotation for Obs #' + obsId + '?\n\nThis will delete all extracted frames and boxes, allowing you to start fresh.')) {
-            return;
-        }
-
-        try {
-            const response = await fetch('/api/annotate/' + obsId + '/reset', {
-                method: 'POST',
-            });
-
-            if (response.ok) {
-                window.location.reload();
-            } else {
-                const error = await response.json();
-                alert('Failed to reset: ' + (error.detail || 'Unknown error'));
-            }
-        } catch (e) {
-            alert('Failed to reset: ' + e.message);
-        }
-    }
 </script>
 
 <style>

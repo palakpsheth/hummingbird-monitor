@@ -1,71 +1,74 @@
 {% extends "base.html" %}
 {% block content %}
-  <div class="page-header">
-    <h1 class="page-title">Split review: Individual #{{ individual.id }}</h1>
-    <div class="muted page-meta">
-      Current time:
-      <span data-current-time="true" data-timezone="{{ tz_value }}">--</span>
-      · TZ: <span>{{ tz_label }}</span>
-      · Version: <span>{{ app_version }}</span>
-      · Commit: <span>{{ git_commit }}</span>
-    </div>
+<div class="page-header">
+  <h1 class="page-title">Split review: Individual #{{ individual.id }}</h1>
+  <div class="muted page-meta">
+    Current time:
+    <span data-current-time="true" data-timezone="{{ tz_value }}">--</span>
+    · TZ: <span>{{ tz_label }}</span>
+    · Version: <span>{{ app_version }}</span>
+    · Commit: <span>{{ git_commit }}</span>
   </div>
+</div>
 
+<div class="card">
+  <p class="muted">
+    This tool helps split one “individual” into two (A keeps the current ID; B becomes a new ID).
+    Review each observation and assign it to A or B. Then click “Apply split”.
+  </p>
+
+  <div class="inline">
+    <span class="badge ind-pill" style="--ind-hue: {{ (individual.id * 47) % 360 }};">
+      A = {{ individual.name }} (keeps ID {{ individual.id }})
+    </span>
+    <span class="badge">B = new individual</span>
+  </div>
+</div>
+
+<form method="post" action="/individuals/{{ individual.id }}/split_apply">
   <div class="card">
-    <p class="muted">
-      This tool helps split one “individual” into two (A keeps the current ID; B becomes a new ID).
-      Review each observation and assign it to A or B. Then click “Apply split”.
+    <div class="inline" style="justify-content: space-between;">
+      <h2 style="margin:0;">Assignments</h2>
+      <button type="submit">Apply split</button>
+    </div>
+    <p class="muted" style="margin-top:8px;">
+      Tip: On mobile, tap the dropdown for each row and choose A or B.
     </p>
-
-    <div class="inline">
-      <span class="badge ind-pill" style="--ind-hue: {{ (individual.id * 47) % 360 }};">
-        A = {{ individual.name }} (keeps ID {{ individual.id }})
-      </span>
-      <span class="badge">B = new individual</span>
-    </div>
   </div>
 
-  <form method="post" action="/individuals/{{ individual.id }}/split_apply">
-    <div class="card">
-      <div class="inline" style="justify-content: space-between;">
-        <h2 style="margin:0;">Assignments</h2>
-        <button type="submit">Apply split</button>
-      </div>
-      <p class="muted" style="margin-top:8px;">
-        Tip: On mobile, tap the dropdown for each row and choose A or B.
-      </p>
-    </div>
-
-    <div class="gallery">
-      {% for o in observations %}
-        <div class="thumb">
-          <a href="/observations/{{ o.id }}"><img src="/media/{{ o.display_snapshot_path }}" loading="lazy" alt="Observation {{ o.id }}" /></a>
-          <div class="meta">
-            <div>
-              <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
-              <span class="muted">({{ "%.2f"|format(o.species_prob) }})</span>
-            </div>
-
-            <div class="inline" style="margin-top:8px;">
-              <label class="muted">Assign:</label>
-              <select name="assign_{{ o.id }}">
-                <option value="A" {% if o.suggested_side == "A" %}selected{% endif %}>A</option>
-                <option value="B" {% if o.suggested_side == "B" %}selected{% endif %}>B</option>
-              </select>
-              <span class="muted">sim={{ "%.3f"|format(o.match_score) }}</span>
-            </div>
-
-            <div class="muted" style="margin-top:8px;"><span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span></div>
-            <div style="margin-top:6px;">
-              <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a> · <a href="/observations/{{ o.id }}">Details</a>
-            </div>
-          </div>
+  <div class="gallery">
+    {% for o in observations %}
+    <div class="thumb">
+      <a href="/observations/{{ o.id }}"><img data-src="/api/thumbnail/{{ o.display_snapshot_path }}?w=300"
+          src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 169'%3E%3Crect width='100%25' height='100%25' fill='%2323243a'/%3E%3C/svg%3E"
+          loading="lazy" alt="Observation {{ o.id }}" class="lazy-thumb" /></a>
+      <div class="meta">
+        <div>
+          <span class="badge {{ o.species_css }}">{{ o.species_label }}</span>
+          <span class="muted">({{ "%.2f"|format(o.species_prob) }})</span>
         </div>
-      {% endfor %}
-    </div>
-  </form>
 
-  <div class="card">
-    <a href="/individuals/{{ individual.id }}">Cancel and go back</a>
+        <div class="inline" style="margin-top:8px;">
+          <label class="muted">Assign:</label>
+          <select name="assign_{{ o.id }}">
+            <option value="A" {% if o.suggested_side=="A" %}selected{% endif %}>A</option>
+            <option value="B" {% if o.suggested_side=="B" %}selected{% endif %}>B</option>
+          </select>
+          <span class="muted">sim={{ "%.3f"|format(o.match_score) }}</span>
+        </div>
+
+        <div class="muted" style="margin-top:8px;"><span data-utc-ts="{{ o.ts_utc }}">{{ o.ts_utc }}</span></div>
+        <div style="margin-top:6px;">
+          <a href="/media/{{ o.video_path }}" target="_blank" rel="noopener noreferrer">Video</a> · <a
+            href="/observations/{{ o.id }}">Details</a>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
   </div>
+</form>
+
+<div class="card">
+  <a href="/individuals/{{ individual.id }}">Cancel and go back</a>
+</div>
 {% endblock %}

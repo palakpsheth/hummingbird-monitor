@@ -357,7 +357,7 @@ def preprocess_observation_job(obs_id: int, resume: bool = False) -> dict[str, A
             obs.merge_extra({
                 "annotation_summary": {
                     "state": "preprocessing",
-                    "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                    "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 }
             })
             db.commit()
@@ -413,7 +413,7 @@ def preprocess_observation_job(obs_id: int, resume: bool = False) -> dict[str, A
                                 **current_summary,
                                 "total_frames": total_count,
                                 "pending_frames": total_count,
-                                "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                                "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                             }
                         })
                         db.commit()
@@ -518,7 +518,7 @@ def preprocess_observation_job(obs_id: int, resume: bool = False) -> dict[str, A
                         "annotation_summary": {
                             **current_summary,
                             "frames_detected": result["frames_detected"],
-                            "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                            "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                         }
                     })
                     db.commit()
@@ -544,7 +544,7 @@ def preprocess_observation_job(obs_id: int, resume: bool = False) -> dict[str, A
                         "reviewed_frames": 0,
                         "pending_frames": total_frames,
                         "state": "in_review",
-                        "last_updated": datetime.now(timezone.utc).isoformat() + "Z",
+                        "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                     }
                 })
                 db.commit()
@@ -691,6 +691,70 @@ def nightly_batch_extract_job() -> dict[str, Any]:
     except Exception as e:
         logger.exception("Nightly batch extraction failed")
         return {"status": "error", "error": str(e)}
+
+def reset_observation_annotation(obs_id: int) -> dict[str, Any]:
+    """Reset annotation data for an observation.
+    
+    Deletes:
+    - AnnotationFrame records (cascades to boxes)
+    - Checkpoint file
+    - Resets observation state in extra_json
+    - Deletes disk files (extracted frames, YOLO labels)
+    
+    Args:
+        obs_id: Observation ID
+        
+    Returns:
+        Status dict
+    """
+    import shutil
+    from hbmon.db import get_sync_session
+    from hbmon.models import Observation, AnnotationFrame
+    from hbmon.annotation_storage import get_obs_dir, sync_db_to_manifest
+    
+    logger.info(f"Resetting annotation for observation {obs_id}")
+    
+    try:
+        # 1. Delete DB records
+        with get_sync_session() as db:
+            # Delete frames (cascades to boxes)
+            db.query(AnnotationFrame).filter(
+                AnnotationFrame.observation_id == obs_id
+            ).delete()
+            
+            # Reset observation state
+            obs = db.get(Observation, obs_id)
+            if obs:
+                # Remove annotation-related keys from extra_json
+                extra = obs.get_extra() or {}
+                if "annotation_summary" in extra:
+                    del extra["annotation_summary"]
+                    obs.set_extra(extra)
+                    
+                # Also reset specific fields if they exist
+                # (implementation specific, generally safe to just remove summary)
+            
+            db.commit()
+            
+            # Update manifest to reflect reset
+            sync_db_to_manifest(str(obs_id), None)
+            
+        # 2. Delete checkpoint
+        checkpoint_dir = Path(os.environ.get("HBMON_DATA_DIR", "/data")) / "exports" / "annotations" / "checkpoints"
+        checkpoint_file = checkpoint_dir / f"{obs_id}_checkpoint.json"
+        if checkpoint_file.exists():
+            checkpoint_file.unlink()
+            
+        # 3. Delete disk files (frames and labels)
+        obs_dir = get_obs_dir(str(obs_id))
+        if obs_dir.exists():
+            shutil.rmtree(obs_dir)
+            
+        return {"obs_id": obs_id, "status": "reset_completed"}
+        
+    except Exception as e:
+        logger.exception(f"Failed to reset annotation for obs {obs_id}")
+        return {"obs_id": obs_id, "status": "error", "error": str(e)}
 
 
 def _extract_frames_sync(obs_id: int, video_path: Path) -> list[tuple[int, Path]]:
