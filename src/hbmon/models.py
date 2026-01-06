@@ -504,6 +504,9 @@ if _SQLALCHEMY_AVAILABLE:
         # Source: auto (from YOLO) or manual (user-drawn)
         source: Mapped[str] = mapped_column(String(32), nullable=False, default="auto")
 
+        # Detector confidence (0-1). Null for manually drawn boxes.
+        confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+
         # Relationship
         frame: Mapped["AnnotationFrame"] = relationship(back_populates="boxes")
 
@@ -746,6 +749,7 @@ else:
         h: float = 0.0
         is_false_positive: bool = False
         source: str = "auto"
+        confidence: Optional[float] = None
         frame: Optional["AnnotationFrame"] = None
 
     @dataclass

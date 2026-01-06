@@ -10,6 +10,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("download_models")
 
 def download_models():
+    # 0. Ensure config dir exists and switch to it for persistence
+    config_dir = os.environ.get("YOLO_CONFIG_DIR", "/data/yolo")
+    os.makedirs(config_dir, exist_ok=True)
+    os.chdir(config_dir)
+    logger.info(f"Downloading models to {config_dir}")
+
     # 1. Download YOLO model
     yolo_model = os.environ.get("HBMON_ANNOTATION_YOLO_MODEL", "yolo11l.pt")
     logger.info(f"Checking/Downloading YOLO model: {yolo_model}")
@@ -37,6 +43,16 @@ def download_models():
             logger.info("SAM model ready.")
         except Exception as e:
             logger.warning(f"Failed to download SAM model {sam_file}: {e}")
+
+    # 3. Download Magic Wand model (if different from annotation model)
+    wand_model = os.environ.get("HBMON_MAGIC_WAND_YOLO_MODEL", "yolo11l.pt")
+    if wand_model != yolo_model:
+        logger.info(f"Checking/Downloading Magic Wand model: {wand_model}")
+        try:
+            YOLO(wand_model)
+            logger.info("Magic Wand model ready.")
+        except Exception as e:
+            logger.error(f"Failed to download Magic Wand model {wand_model}: {e}")
 
 if __name__ == "__main__":
     download_models()

@@ -68,6 +68,7 @@ class BoxData:
     h: float  # height (0-1)
     is_false_positive: bool = False
     source: str = "auto"
+    confidence: float | None = None  # Detector confidence (0-1), null for manual boxes
 
 
 def ensure_annotation_dirs() -> None:
@@ -225,18 +226,21 @@ def save_manifest(obs_id: str | int, data: dict[str, Any]) -> Path:
     return manifest_path
 
 
-def sync_db_to_manifest(obs_id: str | int, summary: AnnotationSummary) -> Path:
+def sync_db_to_manifest(obs_id: str | int, summary: AnnotationSummary | None) -> Path:
     """
     Update the manifest with the current DB annotation summary.
 
     Args:
         obs_id: Observation identifier
-        summary: Current annotation summary from DB
+        summary: Current annotation summary from DB, or None to reset
 
     Returns:
         Path to the updated manifest
     """
     existing = load_manifest(obs_id) or {}
+    # If summary is None (reset case), use a default pending state
+    if summary is None:
+        summary = AnnotationSummary(state="pending")
     existing.update(asdict(summary))
     existing["synced_at"] = datetime.utcnow().isoformat() + "Z"
     return save_manifest(obs_id, existing)

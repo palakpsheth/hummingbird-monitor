@@ -37,7 +37,7 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     app = hbmon.web.make_app()
     return TestClient(app)
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_export_observations_csv(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -49,7 +49,7 @@ async def test_export_observations_csv(tmp_path, monkeypatch):
     assert "Bird A" in response.text
     assert "observation_id" in response.text
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_export_individuals_csv(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -69,7 +69,7 @@ def test_get_roi_snapshot_path_presence_and_absence() -> None:
     obs.set_extra({"snapshots": {"roi_path": "snapshots/roi.jpg"}})
     assert hbmon.web.get_roi_snapshot_path(obs) == "snapshots/roi.jpg"
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_export_media_bundle(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     
@@ -87,7 +87,7 @@ async def test_export_media_bundle(tmp_path, monkeypatch):
     assert len(response.content) > 0
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_export_observation_integration_bundle_includes_media(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     media_root = hbmon.config.media_dir()

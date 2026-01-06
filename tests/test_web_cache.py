@@ -25,7 +25,7 @@ def _setup_db(monkeypatch, tmp_path) -> None:
     db.init_db()
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_latest_observation_cache_validation(monkeypatch, tmp_path) -> None:
     _setup_db(monkeypatch, tmp_path)
 
@@ -59,7 +59,7 @@ async def test_latest_observation_cache_validation(monkeypatch, tmp_path) -> Non
     assert data["id"] == obs_id
     assert data["ts_utc"] == expected_ts_utc
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_index_caching(monkeypatch, tmp_path) -> None:
     _setup_db(monkeypatch, tmp_path)
     from hbmon.web import make_app

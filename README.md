@@ -409,7 +409,8 @@ make clean-data      # remove all local data (defaults to ./data)
 make clean-openvino-cache  # clear OpenVINO model cache (forces re-export)
 
 # Diagnostic and testing commands
-make test-e2e        # full end-to-end detection test (auto-restores config)
+make test-e2e        # full end-to-end detection test (pytest heavy)
+make test-e2e-live   # live container detection test (starts RTSP server, restarts worker)
 make test-detection  # test YOLO on saved snapshots with tuning recommendations
 make check-health    # check pipeline health for silent failures
 make test-stream-list   # list observation videos for test streaming
@@ -485,6 +486,40 @@ Most tuning is via environment variables (Docker) or `/data/config.json` (persis
 - `HBMON_TEMPORAL_MIN_DETECTIONS` (default 1)
   - Minimum number of frames within the temporal window that must contain a detection
   - Example: window 20 + min 3 requires detections in at least 3 of the last 20 frames
+
+### Tracking Mode (ByteTrack)
+
+As an alternative to temporal voting, ByteTrack-based object tracking is available. This uses Kalman filtering to maintain track identity through missed detections, which is especially useful when YOLO11n gives inconsistent frame-by-frame confidence.
+
+**Enable tracking mode:**
+```bash
+HBMON_USE_TRACKING=1
+```
+
+> **Note**: When tracking is enabled, `HBMON_TEMPORAL_WINDOW_FRAMES` and `HBMON_TEMPORAL_MIN_DETECTIONS` are ignored.
+
+**Tracking parameters:**
+- `HBMON_TRACK_HIGH_THRESH` (default 0.10): High-confidence threshold for first-pass association
+- `HBMON_TRACK_LOW_THRESH` (default 0.05): Low-confidence threshold for second-pass "rescue" of weak detections
+- `HBMON_TRACK_NEW_THRESH` (default 0.05): Minimum confidence to create a new track
+- `HBMON_TRACK_MATCH_THRESH` (default 0.7): IoU threshold for matching detections to existing tracks
+- `HBMON_TRACK_BUFFER_FRAMES` (default 40): Frames to keep a lost track alive (2 seconds at 20fps)
+
+> **⚠️ Important**: `TRACK_NEW_THRESH` must be ≤ `TRACK_LOW_THRESH`, otherwise detections won't get assigned track IDs and no observations will be created!
+
+**How it works:**
+1. YOLO detects birds with low confidence (configurable via `TRACK_LOW_THRESH`) to catch all possible detections
+2. ByteTrack's two-stage association filters noise based on spatial consistency across frames
+3. A track is created when a bird appears (if confidence ≥ `TRACK_NEW_THRESH`) and ended when it's lost for `track_buffer_frames`
+4. Visit lifecycle (recording, finalization) is tied to track lifecycle rather than temporal voting
+
+**When to use tracking:**
+- YOLO detections are inconsistent frame-to-frame (common with YOLO11n)
+- You're missing brief visits due to low confidence
+- Want more natural visit boundaries (track lifecycle vs timeout-based)
+
+**Fallback behavior:** If the tracker config file is missing, it's auto-generated from environment variables.
+
 
 ### YOLO Model Selection
 - `HBMON_YOLO_MODEL` (default `yolo11n.pt`)

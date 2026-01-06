@@ -9,7 +9,7 @@ from hbmon.models import Embedding, Individual, Observation, utcnow
 
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_select_prototype_observations_prefers_embeddings(import_web, tmp_path, monkeypatch):
     web = import_web(monkeypatch, tmp_path=tmp_path, with_db=True)
     db_module.reset_db_state()

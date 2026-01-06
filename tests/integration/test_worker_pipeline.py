@@ -144,7 +144,7 @@ class _DummyCV2:
         return _DummyCap(self._frames)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_worker_pipeline_roi_cooldown_and_recorder(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     media_dir = tmp_path / "media"

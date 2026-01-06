@@ -43,7 +43,7 @@ def _make_observation(
     )
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_select_prototype_observations_prefers_embedding_similarity(monkeypatch, tmp_path):
     _setup_db(monkeypatch, tmp_path)
 
@@ -72,7 +72,7 @@ async def test_select_prototype_observations_prefers_embedding_similarity(monkey
         assert result[ind_id].ts == expected_ts
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_select_prototype_observations_handles_multiple_individuals(monkeypatch, tmp_path):
     _setup_db(monkeypatch, tmp_path)
 
@@ -99,7 +99,7 @@ async def test_select_prototype_observations_handles_multiple_individuals(monkey
     assert set(result.keys()) == {ind_a_id, ind_b_id}
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_select_prototype_observations_empty_list(monkeypatch, tmp_path):
     _setup_db(monkeypatch, tmp_path)
 
@@ -109,7 +109,7 @@ async def test_select_prototype_observations_empty_list(monkeypatch, tmp_path):
     assert result == {}
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_select_prototype_observations_falls_back_without_embeddings(monkeypatch, tmp_path):
     _setup_db(monkeypatch, tmp_path)
 

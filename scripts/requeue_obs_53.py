@@ -5,7 +5,7 @@ import redis
 from rq import Queue
 from sqlalchemy import delete
 from hbmon.db import get_sync_session
-from hbmon.models import Observation, AnnotationFrame, AnnotationBox
+from hbmon.models import Observation, AnnotationFrame
 from hbmon.annotation_jobs import preprocess_observation_job
 
 # Setup logging

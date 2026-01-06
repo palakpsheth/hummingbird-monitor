@@ -8,6 +8,12 @@
         <div class="review-meta">
             <span class="species">{{ observation.species_label }}</span>
             <span class="timestamp" data-timestamp="{{ observation.ts_utc }}">{{ observation.ts_utc }}</span>
+            {% set review_label = observation.get_extra().get('review', {}).get('label') %}
+            {% if review_label == 'true_positive' %}
+            <span class="status-badge tp">TP</span>
+            {% elif review_label == 'false_positive' %}
+            <span class="status-badge fp">FP</span>
+            {% endif %}
         </div>
         <!-- Compact help - desktop -->
         <div class="review-help desktop-only">
@@ -86,10 +92,26 @@
                 <canvas id="annotationCanvas"></canvas>
                 <img id="frameImage" src="{{ current_frame.image_url if current_frame else '' }}" alt="Frame"
                     crossorigin="anonymous" style="max-width: 100%; height: auto; display: block;" />
+                <div class="loading-overlay" id="loadingOverlay">
+                    <div style="position: relative; display: flex; align-items: center; justify-content: center;">
+                        <div class="spinner"></div>
+                        <div id="spinnerTimer" class="spinner-timer">0s</div>
+                    </div>
+                </div>
             </div>
 
             <!-- Desktop controls -->
             <div class="editor-controls desktop-only">
+                <div class="tool-palette" style="margin-bottom: 1rem;">
+                    <h4 style="margin-top:0;">Tools</h4>
+                    <div style="display:flex; gap:0.5rem;">
+                        <button class="btn btn-sm" onclick="setMode('select')" title="Select/Edit">Select</button>
+                        <button class="btn btn-sm" id="btnWand" onclick="setMode('wand')"
+                            title="Magic Wand (W) - Find birds in region">🪄 Wand</button>
+                    </div>
+                </div>
+                <hr style="border-color:#3d3e56; margin-bottom:1rem;">
+
                 <div class="truth-toggle">
                     <label class="toggle-label">
                         <input type="checkbox" id="birdPresent" {{ 'checked' if current_frame and
@@ -99,10 +121,23 @@
                 </div>
 
                 <div class="box-list" id="boxList">
-                    <div class="inline" style="justify-content: space-between; align-items: center;">
+                    <div class="inline" style="justify-content: space-between; align-items: center; flex-wrap: wrap;">
                         <h4 style="margin:0;">Boxes</h4>
-                        <button class="btn btn-sm" onclick="tidyBoxes()"
-                            title="Merge overlapping and remove tiny boxes">Tidy</button>
+                        <div class="tidy-controls" style="display:flex; align-items:center; gap:4px;">
+                            <select id="tidyIoU" class="form-select-sm"
+                                style="width:auto; padding: 2px 4px; font-size: 0.75rem; background: #23243a; color: #fff; border: 1px solid #3d3e56; border-radius: 4px;"
+                                title="IoU Threshold">
+                                <option value="0.3">0.3</option>
+                                <option value="0.4" selected>0.4</option>
+                                <option value="0.5">0.5</option>
+                                <option value="0.6">0.6</option>
+                                <option value="0.7">0.7</option>
+                                <option value="0.8">0.8</option>
+                                <option value="0.9">0.9</option>
+                            </select>
+                            <button class="btn btn-sm" onclick="tidyBoxes()"
+                                title="Merge overlapping boxes">Tidy</button>
+                        </div>
                     </div>
                     <div id="boxItems"></div>
                     <button class="btn btn-sm" onclick="addBox()" style="width:100%; margin-top:0.5rem;">+ Add
@@ -112,7 +147,15 @@
                 <div class="action-buttons">
                     <button class="btn" onclick="resetToAuto()">Reset</button>
                     <button class="btn" onclick="clearBoxes()">Clear</button>
-                    <button class="btn btn-primary" onclick="saveFrame()">Save</button>
+
+                    <div class="save-dropdown-container">
+                        <button class="btn btn-primary" id="mainSaveBtn" onclick="handleMainSave()">Save & Next</button>
+                        <button class="btn btn-primary dropdown-toggle" onclick="toggleSaveMenu()">▼</button>
+                        <div class="save-menu" id="saveMenu">
+                            <button onclick="setSaveMode('save-next')">Save & Next (Default)</button>
+                            <button onclick="setSaveMode('save-only')">Save Only</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </main>
@@ -189,6 +232,7 @@
         <kbd>A</kbd> Approve & Advance
         <kbd>K</kbd> Skip
         <kbd>B</kbd> Toggle Bird
+        <kbd>W</kbd> Wand
     </div>
 </div>
 
@@ -196,7 +240,125 @@
     const observationId = {{ observation.id }};
     let currentFrameId = {{ current_frame.id if current_frame else 'null' }};
     let boxes = {{ current_frame.box_data | tojson if current_frame else '[]' }};
-    let birdPresent = {{ 'true' if current_frame and current_frame.bird_present else 'false' }};
+
+    // Auto-select Bird Present based on Obs Label for unreviewed frames
+    let frameStatus = "{{ current_frame.status if current_frame else 'queued' }}";
+    // Parse the JSON provided by python safely
+    let obsExtra = {{ observation.extra_json | default ('{}') | safe }};
+    let obsLabel = (obsExtra.review && obsExtra.review.label) ? obsExtra.review.label : '';
+    console.log("[Annotation] Frame Status:", frameStatus, "Obs Label:", obsLabel, "Boxes:", boxes.length);
+
+    let dbBirdPresent = {{ 'true' if current_frame and current_frame.bird_present else 'false' }};
+    let birdPresent = dbBirdPresent;
+
+    if (frameStatus !== 'complete') {
+        if (obsLabel === 'true_positive') birdPresent = true;
+        else if (obsLabel === 'false_positive') birdPresent = false;
+
+        // Sync UI after load to reflect auto-selected value
+        // Sync UI after load to reflect auto-selected value
+        document.addEventListener('DOMContentLoaded', () => {
+            syncBirdPresentUI();
+
+            // Auto-trigger Magic Wand if TP but no boxes found
+            // This happens when the regular detector failed but we know there's a bird
+            if (obsLabel === 'true_positive' && boxes.length === 0) {
+                console.log("[AutoWand] Triggering auto-wand sequence for TP with no boxes");
+                runAutoWandSequence();
+            }
+        });
+    }
+
+    async function runAutoWandSequence() {
+        const center = { x: 0.5, y: 0.5 };
+
+        // Helper to check for valid boxes after detection
+        const isValidResult = () => {
+            tidyBoxes(); // Auto-cleanup non-visible or overlapping boxes
+            return boxes.length > 0;
+        };
+
+        // Attempt 1: Standard (Fast) - conf=0.15, crop=640
+        console.log("[AutoWand] Attempt 1: Standard");
+        showToast("Auto-scanning...", false);
+        try {
+            await triggerWandDetection(center, { confidence: 0.15, crop_size: 640 }, true);
+            if (isValidResult()) {
+                showToast(`Found ${boxes.length} box(es)!`, true);
+                return;
+            }
+        } catch (e) { console.error("[AutoWand] Attempt 1 failed", e); }
+
+        // Attempt 2: Large - conf=0.1, crop=800
+        console.log("[AutoWand] Attempt 2: Large");
+        showToast("Expanding search...", false);
+        try {
+            await triggerWandDetection(center, { confidence: 0.1, crop_size: 800 }, true);
+            if (isValidResult()) {
+                showToast(`Found ${boxes.length} box(es)!`, true);
+                return;
+            }
+        } catch (e) { console.error("[AutoWand] Attempt 2 failed", e); }
+
+        // Attempt 3: Enhanced Contrast (CLAHE) - conf=0.1, crop=640
+        console.log("[AutoWand] Attempt 3: Enhanced Contrast");
+        showToast("Enhancing contrast...", false);
+        try {
+            await triggerWandDetection(center, { confidence: 0.1, crop_size: 640, enhance_contrast: 1 }, true);
+            if (isValidResult()) {
+                showToast(`Found ${boxes.length} box(es) with enhancement!`, true);
+                return;
+            }
+        } catch (e) { console.error("[AutoWand] Attempt 3 failed", e); }
+
+        // Attempt 4: Rescue (SAHI) - conf=0.05, crop=1024
+        console.log("[AutoWand] Attempt 4: Rescue (SAHI)");
+        showToast("Deep scan (SAHI)...", false);
+        try {
+            await triggerWandDetection(center, { confidence: 0.05, crop_size: 1024, use_sahi: 1 }, true);
+            if (isValidResult()) {
+                showToast(`Found ${boxes.length} box(es)!`, true);
+                return;
+            }
+        } catch (e) { console.error("[AutoWand] Attempt 4 failed", e); }
+
+        // Attempt 5: Deep Rescue (SAHI) - conf=0.01, crop=1280
+        console.log("[AutoWand] Attempt 5: Deep Rescue");
+        showToast("Final deep scan...", false);
+        try {
+            await triggerWandDetection(center, { confidence: 0.01, crop_size: 1280, use_sahi: 1 }, true);
+            if (isValidResult()) {
+                showToast(`Found ${boxes.length} box(es)!`, true);
+                return;
+            }
+        } catch (e) { console.error("[AutoWand] Attempt 5 failed", e); }
+
+        // Final failure - persist message until user clicks
+        console.log("[AutoWand] All attempts failed");
+        showToast("Could not auto-detect bird. Please annotate manually. (Click to dismiss)", 'warning', true);
+
+        // Re-check bird present toggle - if we failed to find boxes, maybe we should uncheck it?
+        // User requested: "Ensure 'Bird present' is only kept if valid boxes remain"
+        // But the observation is labelled TP, so there *should* be a bird.
+        // We'll leave it checked but with no boxes, prompting manual fix.
+    }
+
+    // Dirty state tracking
+    let isDirty = false;
+    let saveMode = localStorage.getItem('annotationSaveMode') || 'save-next';
+
+    // Wand mode
+    let isWandMode = false;
+
+    function markDirty() {
+        isDirty = true;
+        document.getElementById('mainSaveBtn').textContent = saveMode === 'save-next' ? 'Save & Next *' : 'Save *';
+    }
+
+    function markClean() {
+        isDirty = false;
+        document.getElementById('mainSaveBtn').textContent = saveMode === 'save-next' ? 'Save & Next' : 'Save';
+    }
 
     const canvas = document.getElementById('annotationCanvas');
     const ctx = canvas.getContext('2d');
@@ -274,8 +436,9 @@
             ctx.fillStyle = colors.alpha;
             ctx.fillRect(x, y, w, h);
 
-            // Label with background for readability
-            const label = `#${idx + 1}${box.is_false_positive ? ' (FP)' : ''}`;
+            // Label with background for readability (includes confidence if available)
+            const confStr = box.confidence != null ? ` ${(box.confidence * 100).toFixed(0)}%` : '';
+            const label = `#${idx + 1}${confStr}${box.is_false_positive ? ' (FP)' : ''}`;
             ctx.font = 'bold 20px sans-serif';
             const textMetrics = ctx.measureText(label);
             const textWidth = textMetrics.width;
@@ -326,12 +489,13 @@
         if (!container) return;
         container.innerHTML = boxes.map((box, idx) => {
             const colors = getBoxColor(idx);
+            const confBadge = box.confidence != null ? `<span class="badge" style="background: #555; color: #fff; margin-left: 4px; font-size: 0.8em;">${(box.confidence * 100).toFixed(0)}%</span>` : '';
             return `
             <div class="box-item ${box.is_false_positive ? 'false-positive' : ''} ${idx === selectedBoxIndex ? 'selected' : ''}"
                  onclick="selectBox(${idx})"
                  style="border-left: 5px solid ${colors.solid};">
                 <span class="badge" style="background: ${colors.solid}; color: #fff; margin-right: 8px;">#${idx + 1}</span>
-                <span style="flex: 1;">Box #${idx + 1}</span>
+                <span style="flex: 1;">Box #${idx + 1}${confBadge}</span>
                 <label onclick="event.stopPropagation()">
                     <input type="checkbox" ${box.is_false_positive ? 'checked' : ''} onchange="toggleFP(${idx})"> FP
                 </label>
@@ -434,6 +598,12 @@
         startX = coords.x;
         startY = coords.y;
 
+        // Handle wand mode - click to detect
+        if (isWandMode) {
+            triggerWandDetection(coords);
+            return;
+        }
+
         // 1. Check for resize handles first (if a box is selected)
         const handle = findResizeHandle(coords.x, coords.y);
         if (handle) {
@@ -479,6 +649,7 @@
             box.h = newH / canvas.height;
             box.x = (Math.min(x1, x2) + newW / 2) / canvas.width;
             box.y = (Math.min(y1, y2) + newH / 2) / canvas.height;
+            markDirty();
             drawBoxes();
         } else if (isDragging && selectedBoxIndex >= 0) {
             // Move selected box
@@ -488,6 +659,7 @@
             // Clamp to canvas
             box.x = Math.max(box.w / 2, Math.min(1 - box.w / 2, box.x));
             box.y = Math.max(box.h / 2, Math.min(1 - box.h / 2, box.y));
+            markDirty();
             drawBoxes();
         } else if (isDrawing) {
             // Draw new box preview
@@ -503,15 +675,19 @@
 
         // Cursor feedback
         if (!isDrawing && !isDragging && !isResizing) {
-            const handle = findResizeHandle(coords.x, coords.y);
-            const boxIdx = findBoxAtPoint(coords.x, coords.y);
-
-            if (handle) {
-                canvas.style.cursor = (handle === 'tl' || handle === 'br') ? 'nwse-resize' : 'nesw-resize';
-            } else if (boxIdx >= 0) {
-                canvas.style.cursor = 'move';
+            if (isWandMode) {
+                canvas.style.cursor = 'cell';  // Magic wand cursor
             } else {
-                canvas.style.cursor = 'crosshair';
+                const handle = findResizeHandle(coords.x, coords.y);
+                const boxIdx = findBoxAtPoint(coords.x, coords.y);
+
+                if (handle) {
+                    canvas.style.cursor = (handle === 'tl' || handle === 'br') ? 'nwse-resize' : 'nesw-resize';
+                } else if (boxIdx >= 0) {
+                    canvas.style.cursor = 'move';
+                } else {
+                    canvas.style.cursor = 'crosshair';
+                }
             }
         }
     }
@@ -537,6 +713,7 @@
                     source: 'manual'
                 });
                 selectedBoxIndex = boxes.length - 1;
+                markDirty();
             }
         }
 
@@ -575,6 +752,7 @@
 
     function toggleFP(idx) {
         boxes[idx].is_false_positive = !boxes[idx].is_false_positive;
+        markDirty();
         drawBoxes();
     }
 
@@ -583,10 +761,15 @@
         if (selectedBoxIndex >= boxes.length) {
             selectedBoxIndex = boxes.length - 1;
         }
+        markDirty();
         drawBoxes();
     }
 
     function addBox() {
+        // Exit wand mode when adding box manually
+        if (isWandMode) {
+            setMode('select');
+        }
         boxes.push({
             class_id: 0,
             x: 0.5,
@@ -597,23 +780,30 @@
             source: 'manual'
         });
         selectedBoxIndex = boxes.length - 1;
+        markDirty();
         drawBoxes();
     }
 
     function clearBoxes() {
         boxes = [];
         selectedBoxIndex = -1;
+        markDirty();
         drawBoxes();
     }
 
     function resetToAuto() {
+        // ... handled in fetch, just markDirty after
         fetch(`/api/annotate/${observationId}/frame/${currentFrameId}`)
             .then(r => r.json())
             .then(data => {
                 boxes = data.boxes || [];
+                // Respect auto-select logic again or keep DB? User asked for reset.
+                // Reset usually means reset to DB state.
                 birdPresent = data.bird_present || false;
                 syncBirdPresentUI();
                 selectedBoxIndex = -1;
+                markDirty(); // Technically dirty compared to previous state, or maybe clean if reset to DB? 
+                // Let's mark dirty to force manual save if they change their mind
                 drawBoxes();
             });
     }
@@ -621,6 +811,7 @@
     function toggleBirdPresent() {
         birdPresent = !birdPresent;
         syncBirdPresentUI();
+        markDirty();
     }
 
     function syncBirdPresentUI() {
@@ -630,7 +821,195 @@
         updateBirdToggleLabel();
     }
 
+    // Magic wand configuration (passed from server)
+    const WAND_TIMEOUT_SECONDS = {{ wand_timeout | default (60) }};
+    const WAND_MAX_RETRIES = {{ wand_retries | default (1) }};
+
+    async function triggerWandDetection(coords, params = {}, silentStart = false) {
+        const spinner = document.getElementById('loadingOverlay');
+        const timerText = document.getElementById('spinnerTimer');
+        let timerInterval = null;
+        let startTime = Date.now();
+
+        if (spinner) {
+            spinner.classList.add('visible');
+            if (timerText) {
+                timerText.textContent = "0s";
+                timerInterval = setInterval(() => {
+                    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                    timerText.textContent = `${elapsed}s`;
+                }, 1000);
+            }
+        }
+
+        let attempt = 0;
+        const maxAttempts = WAND_MAX_RETRIES + 1;
+
+        try {
+            while (attempt < maxAttempts) {
+                attempt++;
+
+                if (!silentStart) {
+                    if (attempt === 1) {
+                        showToast('Scanning region...', false);
+                    } else {
+                        showToast(`Retrying detection (attempt ${attempt}/${maxAttempts})...`, false);
+                    }
+                }
+
+                // Step 1: Submit detection job
+                const body = { ...coords, ...params };
+                const res = await fetch(`/api/annotate/${observationId}/frame/${currentFrameId}/detect_region`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                if (!res.ok) throw new Error("Failed to submit detection job");
+
+                const data = await res.json();
+
+                // Check if queue is available
+                if (data.error) {
+                    if (!silentStart) showToast(data.error, true);
+                    return 0; // Return 0 boxes on error
+                }
+
+                const jobId = data.job_id;
+                if (!jobId) {
+                    if (!silentStart) showToast('Detection failed: no job ID', true);
+                    return 0;
+                }
+
+                // Step 2: Poll for job completion with timeout
+                const pollIntervalMs = 500;
+                const maxPollTime = WAND_TIMEOUT_SECONDS * 1000;
+                let elapsed = 0;
+                let jobResult = null;
+
+                while (elapsed < maxPollTime) {
+                    const statusRes = await fetch(`/api/annotate/wand_job/${jobId}`);
+                    if (!statusRes.ok) break;
+
+                    const statusData = await statusRes.json();
+                    if (statusData.status === 'finished') {
+                        jobResult = statusData;
+                        break;
+                    } else if (statusData.status === 'failed') {
+                        throw new Error(statusData.error || "Job failed");
+                    }
+
+                    await new Promise(r => setTimeout(r, pollIntervalMs));
+                    elapsed += pollIntervalMs;
+                }
+
+                if (jobResult) {
+                    const newBoxes = jobResult.boxes || [];
+
+                    // Add new boxes
+                    if (newBoxes.length > 0) {
+                        newBoxes.forEach(b => {
+                            const box = {
+                                x: b.x1,
+                                y: b.y1,
+                                w: b.x2 - b.x1,
+                                h: b.y2 - b.y1,
+                                label: b.label || 'bird',
+                                confidence: b.confidence,
+                                is_false_positive: false,
+                                source: 'wand'
+                            };
+                            boxes.push(box);
+                        });
+                        drawBoxes();
+                        hasUnsavedChanges = true;
+                        if (!silentStart) showToast(`Found ${newBoxes.length} object(s)!`, true);
+                    } else {
+                        if (!silentStart) showToast('No objects found in region.', true);
+                    }
+
+                    return newBoxes.length;
+
+                } else {
+                    // Timeout?
+                    if (attempt === maxAttempts) {
+                        throw new Error("Detection timed out. (Click to dismiss)");
+                    }
+                }
+            }
+        } catch (err) {
+            console.error(err);
+            if (!silentStart) {
+                const isTimeout = err.message.includes('timed out');
+                showToast(`Error: ${err.message}`, 'error', isTimeout || true);
+            }
+        } finally {
+            if (spinner) spinner.classList.remove('visible');
+            if (timerInterval) clearInterval(timerInterval);
+        }
+        return 0;
+    }
+
+
+    function setMode(mode) {
+        if (mode === 'wand') {
+            isWandMode = true;
+        } else {
+            isWandMode = false;
+        }
+
+        const canvasContainer = document.getElementById('canvasContainer');
+        if (isWandMode) {
+            canvasContainer.classList.add('wand-mode');
+            selectedBoxIndex = -1;
+            drawBoxes();
+            showToast('Magic Wand: Click on location to scan');
+        } else {
+            canvasContainer.classList.remove('wand-mode');
+        }
+
+        const btnWand = document.getElementById('btnWand');
+        if (btnWand) {
+            if (isWandMode) {
+                btnWand.classList.remove('btn');
+                btnWand.classList.add('btn-primary');
+            } else {
+                btnWand.classList.add('btn');
+                btnWand.classList.remove('btn-primary');
+            }
+        }
+    }
+
     // Save and navigation
+
+    let saveMenuOpen = false;
+
+    function toggleSaveMenu() {
+        saveMenuOpen = !saveMenuOpen;
+        document.getElementById('saveMenu').classList.toggle('visible', saveMenuOpen);
+    }
+
+    function setSaveMode(mode) {
+        saveMode = mode;
+        localStorage.setItem('annotationSaveMode', mode);
+        const btn = document.getElementById('mainSaveBtn');
+        btn.textContent = mode === 'save-next' ? 'Save & Next' : 'Save';
+        if (isDirty) btn.textContent += ' *';
+        toggleSaveMenu();
+    }
+
+    // Close save menu when clicking outside
+    window.addEventListener('click', (e) => {
+        if (!e.target.closest('.save-dropdown-container')) {
+            document.getElementById('saveMenu').classList.remove('visible');
+            saveMenuOpen = false;
+        }
+    });
+
+    function handleMainSave() {
+        saveFrame(saveMode === 'save-next');
+    }
+
     async function saveFrame(advance = false) {
         const response = await fetch(`/api/annotate/${observationId}/frame/${currentFrameId}`, {
             method: 'POST',
@@ -642,6 +1021,7 @@
         });
 
         if (response.ok) {
+            markClean();
             const frameItem = document.querySelector(`.frame-item[data-frame-id="${currentFrameId}"]`);
             if (frameItem) {
                 frameItem.classList.add('saved');
@@ -660,8 +1040,26 @@
     }
 
     function skipFrame() {
+        if (!checkDirty()) return;
         goNextPending();
     }
+
+    function checkDirty() {
+        if (isDirty) {
+            if (!confirm('You have unsaved changes. Do you want to discard them?')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Window close warning
+    window.addEventListener('beforeunload', (e) => {
+        if (isDirty) {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
 
     function goNextPending() {
         const items = Array.from(document.querySelectorAll('.frame-item'));
@@ -684,6 +1082,8 @@
     }
 
     function loadFrame(frameId) {
+        if (frameId == currentFrameId) return;
+        if (!checkDirty()) return;
         window.location.href = `/annotate/${observationId}?frame=${frameId}`;
     }
 
@@ -786,13 +1186,31 @@
     }
 
     // Toast notifications
-    function showToast(message, type = 'success') {
+    function showToast(message, type = 'success', persist = false) {
         const toast = document.getElementById('toast');
         toast.textContent = message;
         toast.className = `toast ${type} visible`;
-        setTimeout(() => {
-            toast.classList.remove('visible');
-        }, 2000);
+
+        // Clear any existing timeout
+        if (toast._hideTimeout) {
+            clearTimeout(toast._hideTimeout);
+            toast._hideTimeout = null;
+        }
+
+        if (persist) {
+            // Add click handler to dismiss
+            const dismissHandler = () => {
+                toast.classList.remove('visible');
+                toast.removeEventListener('click', dismissHandler);
+            };
+            toast.addEventListener('click', dismissHandler);
+            toast.style.cursor = 'pointer';
+        } else {
+            toast.style.cursor = 'default';
+            toast._hideTimeout = setTimeout(() => {
+                toast.classList.remove('visible');
+            }, 2000);
+        }
     }
 
     // Keyboard shortcuts
@@ -801,12 +1219,13 @@
         switch (e.key) {
             case 'ArrowLeft': goPrev(); break;
             case 'ArrowRight': goNext(); break;
-            case 's': case 'S': saveFrame(); break;
+            case 's': case 'S': handleMainSave(); break;
             case 'a': case 'A': executePrimaryAction(); break;
             case 'k': case 'K': skipFrame(); break;
             case 'c': case 'C': clearBoxes(); break;
             case 'r': case 'R': resetToAuto(); break;
             case 'b': case 'B': toggleBirdPresent(); break;
+            case 'w': case 'W': setMode(isWandMode ? 'select' : 'wand'); break;
             case 'Delete': case 'Backspace':
                 if (selectedBoxIndex >= 0) {
                     deleteBox(selectedBoxIndex);
@@ -950,14 +1369,14 @@
 
     function tidyBoxes() {
         if (!boxes.length) return;
-        const threshold = 0.4; // More aggressive merging
+        const threshold = parseFloat(document.getElementById('tidyIoU').value) || 0.4;
         const countBefore = boxes.length;
 
         // 1. Remove tiny boxes
         boxes = boxes.filter(b => (b.w * b.h) >= 0.0001);
 
         if (boxes.length > 1) {
-            // 2. Simple NMS
+            // 2. Simple NMS with confidence propagation
             const sorted = boxes.slice().sort((a, b) => (b.confidence || 1) - (a.confidence || 1));
             const kept = [];
             while (sorted.length > 0) {
@@ -966,6 +1385,10 @@
                 for (let i = 0; i < sorted.length; i++) {
                     const metrics = getOverlapMetrics(head, sorted[i]);
                     if (metrics.iou > threshold || metrics.containment > 0.8) {
+                        // Propagate highest confidence before removing merged box
+                        if ((sorted[i].confidence || 0) > (head.confidence || 0)) {
+                            head.confidence = sorted[i].confidence;
+                        }
                         sorted.splice(i, 1);
                         i--;
                     }
@@ -974,11 +1397,15 @@
             boxes = kept;
         }
 
-        selectedBoxIndex = -1;
-        drawBoxes();
         const removed = countBefore - boxes.length;
-        if (removed > 0) showToast(`Tidied: removed ${removed} box${removed > 1 ? 'es' : ''}`);
-        else showToast('Already tidy');
+        if (removed > 0) {
+            selectedBoxIndex = -1;
+            markDirty();
+            drawBoxes();
+            showToast(`Tidied: removed ${removed} box${removed > 1 ? 'es' : ''}`);
+        } else {
+            showToast('Already tidy');
+        }
     }
 
     // Initialize mobile UI
@@ -1029,6 +1456,119 @@
 
     .mobile-help {
         display: none;
+    }
+
+    .review-meta .species {
+        color: #a0a0b0;
+    }
+
+    .review-meta .status-badge {
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: bold;
+        margin-left: 8px;
+    }
+
+    .review-meta .status-badge.tp {
+        background: rgba(46, 204, 113, 0.2);
+        color: #2ecc71;
+        border: 1px solid #2ecc71;
+    }
+
+    .review-meta .status-badge.fp {
+        background: rgba(231, 76, 60, 0.2);
+        color: #e74c3c;
+        border: 1px solid #e74c3c;
+    }
+
+    .save-dropdown-container {
+        position: relative;
+        display: inline-flex;
+    }
+
+    .save-dropdown-container .dropdown-toggle {
+        margin-left: 1px;
+        padding-left: 6px;
+        padding-right: 6px;
+    }
+
+    .save-menu {
+        position: absolute;
+        bottom: 100%;
+        right: 0;
+        background: #23243a;
+        border: 1px solid #3d3e56;
+        border-radius: 4px;
+        margin-bottom: 4px;
+        display: none;
+        flex-direction: column;
+        min-width: 180px;
+        z-index: 100;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .save-menu.visible {
+        display: flex;
+    }
+
+    .save-menu button {
+        background: transparent;
+        border: none;
+        color: #fff;
+        padding: 8px 12px;
+        text-align: left;
+        cursor: pointer;
+        width: 100%;
+    }
+
+    .save-menu button:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    .canvas-container.wand-mode {
+        cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M14.5 9.5L20 4m-6 6l-3 3-2.5-1-1 3.5 3.5-1 1-2.5 3 3"></path></svg>') 0 24, crosshair;
+    }
+
+    .loading-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.3);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        z-index: 1000;
+    }
+
+    .loading-overlay.visible {
+        display: flex;
+    }
+
+    .spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid #fff;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .spinner-timer {
+        position: absolute;
+        font-size: 0.7rem;
+        font-weight: bold;
+        color: white;
+        pointer-events: none;
     }
 
     .review-layout {
@@ -1461,6 +2001,7 @@
     .toast.visible {
         opacity: 1;
         transform: translate(-50%, -50%) scale(1);
+        pointer-events: auto;
     }
 
     .toast.error {

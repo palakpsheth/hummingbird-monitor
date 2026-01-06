@@ -51,6 +51,13 @@ def _valid_form_data():
         "arrival_buffer_seconds": "5.0",
         "departure_timeout_seconds": "2.0",
         "post_departure_buffer_seconds": "3.0",
+        # Tracking fields
+        "use_tracking": "on",
+        "track_high_thresh": "0.45",
+        "track_low_thresh": "0.05",
+        "track_new_thresh": "0.25",
+        "track_match_thresh": "0.80",
+        "track_buffer_frames": "50",
     }
 
 def test_config_page_rendering(tmp_path, monkeypatch):

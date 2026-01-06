@@ -2,7 +2,6 @@ import sys
 import os
 import logging
 import cv2
-import time
 import shutil
 from pathlib import Path
 
@@ -33,9 +32,6 @@ def test_obs_53_nms_debug():
         
         obs_id = 53
         # Look for frames around the timestamp where overlaps likely (Frame 2 previously)
-        # We know Frame 20 has a detection (from stride=10 test, index 2 was frame 20).
-        # We'll extract frames 18-23 to be safe.
-        target_frame = 20
         start_scan = 18
         limit_frames = 5
         

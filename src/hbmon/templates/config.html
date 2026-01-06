@@ -91,23 +91,87 @@
           value="{{ form_values.post_departure_buffer_seconds }}" required />
       </label>
 
-      <label class="stack">
-        <span>
-          <strong>Temporal window (frames):</strong>
-          <span class="muted">(1–120). Frames kept for temporal voting to smooth detections.</span>
-        </span>
-        <input type="number" name="temporal_window_frames" step="1" min="1" max="120"
-          value="{{ form_values.temporal_window_frames }}" required />
+      <div id="temporal-voting-fields">
+        <label class="stack">
+          <span>
+            <strong>Temporal window (frames):</strong>
+            <span class="muted">(1–120). Frames kept for temporal voting to smooth detections.</span>
+          </span>
+          <input type="number" name="temporal_window_frames" step="1" min="1" max="120"
+            value="{{ form_values.temporal_window_frames }}" required />
+        </label>
+
+        <label class="stack">
+          <span>
+            <strong>Temporal min detections:</strong>
+            <span class="muted">(1–120). Minimum positive frames required within the temporal window.</span>
+          </span>
+          <input type="number" name="temporal_min_detections" step="1" min="1" max="120"
+            value="{{ form_values.temporal_min_detections }}" required />
+        </label>
+      </div>
+    </fieldset>
+
+    <!-- Tracking Mode -->
+    <fieldset class="config-group" id="tracking-section">
+      <legend>Tracking Mode (ByteTrack)</legend>
+      <p class="muted">
+        Use object tracking instead of temporal voting for visit detection.
+        Tracking uses Kalman filtering to maintain bird identity through missed detections.
+      </p>
+
+      <label class="inline" style="align-items: center; gap: 10px;">
+        <input type="checkbox" name="use_tracking" value="1" id="use_tracking_checkbox" {% if
+          form_values.use_tracking=="1" %}checked{% endif %} />
+        <span><strong>Enable tracking mode</strong> (overrides temporal voting)</span>
       </label>
 
-      <label class="stack">
-        <span>
-          <strong>Temporal min detections:</strong>
-          <span class="muted">(1–120). Minimum positive frames required within the temporal window.</span>
-        </span>
-        <input type="number" name="temporal_min_detections" step="1" min="1" max="120"
-          value="{{ form_values.temporal_min_detections }}" required />
-      </label>
+      <div id="tracking-fields">
+        <label class="stack">
+          <span>
+            <strong>High confidence threshold:</strong>
+            <span class="muted">(0.01–0.95). First-pass association threshold for confident detections.</span>
+          </span>
+          <input type="number" name="track_high_thresh" step="0.01" min="0.01" max="0.95"
+            value="{{ form_values.track_high_thresh }}" />
+        </label>
+
+        <label class="stack">
+          <span>
+            <strong>Low confidence threshold:</strong>
+            <span class="muted">(0.001–0.5). Second-pass "rescue" for weak detections.</span>
+          </span>
+          <input type="number" name="track_low_thresh" step="0.001" min="0.001" max="0.5"
+            value="{{ form_values.track_low_thresh }}" />
+        </label>
+
+        <label class="stack">
+          <span>
+            <strong>New track threshold:</strong>
+            <span class="muted">(0.01–0.95). Minimum confidence to create a new track.</span>
+          </span>
+          <input type="number" name="track_new_thresh" step="0.01" min="0.01" max="0.95"
+            value="{{ form_values.track_new_thresh }}" />
+        </label>
+
+        <label class="stack">
+          <span>
+            <strong>Match threshold (IoU):</strong>
+            <span class="muted">(0.1–0.99). IoU threshold for matching detections to tracks.</span>
+          </span>
+          <input type="number" name="track_match_thresh" step="0.01" min="0.1" max="0.99"
+            value="{{ form_values.track_match_thresh }}" />
+        </label>
+
+        <label class="stack">
+          <span>
+            <strong>Track buffer (frames):</strong>
+            <span class="muted">(1–200). Frames to maintain lost tracks. ~20 fps, so 40 = 2 seconds.</span>
+          </span>
+          <input type="number" name="track_buffer_frames" step="1" min="1" max="200"
+            value="{{ form_values.track_buffer_frames }}" />
+        </label>
+      </div>
     </fieldset>
 
     <!-- Detection Settings -->
@@ -285,4 +349,31 @@
     </div>
   </form>
 </div>
+
+<script>
+  // Hide/show temporal voting fields based on tracking mode checkbox
+  (function () {
+    const trackingCheckbox = document.getElementById('use_tracking_checkbox');
+    const temporalFields = document.getElementById('temporal-voting-fields');
+    const trackingFields = document.getElementById('tracking-fields');
+
+    function updateFieldsVisibility() {
+      if (trackingCheckbox.checked) {
+        // Tracking enabled: hide temporal, show tracking
+        temporalFields.style.display = 'none';
+        trackingFields.style.display = 'block';
+      } else {
+        // Tracking disabled: show temporal, hide tracking
+        temporalFields.style.display = 'block';
+        trackingFields.style.display = 'none';
+      }
+    }
+
+    // Set initial state
+    updateFieldsVisibility();
+
+    // Update on checkbox change
+    trackingCheckbox.addEventListener('change', updateFieldsVisibility);
+  })();
+</script>
 {% endblock %}

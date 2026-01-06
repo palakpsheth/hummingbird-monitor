@@ -33,7 +33,7 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     return TestClient(app)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_candidate_list_and_filtering(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -67,7 +67,7 @@ async def test_candidate_list_and_filtering(tmp_path, monkeypatch):
     assert "c2.jpg" in response.text
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_candidate_detail_rendering(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -86,7 +86,7 @@ async def test_candidate_detail_rendering(tmp_path, monkeypatch):
     assert "mask.png" in response.text
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_candidate_label(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -106,7 +106,7 @@ async def test_candidate_label(tmp_path, monkeypatch):
         assert extra["review"]["label"] == "true_negative"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_candidate_export_integration_test(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     m = media_dir()
@@ -126,7 +126,7 @@ async def test_candidate_export_integration_test(tmp_path, monkeypatch):
     assert len(response.content) > 0
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_bulk_delete_candidates(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:

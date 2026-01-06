@@ -91,7 +91,7 @@ def test_api_background_get_metadata_empty(tmp_path, monkeypatch):
     data = response.json()
     assert data["configured"] is False
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_async_session_adapter_cleanup_logic(tmp_path, monkeypatch):
     from hbmon.web import _AsyncSessionAdapter, get_session_factory
     from hbmon.db import init_db, reset_db_state

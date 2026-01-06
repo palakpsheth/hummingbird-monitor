@@ -29,7 +29,7 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     app = make_app()
     return TestClient(app)
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_observation_detail_rendering(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -53,7 +53,7 @@ async def test_observation_detail_rendering(tmp_path, monkeypatch):
     assert "Test Bird" in response.text
     assert "detector" in response.text
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_api_video_info_missing(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -68,7 +68,7 @@ async def test_api_video_info_missing(tmp_path, monkeypatch):
     data = response.json()
     assert data["file_exists"] is False
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_observation_label(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -86,7 +86,7 @@ async def test_observation_label(tmp_path, monkeypatch):
         extra = updated.get_extra()
         assert extra["review"]["label"] == "true_positive"
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_export_integration_test(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     m = media_dir()

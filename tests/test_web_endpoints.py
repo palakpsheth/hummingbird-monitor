@@ -186,8 +186,8 @@ def test_sync_fallback_adapter_executes_queries(tmp_path, monkeypatch):
     assert "Ruby-throated Hummingbird" in response.text
 
 
-def test_sync_fallback_adapter_allows_attribute_access(tmp_path, monkeypatch):
-    import asyncio
+@pytest.mark.asyncio
+async def test_sync_fallback_adapter_allows_attribute_access(tmp_path, monkeypatch):
     import hbmon.db as db_module
     import hbmon.web as web_module
 
@@ -199,9 +199,9 @@ def test_sync_fallback_adapter_allows_attribute_access(tmp_path, monkeypatch):
 
     adapter = web_module._AsyncSessionAdapter(db_module.get_session_factory())
     assert adapter.bind is not None
-    asyncio.run(adapter.close())
+    await adapter.close()
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_sync_fallback_adapter_cleanup_runs(tmp_path, monkeypatch):
     import hbmon.db as db_module
     import hbmon.web as web_module

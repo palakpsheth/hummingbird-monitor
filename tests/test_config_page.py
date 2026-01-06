@@ -23,6 +23,13 @@ def test_validate_detection_inputs_ok(import_web, monkeypatch):
             "arrival_buffer_seconds": "5.0",
             "departure_timeout_seconds": "2.0",
             "post_departure_buffer_seconds": "3.0",
+            # Tracking fields
+            "use_tracking": "on",
+            "track_high_thresh": "0.45",
+            "track_low_thresh": "0.05",
+            "track_new_thresh": "0.25",
+            "track_match_thresh": "0.80",
+            "track_buffer_frames": "50",
         }
     )
     assert errors == []
@@ -41,6 +48,12 @@ def test_validate_detection_inputs_ok(import_web, monkeypatch):
     assert parsed["fps_limit"] == 10.0
     assert parsed["crop_padding"] == 0.10
     assert parsed["bg_rejected_cooldown_seconds"] == 3.0
+    assert parsed["use_tracking"] is True
+    assert parsed["track_high_thresh"] == 0.45
+    assert parsed["track_low_thresh"] == 0.05
+    assert parsed["track_new_thresh"] == 0.25
+    assert parsed["track_match_thresh"] == 0.80
+    assert parsed["track_buffer_frames"] == 50
 
 
 def test_validate_detection_inputs_errors(import_web, monkeypatch):

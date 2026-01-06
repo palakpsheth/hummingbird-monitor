@@ -28,7 +28,7 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     app = make_app()
     return TestClient(app)
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_individuals_list_rendering(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -41,7 +41,7 @@ async def test_individuals_list_rendering(tmp_path, monkeypatch):
     assert "Indy 1" in response.text
     assert "Indy 2" in response.text
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_individual_detail_rendering(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -55,7 +55,7 @@ async def test_individual_detail_rendering(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "Indy 1" in response.text
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_rename_individual(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -73,7 +73,7 @@ async def test_rename_individual(tmp_path, monkeypatch):
         updated = await db.get(Individual, ind_id)
         assert updated.name == "New Name"
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_delete_individual(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -97,7 +97,7 @@ async def test_delete_individual(tmp_path, monkeypatch):
         res = await db.execute(select(func.count(Observation.id)).where(Observation.individual_id == ind_id))
         assert res.scalar_one() == 0
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_bulk_delete_individuals(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -119,7 +119,7 @@ async def test_bulk_delete_individuals(tmp_path, monkeypatch):
         res = await db.execute(select(func.count(Individual.id)).where(Individual.id.in_(ids)))
         assert res.scalar_one() == 0
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_split_apply(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -155,7 +155,7 @@ async def test_split_apply(tmp_path, monkeypatch):
         # o1 should still be A
         updated_o1 = await db.get(Observation, oid1)
         assert updated_o1.individual_id == ind_id
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_individuals_list_sorting(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -175,7 +175,7 @@ async def test_individuals_list_sorting(tmp_path, monkeypatch):
     r = client.get("/individuals?sort=recent")
     assert r.status_code == 200
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_individual_detail_heatmap_and_proto(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:

@@ -82,8 +82,8 @@ def main():
         logger.error(f"Failed to connect to Redis: {e}")
         sys.exit(1)
 
-    # Start Worker
-    queues = ["annotation"]
+    # Start Worker - listen to both annotation and magic_wand queues
+    queues = ["annotation", "magic_wand"]
     
     with Connection(conn):
         worker = Worker(queues)

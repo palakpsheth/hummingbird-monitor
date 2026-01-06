@@ -32,7 +32,7 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     return TestClient(app)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_bulk_delete_observations(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     m = media_dir()
@@ -105,7 +105,7 @@ async def test_bulk_delete_observations(tmp_path, monkeypatch):
     assert not snap2.exists()
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_bulk_delete_observations_empty(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     response = client.post("/observations/bulk_delete", data={"obs_ids": []}, follow_redirects=True)

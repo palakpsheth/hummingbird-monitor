@@ -1,3 +1,4 @@
+
 """
 Tests for database module helper functions.
 
@@ -108,7 +109,7 @@ def test_session_scope_rolls_back_on_error(monkeypatch, tmp_path):
         assert session.query(Individual).count() == 0
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_async_session_scope_rolls_back_on_error(monkeypatch, tmp_path):
     db_path = tmp_path / "db.sqlite"
     monkeypatch.setenv("HBMON_DB_URL", f"sqlite:///{db_path}")
@@ -136,14 +137,18 @@ def test_get_async_engine_requires_url(monkeypatch):
     with pytest.raises(RuntimeError, match="Async DB URL is not configured"):
         db.get_async_engine()
 
-
-def test_get_async_engine_reuses_instance(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_get_async_engine_reuses_instance(monkeypatch, tmp_path):
     db_path = tmp_path / "db.sqlite"
     monkeypatch.setenv("HBMON_DB_ASYNC_URL", f"sqlite+aiosqlite:///{db_path}")
     db.reset_db_state()
     first = db.get_async_engine()
     second = db.get_async_engine()
     assert first is second
+
+    # Explicitly dispose to avoid "Event loop is closed" errors from aiosqlite
+    # when the test loop shuts down.
+    await db.dispose_async_engine()
 
 
 def test_get_async_engine_unavailable(monkeypatch):
@@ -193,7 +198,7 @@ def test_get_async_session_factory_unavailable(monkeypatch):
         db.get_async_session_factory()
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_init_async_db_unavailable(monkeypatch):
     monkeypatch.setattr(db, "_ASYNC_SQLALCHEMY_AVAILABLE", False)
     monkeypatch.setattr(db, "_SQLALCHEMY_AVAILABLE", True)

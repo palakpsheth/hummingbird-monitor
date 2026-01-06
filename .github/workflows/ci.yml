@@ -41,15 +41,20 @@ jobs:
       - name: Ruff
         run: uv run ruff check .
 
-      # Run unit tests (non-integration) with coverage in parallel
+      # Run unit tests (non-integration, non-heavy) with coverage in parallel
       - name: Unit Tests
         run: |
-          uv run pytest -m "not integration" -n 2 --cov=hbmon --cov-report=term
+          # Run sequentially (-n 0) and disable playwright to avoid event loop conflicts
+          # Exclude heavy tests to prevent resource exhaustion
+          uv run pytest -m "not integration and not ui and not heavy" -n 0 -p no:playwright -p no:base-url --cov=hbmon --cov-report=term
 
       # Run integration tests with coverage (appends to existing coverage data) in parallel
+      # Excludes heavy tests to prevent resource exhaustion on CI runners
       - name: Integration Tests
         run: |
-          uv run pytest -m "integration" -n 2 --cov=hbmon --cov-append --cov-report=term
+          # Run sequentially (-n 0) to avoid event loop conflicts
+          # Exclude heavy tests (e.g., test-e2e) which may crash due to memory
+          uv run pytest -m "(integration or ui) and not heavy" -n 0 --cov=hbmon --cov-append --cov-report=term
 
       # Generate combined coverage report (XML for PR comment, term for logs)
       # The coverage report includes an 80% threshold (non-critical - does not fail the build)

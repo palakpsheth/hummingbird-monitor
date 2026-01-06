@@ -17,7 +17,7 @@ class _FailingRedis:
         raise cache.RedisError("boom")
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_cache_helpers_ignore_redis_errors(monkeypatch) -> None:
     monkeypatch.setattr(cache, "get_redis_client", lambda: _FailingRedis())
 
@@ -37,7 +37,7 @@ class _RecordingRedis:
         self.calls.append((key, ttl, payload))
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_cache_helpers_json_roundtrip(monkeypatch) -> None:
     client = _RecordingRedis('{"ok": true}')
     monkeypatch.setattr(cache, "get_redis_client", lambda: client)
@@ -49,7 +49,7 @@ async def test_cache_helpers_json_roundtrip(monkeypatch) -> None:
     assert client.calls == [("hbmon:ok", 2, '{"hello": "world"}')]
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_cache_helpers_invalid_json(monkeypatch) -> None:
     client = _RecordingRedis("not-json")
     monkeypatch.setattr(cache, "get_redis_client", lambda: client)
@@ -73,7 +73,7 @@ def test_get_redis_client_creates_client(monkeypatch):
     assert cache.get_redis_client() is dummy
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_cache_helpers_empty_payload(monkeypatch) -> None:
     client = _RecordingRedis("")
     monkeypatch.setattr(cache, "get_redis_client", lambda: client)

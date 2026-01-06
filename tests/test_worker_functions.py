@@ -496,7 +496,7 @@ class TestConvertToH264:
 class TestRunWorkerDependencies:
     """Tests for run_worker dependency checks."""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_run_worker_requires_dependencies(self, monkeypatch):
         """Test that run_worker raises if dependencies are missing."""
         monkeypatch.setattr(worker, "_CV2_AVAILABLE", False)
@@ -552,7 +552,7 @@ class _FakeResult:
 class TestIndividualMatching:
     """Tests for individual matching helpers."""
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_load_individuals_for_matching_skips_missing_prototypes(self):
         from hbmon.models import Individual
 
@@ -571,7 +571,7 @@ class TestIndividualMatching:
         assert match_visits == 2
         assert np.allclose(match_proto, np.array([1.0, 0.0], dtype=np.float32))
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_match_or_create_creates_new_when_no_candidates(self):
         db = _FakeSession()
         emb = np.array([0.5, 0.5], dtype=np.float32)
@@ -591,7 +591,7 @@ class TestIndividualMatching:
         assert db.added[0].last_species_label == "Anna's"
         assert db.added[0].get_prototype() is not None
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_match_or_create_updates_existing_on_match(self):
         from hbmon.models import Individual
 
@@ -616,7 +616,7 @@ class TestIndividualMatching:
         assert ind.last_species_label == "Rufous"
         assert ind.last_seen_at is not None
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_match_or_create_respects_high_visit_alpha(self):
         from hbmon.models import Individual
 
@@ -641,7 +641,7 @@ class TestIndividualMatching:
         assert ind.visit_count == 11
         assert not np.allclose(ind.get_prototype(), old_proto)
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_match_or_create_creates_new_on_low_similarity(self):
         from hbmon.models import Individual
 
@@ -665,7 +665,7 @@ class TestIndividualMatching:
         assert len(db.added) == 1
         assert db.added[0].last_species_label == "Calliope"
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_run_worker_requires_cv2(self, monkeypatch):
         """Test that run_worker raises if only cv2 is missing."""
         monkeypatch.setattr(worker, "_CV2_AVAILABLE", False)
@@ -674,7 +674,7 @@ class TestIndividualMatching:
         with pytest.raises(RuntimeError, match="OpenCV and ultralytics"):
             await worker.run_worker()
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_run_worker_requires_yolo(self, monkeypatch):
         """Test that run_worker raises if only YOLO is missing."""
         monkeypatch.setattr(worker, "_CV2_AVAILABLE", True)

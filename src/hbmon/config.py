@@ -149,6 +149,14 @@ class Settings:
     bg_save_masks: bool = True
     bg_save_mask_overlay: bool = True
 
+    # Tracking mode (alternative to temporal voting)
+    use_tracking: bool = False
+    track_high_thresh: float = 0.1
+    track_low_thresh: float = 0.01
+    track_new_thresh: float = 0.15
+    track_match_thresh: float = 0.7
+    track_buffer_frames: int = 40
+
     # misc
     timezone: str = "local"
     last_updated_utc: float = 0.0
@@ -195,6 +203,14 @@ class Settings:
         s.bg_rejected_save_clip = env_bool("HBMON_BG_REJECTED_SAVE_CLIP", s.bg_rejected_save_clip)
         s.bg_save_masks = env_bool("HBMON_BG_SAVE_MASKS", s.bg_save_masks)
         s.bg_save_mask_overlay = env_bool("HBMON_BG_SAVE_MASK_OVERLAY", s.bg_save_mask_overlay)
+
+        # Tracking mode overrides
+        s.use_tracking = env_bool("HBMON_USE_TRACKING", s.use_tracking)
+        s.track_high_thresh = env_float("HBMON_TRACK_HIGH_THRESH", s.track_high_thresh)
+        s.track_low_thresh = env_float("HBMON_TRACK_LOW_THRESH", s.track_low_thresh)
+        s.track_new_thresh = env_float("HBMON_TRACK_NEW_THRESH", s.track_new_thresh)
+        s.track_match_thresh = env_float("HBMON_TRACK_MATCH_THRESH", s.track_match_thresh)
+        s.track_buffer_frames = env_int("HBMON_TRACK_BUFFER_FRAMES", s.track_buffer_frames)
 
         # ROI can also be overridden via env for debugging
         roi_env = env_str("HBMON_ROI", "")
@@ -250,6 +266,11 @@ def yolo_config_dir() -> Path:
     return Path(env_str("YOLO_CONFIG_DIR", str(data_dir() / "yolo"))).expanduser().resolve()
 
 
+def trackers_dir() -> Path:
+    """Directory for tracker configuration (ByteTrack, etc.)."""
+    return data_dir() / "trackers"
+
+
 def background_image_path() -> Path:
     """Full path to the persisted background image file."""
     return background_dir() / "background.jpg"
@@ -287,6 +308,7 @@ def ensure_dirs() -> None:
     _ensure_dir(clips_dir())
     _ensure_dir(background_dir())
     _ensure_dir(yolo_config_dir())
+    _ensure_dir(trackers_dir())
 
 
 # ----------------------------
@@ -351,6 +373,13 @@ def _settings_from_dict(d: dict[str, Any]) -> Settings:
         bg_rejected_save_clip=_parse_bool(d.get("bg_rejected_save_clip"), False),
         bg_save_masks=_parse_bool(d.get("bg_save_masks"), True),
         bg_save_mask_overlay=_parse_bool(d.get("bg_save_mask_overlay"), True),
+        # Tracking mode
+        use_tracking=_parse_bool(d.get("use_tracking"), True),
+        track_high_thresh=float(d.get("track_high_thresh", 0.1)),
+        track_low_thresh=float(d.get("track_low_thresh", 0.01)),
+        track_new_thresh=float(d.get("track_new_thresh", 0.15)),
+        track_match_thresh=float(d.get("track_match_thresh", 0.7)),
+        track_buffer_frames=int(d.get("track_buffer_frames", 40)),
         last_updated_utc=float(d.get("last_updated_utc", 0.0)),
     )
     return s

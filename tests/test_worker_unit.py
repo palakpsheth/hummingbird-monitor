@@ -5,7 +5,7 @@ from pathlib import Path
 from hbmon.config import Settings, Roi
 from hbmon.worker import _prepare_crop_and_clip, Det, _apply_roi
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_prepare_crop_and_clip_runs_inference():
     """Test that _prepare_crop_and_clip calls CLIP model when provided."""
     # Setup
@@ -30,7 +30,7 @@ async def test_prepare_crop_and_clip_runs_inference():
     clip_mock.predict_species_label_prob.assert_called_once()
     mock_write.assert_called_once()
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_prepare_crop_and_clip_no_clip():
     """Test graceful fallback when CLIP model is None."""
     # Setup

@@ -2,7 +2,7 @@
 
 UV ?= uv
 UV_RUN ?= UV_INDEX_URL=$(PYTORCH_INDEX_URL) UV_EXTRA_INDEX_URL=https://pypi.org/simple $(UV) run
-PYTEST ?= $(UV_RUN) pytest -n 2
+PYTEST ?= $(UV_RUN) pytest -n 0
 RUFF ?= $(UV_RUN) ruff
 
 DATA_DIR ?= data
@@ -15,7 +15,7 @@ PYTEST_INTEGRATION_ARGS ?= -m "integration"
 PYTORCH_INDEX_URL ?= https://download.pytorch.org/whl/cpu
 PYTORCH_GPU_INDEX_URL ?= https://download.pytorch.org/whl/cu121
 
-.PHONY: help venv sync sync-gpu lint test test-unit test-integration pre-commit check-gpu docker-build docker-up docker-build-cuda docker-up-cuda docker-build-intel docker-up-intel docker-down docker-ps clean-db clean-media clean-data clean-openvino-cache test-stream-list test-stream-start test-detection check-health test-e2e
+.PHONY: help venv sync sync-gpu lint test test-unit test-integration test-e2e-live pre-commit check-gpu docker-build docker-up docker-build-cuda docker-up-cuda docker-build-intel docker-up-intel docker-down docker-ps clean-db clean-media clean-data clean-openvino-cache test-stream-list test-stream-start test-detection check-health test-e2e
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -34,14 +34,21 @@ sync-gpu: ## Sync dev dependencies with CUDA-enabled PyTorch wheels
 lint: ## Run Ruff linting
 	$(RUFF) check --fix .
 
-test: ## Run full pytest suite with coverage
-	$(PYTEST) --cov=hbmon --cov-report=term
+test: ## Run full pytest suite with combined coverage
+	@$(MAKE) test-unit
+	@$(MAKE) test-integration
+	@echo "--- Combined Coverage Report ---"
+	@$(UV_RUN) coverage report
 
-test-unit: ## Run unit tests with coverage (marker: not integration)
-	$(PYTEST) $(PYTEST_UNIT_ARGS) -vvv --cov=hbmon --cov-report=term
+test-unit: ## Run unit tests with coverage (marker: not integration and not ui and not heavy)
+	$(PYTEST) -m "not integration and not ui and not heavy" -n 0 -p no:playwright -p no:base-url --cov=hbmon --cov-report=
 
-test-integration: ## Run integration/UI tests with coverage (marker: integration)
-	$(PYTEST) $(PYTEST_INTEGRATION_ARGS) -vvv --cov=hbmon --cov-report=term
+test-integration: ## Run integration/UI tests with coverage (marker: integration or ui, excludes heavy)
+	$(PYTEST) -m "(integration or ui) and not heavy" -n 0 --cov=hbmon --cov-append --cov-report=
+
+test-e2e: ## Run heavy worker E2E tests with timeout (resource-intensive, run explicitly)
+	@echo "=== Running heavy E2E worker tests (may use significant RAM/GPU) ==="
+	$(PYTEST) -m "heavy" -n 0 -v --timeout=180 --cov=hbmon --cov-append --cov-report=
 
 pre-commit: ## Run all pre-commit hooks
 	$(UV_RUN) pre-commit install
@@ -165,5 +172,5 @@ test-detection: ## Test YOLO detection on observation snapshots with diagnostics
 check-health: ## Check pipeline health for silent failures (DB, YOLO, CLIP, files)
 	$(UV_RUN) python scripts/check_pipeline_health.py
 
-test-e2e: ## End-to-end detection test (starts RTSP server, restarts worker, monitors)
+test-e2e-live: ## End-to-end detection test (starts RTSP server, restarts worker, monitors)
 	./scripts/run_detection_test.sh

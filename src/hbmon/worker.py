@@ -141,7 +141,8 @@ def _is_bird(cls_id: int, bird_class_id: int | None, names: dict[int, str] | Non
         return True
     # 2. Match with names mapping
     if names and cls_id in names:
-        if str(names[cls_id]).lower() in ("bird", "hummingbird"):
+        class_name = str(names[cls_id]).lower()
+        if "hummingbird" in class_name or "bird" in class_name:
             return True
     # 3. Fallback to common COCO bird ID if we suspect a COCO-based model
     if cls_id == 14:
@@ -160,6 +161,26 @@ class Det:
     @property
     def area(self) -> int:
         return max(0, self.x2 - self.x1) * max(0, self.y2 - self.y1)
+
+
+@dataclass
+class TrackedDet(Det):
+    """Detection with track ID from ByteTrack."""
+    track_id: int = -1
+
+
+@dataclass
+class TrackState:
+    """Per-track visit state for tracking mode."""
+    track_id: int
+    state: VisitState
+    start_ts: float
+    last_seen_ts: float
+    best_candidate: "CandidateItem | None" = None
+    best_score: tuple[float, int] = (-1.0, 0)  # (confidence, area)
+    recorder: "BackgroundRecorder | None" = None
+    video_path: Path | None = None
+    frames_tracked: int = 0
 
 
 @dataclass(frozen=True)
@@ -210,6 +231,10 @@ class CandidateItem:
     predict_imgsz: tuple[int, int] | int | None = None  # actual imgsz used for YOLO
     xoff: int = 0
     yoff: int = 0
+    # Tracking mode metadata
+    track_id: int | None = None
+    tracking_stats: dict[str, Any] | None = None
+
 
 
 @dataclass
@@ -583,6 +608,81 @@ def _collect_bird_detections(
             detections.append(d)
         except Exception:
             continue
+
+    return detections
+
+
+def _collect_tracked_detections(
+    results: Any,
+    min_box_area: int,
+    bird_class_id: int,
+) -> list[TrackedDet]:
+    """
+    Collect tracked bird detections from ultralytics results with track IDs.
+    Used when tracking mode is enabled via yolo.track().
+    """
+    if not results:
+        return []
+    r0 = results[0]
+    if r0.boxes is None:
+        return []
+
+    boxes = r0.boxes
+    if len(boxes) == 0:
+        return []
+
+    detections: list[TrackedDet] = []
+    names = getattr(results[0], 'names', None) if results else None
+    
+    # Debug: count filtered detections
+    no_id_count = 0
+    not_bird_count = 0
+    too_small_count = 0
+    synthetic_id_count = 0
+    
+    # Counter for synthetic track IDs (use negative IDs to distinguish from real tracks)
+    synthetic_id_base = -1000
+
+    for idx, b in enumerate(boxes):
+        try:
+            cls = int(b.cls.item()) if hasattr(b.cls, "item") else int(b.cls)
+            conf = float(b.conf.item()) if hasattr(b.conf, "item") else float(b.conf)
+
+            if not _is_bird(cls, bird_class_id, names):
+                not_bird_count += 1
+                continue
+            
+            # Get track ID or assign synthetic one for untracked detections
+            if b.id is None:
+                # ByteTrack hasn't assigned an ID yet - use synthetic ID based on detection index
+                # This allows the detection to still trigger a visit start
+                track_id = synthetic_id_base - idx
+                synthetic_id_count += 1
+                no_id_count += 1
+            else:
+                track_id = int(b.id.item()) if hasattr(b.id, "item") else int(b.id[0])
+
+            xyxy = b.xyxy[0].detach().cpu().numpy()
+            x1, y1, x2, y2 = [int(v) for v in xyxy.tolist()]
+            d = TrackedDet(x1=x1, y1=y1, x2=x2, y2=y2, conf=conf, track_id=track_id)
+            if d.area < min_box_area:
+                too_small_count += 1
+                continue
+            detections.append(d)
+        except Exception:
+            continue
+
+    # Log if we had detections but filtered them all out
+    if len(boxes) > 0 and len(detections) == 0:
+        logger.info(
+            f"TRACK DEBUG: {len(boxes)} boxes found but 0 tracked. "
+            f"no_id={no_id_count}, not_bird={not_bird_count}, too_small={too_small_count}"
+        )
+    elif detections:
+        if synthetic_id_count > 0:
+            logger.info(f"TRACK DEBUG: {len(detections)} bird(s) collected ({synthetic_id_count} synthetic IDs)")
+        else:
+            logger.info(f"TRACK DEBUG: {len(detections)} tracked bird(s) collected")
 
     return detections
 
@@ -1413,7 +1513,7 @@ async def run_worker() -> None:
     except Exception as e:
         logger.error(f"Failed to create models_ready signal: {e}")
     
-    asyncio.create_task(processing_dispatcher(queue, clip))
+    dispatcher_task = asyncio.create_task(processing_dispatcher(queue, clip))
 
     env = os.getenv("HBMON_SPECIES_LIST", "").strip()
     if env and clip is not None:
@@ -1514,6 +1614,12 @@ async def run_worker() -> None:
     arrival_buffer: deque[np.ndarray] = deque(maxlen=arrival_window_frames)
     logger.info(f"Arrival buffer initialized: {arrival_window_frames} frames ({arr_sec:.1f}s)")
     
+    # Tracking mode state (per-track visit management)
+    active_tracks: dict[int, TrackState] = {}
+    tracking_mode_active = bool(settings.use_tracking if settings else True)
+    previous_tracking_mode = tracking_mode_active
+    logger.info(f"Tracking mode: {'ENABLED' if tracking_mode_active else 'DISABLED (using temporal voting)'}")
+    
     # Create readiness signal file for healthchecks
     try:
         with open("/tmp/ready", "w") as f:
@@ -1523,375 +1629,609 @@ async def run_worker() -> None:
         logger.error(f"Failed to create readiness signal file: {e}")
 
     logger.info("Starting background system monitoring task")
-    asyncio.create_task(monitor_loop())
+    monitor_task = asyncio.create_task(monitor_loop())
 
-    while True:
-        s = get_settings()
-        if not s.rtsp_url:
-            await asyncio.sleep(2.0)
-            continue
+    try:
 
-        # Dynamic resizing of arrival buffer
-        target_arr_frames = int(20.0 * float(s.arrival_buffer_seconds))
-        if arrival_buffer.maxlen != target_arr_frames:
-             logger.info(f"Resizing arrival buffer: {arrival_buffer.maxlen} -> {target_arr_frames} frames ({s.arrival_buffer_seconds}s)")
-             arrival_buffer = deque(arrival_buffer, maxlen=target_arr_frames)
-
-        target_temporal_window = max(1, int(s.temporal_window_frames))
-        if frame_buffer.maxlen != target_temporal_window:
-            logger.info(
-                "Resizing temporal window: %s -> %s frames",
-                frame_buffer.maxlen,
-                target_temporal_window,
-            )
-            frame_buffer = deque(frame_buffer, maxlen=target_temporal_window)
-
-        if cap is None or not cap.isOpened():
-            logger.info(f"Opening RTSP: {s.rtsp_url}")
-            cap = cv2.VideoCapture(s.rtsp_url)
-            try:
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
-            except Exception:
-                pass
-            await asyncio.sleep(0.5)
-
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            consecutive_failures += 1
-            logger.warning(f"Frame read failed. Reconnecting... (failure {consecutive_failures})")
-            if cap:
+        while True:
+            s = get_settings()
+            if not s.rtsp_url:
+                await asyncio.sleep(2.0)
+                continue
+    
+            # Dynamic resizing of arrival buffer
+            target_arr_frames = int(20.0 * float(s.arrival_buffer_seconds))
+            if arrival_buffer.maxlen != target_arr_frames:
+                 logger.info(f"Resizing arrival buffer: {arrival_buffer.maxlen} -> {target_arr_frames} frames ({s.arrival_buffer_seconds}s)")
+                 arrival_buffer = deque(arrival_buffer, maxlen=target_arr_frames)
+    
+            target_temporal_window = max(1, int(s.temporal_window_frames))
+            if frame_buffer.maxlen != target_temporal_window:
+                logger.info(
+                    "Resizing temporal window: %s -> %s frames",
+                    frame_buffer.maxlen,
+                    target_temporal_window,
+                )
+                frame_buffer = deque(frame_buffer, maxlen=target_temporal_window)
+    
+            if cap is None or not cap.isOpened():
+                logger.info(f"Opening RTSP: {s.rtsp_url}")
+                cap = cv2.VideoCapture(s.rtsp_url)
                 try:
-                    cap.release()
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
                 except Exception:
                     pass
-            cap = None
-            # Use a shorter, increasing delay for read failures
-            await asyncio.sleep(min(0.2 * consecutive_failures, 2.0))
-            continue
- 
-        consecutive_failures = 0
-
-        # ROI & Background
-        roi_frame = frame
-        xoff, yoff = 0, 0
-        if s.roi:
-            roi_frame, (xoff, yoff) = _apply_roi(frame, s)
-
-
-
-        # Debug Logging
-        debug_every = float(os.getenv("HBMON_DEBUG_EVERY_SECONDS", "10"))
-        debug_save = env_bool("HBMON_DEBUG_SAVE_FRAMES", False)
-        now_dbg = time.time()
-
-        if (now_dbg - last_debug_log) > debug_every:
-             logger.info(f"alive q_size={queue.qsize()} rtsp={s.rtsp_url}")
-             if debug_save:
-                 # Use copy() to avoid longjmp/segfaults due to concurrent access
-                 await _write_jpeg_async(media_dir() / "debug_latest.jpg", frame.copy())
-                 await _write_jpeg_async(media_dir() / "debug_crop.jpg", roi_frame.copy())
-             last_debug_log = now_dbg
-
-        motion_mask = None
-        bg_active = False
-        if s.bg_subtraction_enabled and background_img is not None:
-             bg_roi, _ = _apply_roi(background_img, s)
-             motion_mask = _compute_motion_mask(roi_frame, bg_roi, threshold=int(s.bg_motion_threshold), blur_size=int(s.bg_motion_blur))
-             bg_active = True
-
-        # YOLO Detect
-        try:
-             yolo_verbose = (os.getenv("HBMON_DEBUG_VERBOSE") == "1")
-             
-             # Resolve inference image size using shared utility
-             imgsz_env = os.getenv("HBMON_YOLO_IMGSZ", "1088,1920").strip()
-             predict_imgsz = resolve_predict_imgsz(imgsz_env, roi_frame.shape)
-
-             t0_yolo = time.perf_counter()
-             results = yolo.predict(roi_frame, conf=float(s.detect_conf), iou=float(s.detect_iou), classes=bird_class_list, imgsz=predict_imgsz, verbose=yolo_verbose)
-             dt_yolo = (time.perf_counter() - t0_yolo) * 1000
-             
-             if yolo_verbose:
-                  logger.info(f"YOLO Inference ({yolo_device_label}): {dt_yolo:.2f}ms")
-        except Exception:
-             logger.error("YOLO inference failed", exc_info=True)
-             await asyncio.sleep(0.5)
-             continue
-
-        detections = _collect_bird_detections(results, int(s.min_box_area), bird_class_id)
-        
-        # Update arrival ring buffer (raw frames for video)
-        arrival_buffer.append(frame.copy())
-
-        # Store frame in temporal buffer
-        frame_buffer.append(FrameEntry(
-            frame=frame.copy(),
-            roi_frame=roi_frame.copy(),
-            timestamp=time.time(),
-            detections=detections,
-            motion_mask=motion_mask.copy() if motion_mask is not None else None,
-            xoff=xoff,
-            yoff=yoff
-        ))
-
-        # Temporal voting: find best detection across recent frames
-        best_entry: FrameEntry | None = None
-        best_det: Det | None = None
-        detection_frame_count = sum(1 for entry in frame_buffer if entry.detections)
-        min_required = max(1, min(int(s.temporal_min_detections), frame_buffer.maxlen or 1))
-        temporal_stats = {
-            "window_frames": int(frame_buffer.maxlen or 1),
-            "positive_frames": int(detection_frame_count),
-            "min_required": int(min_required),
-        }
-        if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
-            logger.debug(
-                "Temporal voting: %s/%s frames with detections (min required: %s)",
-                detection_frame_count,
-                frame_buffer.maxlen,
-                min_required,
-            )
-
-        if detection_frame_count >= min_required:
-            for entry in frame_buffer:
-                for d in entry.detections:
-                    if best_det is None or d.conf > best_det.conf:
-                        best_det = d
-                        best_entry = entry
-        else:
-            # Not enough positive frames in the window. Use latest frame context but skip detections.
-            if len(frame_buffer) > 0:
-                best_entry = frame_buffer[-1]
-            else:
+                await asyncio.sleep(0.5)
+    
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                consecutive_failures += 1
+                logger.warning(f"Frame read failed. Reconnecting... (failure {consecutive_failures})")
+                if cap:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                cap = None
+                # Use a shorter, increasing delay for read failures
+                await asyncio.sleep(min(0.2 * consecutive_failures, 2.0))
                 continue
-
-        if best_entry is None:
-            # No detections in window. Use latest frame context to ensure state machine runs.
-            if len(frame_buffer) > 0:
-                best_entry = frame_buffer[-1]
-            else:
-                continue
-
-        # Restore context from the best frame
-        frame = best_entry.frame
-        detections = best_entry.detections if best_det is not None else []
-        motion_mask = best_entry.motion_mask
-        xoff = best_entry.xoff
-        yoff = best_entry.yoff
-        bg_active = (motion_mask is not None)
-
-        if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
-             logger.debug(f"Found {len(detections)} bird detections.")
-
-        # Check motion overlap
-        kept_entries = []
-        rejected_entries = []
-        if motion_mask is not None:
-            for d in detections:
-                stats = _motion_overlap_stats(d, motion_mask)
-                if float(stats["bbox_overlap_ratio"]) >= float(s.bg_min_overlap):
-                    kept_entries.append((d, stats))
+     
+            consecutive_failures = 0
+    
+            # ROI & Background
+            roi_frame = frame
+            xoff, yoff = 0, 0
+            if s.roi:
+                roi_frame, (xoff, yoff) = _apply_roi(frame, s)
+    
+    
+    
+            # Debug Logging
+            debug_every = float(os.getenv("HBMON_DEBUG_EVERY_SECONDS", "10"))
+            debug_save = env_bool("HBMON_DEBUG_SAVE_FRAMES", False)
+            now_dbg = time.time()
+    
+            if (now_dbg - last_debug_log) > debug_every:
+                 logger.info(f"alive q_size={queue.qsize()} rtsp={s.rtsp_url}")
+                 if debug_save:
+                     # Use copy() to avoid longjmp/segfaults due to concurrent access
+                     await _write_jpeg_async(media_dir() / "debug_latest.jpg", frame.copy())
+                     await _write_jpeg_async(media_dir() / "debug_crop.jpg", roi_frame.copy())
+                 last_debug_log = now_dbg
+    
+            motion_mask = None
+            bg_active = False
+            if s.bg_subtraction_enabled and background_img is not None:
+                 bg_roi, _ = _apply_roi(background_img, s)
+                 motion_mask = _compute_motion_mask(roi_frame, bg_roi, threshold=int(s.bg_motion_threshold), blur_size=int(s.bg_motion_blur))
+                 bg_active = True
+    
+            # Hot-reload tracking mode check
+            tracking_mode_active = bool(s.use_tracking)
+            if tracking_mode_active != previous_tracking_mode:
+                logger.info(f"Tracking mode changed: {'ENABLED' if tracking_mode_active else 'DISABLED'}")
+                if tracking_mode_active:
+                    # Switching to tracking: clear temporal voting state
+                    frame_buffer.clear()
+                    logger.info("Cleared temporal voting buffer for tracking mode")
                 else:
-                    rejected_entries.append((d, stats))
-        else:
-            kept_entries = [(d, {}) for d in detections]
-
-        det = None
-        det_stats = {}
-        if kept_entries:
-            det, det_stats = _select_best_detection(kept_entries)
-        elif os.getenv("HBMON_DEBUG_BG") == "1" and rejected_entries:
-            # Optionally log why detections were rejected
-            for d, stats in rejected_entries:
-                logger.debug(f"REJECTED: p={d.conf:.2f} area={d.area} overlap={stats['bbox_overlap_ratio']:.2f} (min={s.bg_min_overlap})")
-
-        # Use timestamp from the selected frame
-        assert best_entry is not None
-        timestamp = best_entry.timestamp
-
-        if det:
-            pass # Replaced by logic below
-
-        # Determine if we have a valid bird
-        is_bird_present = (det is not None)
-        
-        # State Machine Logic
-        current_time = timestamp # Use frame timestamp
-        
-        # 1. Transitions & Actions
-        cooldown_seconds = float(s.cooldown_seconds)
-        cooldown_active = (
-            last_observation_ts is not None
-            and cooldown_seconds > 0.0
-            and (current_time - last_observation_ts) < cooldown_seconds
-        )
-
-        if is_bird_present:
-             visit_last_seen_ts = current_time
-             
-             if visit_state == VisitState.IDLE:
-                 if cooldown_active:
-                     if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
-                         logger.debug("Cooldown active; skipping visit start")
-                     continue
-                 # START RECORDING
-                 visit_state = VisitState.RECORDING
-                 visit_start_ts = current_time
-                 logger.info(f"Visit STARTED. Detection p={det.conf:.2f}")
-                 
-                 # Prepare video path
-                 visit_video_uuid = uuid.uuid4().hex
-                 stamp = time.strftime("%Y%m%d", time.localtime(current_time))
-                 video_dir = media_dir() / "clips" / stamp
-                 video_dir.mkdir(parents=True, exist_ok=True)
-                 visit_video_path = video_dir / f"{visit_video_uuid}.mp4"
-                 
-                 # Start recorder (approx 20fps)
-                 # Videos are stored uncompressed for ML training quality
-                 # Compression happens on-the-fly during browser streaming
-                 visit_recorder = BackgroundRecorder(
-                     visit_video_path, 
-                     fps=20.0, 
-                     width=frame.shape[1], 
-                     height=frame.shape[0]
-                 )
-                 visit_recorder.start()
-                 
-                 # Dump arrival buffer
-                 for f in arrival_buffer:
-                      visit_recorder.feed(f)
-                 
-                 # Reset best candidate tracking
-                 visit_best_candidate = None
-                 visit_best_score = (-1.0, 0)  # Reset to min
-             
-             if visit_state in (VisitState.RECORDING, VisitState.FINALIZING):
-                 if visit_state == VisitState.FINALIZING:
-                      # Bird returned! Resume recording
-                      visit_state = VisitState.RECORDING
-                      logger.info("Visit RESUMED")
-
-                 # Update best candidate: prefer large, high-confidence detections
-                 score = calculate_detection_score(det)
-
-                 if score > visit_best_score:
-                     visit_best_score = score
-                     det_full = Det(x1=det.x1 + xoff, y1=det.y1 + yoff, x2=det.x2 + xoff, y2=det.y2 + yoff, conf=det.conf)
-                     
-                     visit_best_candidate = CandidateItem(
-                         frame=frame.copy(),
-                         det_full=det_full,
-                         det=det,
-                         timestamp=timestamp,
-                         motion_mask=motion_mask.copy() if motion_mask is not None else None,
-                         background_img=background_img,
-                         settings_snapshot={
-                              "detect_conf": float(s.detect_conf),
-                              "detect_iou": float(s.detect_iou),
-                              "min_box_area": int(s.min_box_area),
-                              "fps_limit": float(s.fps_limit),
-                              "cooldown_seconds": float(s.cooldown_seconds),
-                              "temporal_window_frames": int(s.temporal_window_frames),
-                              "temporal_min_detections": int(s.temporal_min_detections),
-                              "bg_subtraction_enabled": bool(s.bg_subtraction_enabled),
-                              "bg_subtraction_configured": bool(s.background_image),
-                              "background_image_available": background_img is not None,
-                          },
-                         temporal_stats=temporal_stats,
-                         roi_stats={}, 
-                         bbox_stats=det_stats,
-                         bg_active=bg_active,
-                         s=s,
-                         is_rejected=False,
-                         video_path=visit_video_path,
-                         model_metadata=model_metadata,
-                         roi_shape=(roi_frame.shape[0], roi_frame.shape[1]),
-                         predict_imgsz=predict_imgsz,
-                         xoff=xoff,
-                         yoff=yoff,
-                     )
-
-        # 2. Continuous Actions (Recording) and Timeouts
-        if visit_state in (VisitState.RECORDING, VisitState.FINALIZING):
-             if visit_recorder:
-                 visit_recorder.feed(frame)
-        
-             # Check Departure
-             if visit_state == VisitState.RECORDING:
-                 dep_time = float(s.departure_timeout_seconds)
-                 if (current_time - visit_last_seen_ts) > dep_time:
-                     visit_state = VisitState.FINALIZING
-                     logger.info("Visit FINALIZING (bird left?)")
+                    # Switching to temporal voting: finalize and clear active tracks
+                    for track_id, ctx in list(active_tracks.items()):
+                        if ctx.recorder:
+                            ctx.recorder.stop()
+                        if ctx.best_candidate:
+                            queue.put_nowait(ctx.best_candidate)
+                            logger.info(f"Track {track_id} finalized on mode switch")
+                    active_tracks.clear()
+                    logger.info("Cleared active tracks for temporal voting mode")
+                previous_tracking_mode = tracking_mode_active
+    
+            # YOLO Detect/Track
+            timestamp = time.time()
+            tracked_detections: list[TrackedDet] = []
+            detections: list[Det] = []
             
-             elif visit_state == VisitState.FINALIZING:
-                 dep_time = float(s.departure_timeout_seconds)
-                 post_time = float(s.post_departure_buffer_seconds)
-                 if (current_time - visit_last_seen_ts) > (dep_time + post_time): # Total timeout
-                         # END VISIT
-                         visit_state = VisitState.IDLE
-                         if visit_recorder:
-                              visit_recorder.stop()
-                              visit_recorder = None
+            try:
+                 yolo_verbose = (os.getenv("HBMON_DEBUG_VERBOSE") == "1")
+                 
+                 # Resolve inference image size using shared utility
+                 imgsz_env = os.getenv("HBMON_YOLO_IMGSZ", "1088,1920").strip()
+                 predict_imgsz = resolve_predict_imgsz(imgsz_env, roi_frame.shape)
+    
+                 t0_yolo = time.perf_counter()
+                 
+                 if tracking_mode_active:
+                     # Use tracking with low confidence (tracker handles filtering)
+                     # Tracker config is in data/trackers/ (mounted volume)
+                     from hbmon.config import trackers_dir
+                     tracker_config = os.getenv("HBMON_TRACKER_CONFIG", str(trackers_dir() / "bytetrack.yaml"))
+                     
+                     # Fallback: if config file missing, generate from env vars
+                     if not Path(tracker_config).exists():
+                         logger.warning(f"Tracker config not found at {tracker_config}, generating from env vars")
+                         tracker_dir = Path(tracker_config).parent
+                         tracker_dir.mkdir(parents=True, exist_ok=True)
                          
-                         # Process the best candidate
-                         if visit_best_candidate:
-                              queue.put_nowait(visit_best_candidate)
-                              duration = current_time - visit_start_ts
-                              logger.info(f"Visit ENDED. Queued best candidate (p={visit_best_candidate.det.conf:.2f}). Duration: {duration:.1f}s")
-                              last_observation_ts = current_time
-                         else:
-                              logger.warning("Visit ended but no candidate found?")
-                         
-                         frame_buffer.clear()
+                         # Generate config from current settings
+                         config_content = f"""# Auto-generated ByteTrack config from env vars
+    tracker_type: bytetrack
+    track_high_thresh: {float(s.track_high_thresh)}
+    track_low_thresh: {float(s.track_low_thresh)}
+    new_track_thresh: {float(s.track_new_thresh)}
+    track_buffer: {int(s.track_buffer_frames)}
+    match_thresh: {float(s.track_match_thresh)}
+    fuse_score: true
+    """
+                         with open(tracker_config, "w") as f:
+                             f.write(config_content)
+                         logger.info(f"Generated tracker config at {tracker_config}")
+                     
+                     results = yolo.track(
+                         roi_frame,
+                         persist=True,
+                         conf=float(s.track_low_thresh),
+                         iou=float(s.detect_iou),
+                         classes=bird_class_list,
+                         imgsz=predict_imgsz,
+                         tracker=tracker_config,
+                         verbose=yolo_verbose
+                     )
+                     tracked_detections = _collect_tracked_detections(results, int(s.min_box_area), bird_class_id)
+                     if yolo_verbose and tracked_detections:
+                         for td in tracked_detections:
+                             is_high_conf = td.conf >= float(s.track_high_thresh)
+                             logger.debug(
+                                 f"Track {td.track_id}: conf={td.conf:.2f} ({'HIGH' if is_high_conf else 'LOW'}), "
+                                 f"area={td.area}"
+                             )
+                 else:
+                     # Standard detection with temporal voting
+                     results = yolo.predict(
+                         roi_frame,
+                         conf=float(s.detect_conf),
+                         iou=float(s.detect_iou),
+                         classes=bird_class_list,
+                         imgsz=predict_imgsz,
+                         verbose=yolo_verbose
+                     )
+                     detections = _collect_bird_detections(results, int(s.min_box_area), bird_class_id)
+                 
+                 dt_yolo = (time.perf_counter() - t0_yolo) * 1000
+                 
+                 if yolo_verbose:
+                      mode_label = "Track" if tracking_mode_active else "Predict"
+                      logger.info(f"YOLO {mode_label} ({yolo_device_label}): {dt_yolo:.2f}ms")
+            except Exception:
+                 logger.error("YOLO inference failed", exc_info=True)
+                 await asyncio.sleep(0.5)
+                 continue
 
-        # Rejected ?
-        log_rejected = env_bool("HBMON_BG_LOG_REJECTED", False)
-        if (not det) and log_rejected and rejected_entries:
-            # Check rejected cooldown
-             rejected_cooldown = float(env_int("HBMON_BG_REJECTED_COOLDOWN_SECONDS", 3))
-             max_per_minute = env_int("HBMON_BG_REJECTED_MAX_PER_MINUTE", 30)
-             
-             if (timestamp - last_logged_candidate_ts >= rejected_cooldown):
-                  # Also check max per minute
-                  while candidate_log_times and (timestamp - candidate_log_times[0]) > 60.0:
-                      candidate_log_times.popleft()
-                  
-                  if len(candidate_log_times) < max_per_minute:
-                      best_rej, rej_stats = _select_best_detection(rejected_entries)
-                      det_full_rej = Det(x1=best_rej.x1 + xoff, y1=best_rej.y1 + yoff, x2=best_rej.x2 + xoff, y2=best_rej.y2 + yoff, conf=best_rej.conf)
+    
+            # Update arrival ring buffer (raw frames for video)
+            arrival_buffer.append(frame.copy())
+    
+            # Compute cooldown status (used by both tracking and temporal voting paths)
+            current_time = timestamp
+            cooldown_seconds = float(s.cooldown_seconds)
+            cooldown_active = (
+                last_observation_ts is not None
+                and cooldown_seconds > 0.0
+                and (current_time - last_observation_ts) < cooldown_seconds
+            )
+    
+            # === TRACKING MODE PATH ===
+            if tracking_mode_active:
+                current_track_ids = set()
+                
+                for td in tracked_detections:
+                    current_track_ids.add(td.track_id)
+                    
+                    if td.track_id not in active_tracks:
+                        # New track detected → start visit
+                        if cooldown_active:
+                            if yolo_verbose:
+                                logger.debug(f"Track {td.track_id}: skipped (cooldown active)")
+                            continue
+                        
+                        # Prepare video path
+                        visit_video_uuid = uuid.uuid4().hex
+                        stamp = time.strftime("%Y%m%d", time.localtime(timestamp))
+                        video_dir = media_dir() / "clips" / stamp
+                        video_dir.mkdir(parents=True, exist_ok=True)
+                        track_video_path = video_dir / f"{visit_video_uuid}.mp4"
+                        
+                        # Start recorder
+                        track_recorder = BackgroundRecorder(
+                            track_video_path,
+                            fps=20.0,
+                            width=frame.shape[1],
+                            height=frame.shape[0]
+                        )
+                        track_recorder.start()
+                        
+                        # Dump arrival buffer
+                        for f in arrival_buffer:
+                            track_recorder.feed(f)
+                        
+                        active_tracks[td.track_id] = TrackState(
+                            track_id=td.track_id,
+                            state=VisitState.RECORDING,
+                            start_ts=timestamp,
+                            last_seen_ts=timestamp,
+                            recorder=track_recorder,
+                            video_path=track_video_path,
+                            frames_tracked=1
+                        )
+                        logger.info(f"Track {td.track_id} STARTED (conf={td.conf:.2f})")
+                    else:
+                        # Update existing track
+                        ctx = active_tracks[td.track_id]
+                        ctx.last_seen_ts = timestamp
+                        ctx.frames_tracked += 1
+                        
+                        if ctx.state == VisitState.FINALIZING:
+                            ctx.state = VisitState.RECORDING
+                            logger.info(f"Track {td.track_id} RESUMED")
+                        
+                        # Update best candidate if this detection is better
+                        det_full = Det(
+                            x1=td.x1 + xoff, y1=td.y1 + yoff,
+                            x2=td.x2 + xoff, y2=td.y2 + yoff,
+                            conf=td.conf
+                        )
+                        score = calculate_detection_score(det_full)
+                        
+                        if score > ctx.best_score:
+                            ctx.best_score = score
+                            ctx.best_candidate = CandidateItem(
+                                frame=frame.copy(),
+                                det_full=det_full,
+                                det=td,
+                                timestamp=timestamp,
+                                motion_mask=motion_mask.copy() if motion_mask is not None else None,
+                                background_img=background_img,
+                                settings_snapshot={
+                                    "detect_conf": float(s.detect_conf),
+                                    "detect_iou": float(s.detect_iou),
+                                    "min_box_area": int(s.min_box_area),
+                                    "fps_limit": float(s.fps_limit),
+                                    "cooldown_seconds": float(s.cooldown_seconds),
+                                    "use_tracking": True,
+                                    "track_high_thresh": float(s.track_high_thresh),
+                                    "track_low_thresh": float(s.track_low_thresh),
+                                },
+                                tracking_stats={
+                                    "track_id": td.track_id,
+                                    "frames_tracked": ctx.frames_tracked,
+                                    "track_high_thresh": float(s.track_high_thresh),
+                                    "track_low_thresh": float(s.track_low_thresh),
+                                },
+                                bg_active=bg_active,
+                                s=s,
+                                is_rejected=False,
+                                video_path=ctx.video_path,
+                                model_metadata=model_metadata,
+                                roi_shape=(roi_frame.shape[0], roi_frame.shape[1]),
+                                predict_imgsz=predict_imgsz,
+                                xoff=xoff,
+                                yoff=yoff,
+                                track_id=td.track_id,
+                            )
+                
+                # Feed frames to all active recorders
+                for track_id, ctx in active_tracks.items():
+                    if ctx.recorder:
+                        ctx.recorder.feed(frame)
+                
+                # Check for track loss and finalization
+                dep_time = float(s.departure_timeout_seconds)
+                post_time = float(s.post_departure_buffer_seconds)
+                
+                for track_id, ctx in list(active_tracks.items()):
+                    if track_id not in current_track_ids:
+                        time_since_seen = timestamp - ctx.last_seen_ts
+                        
+                        if ctx.state == VisitState.RECORDING:
+                            if time_since_seen > dep_time:
+                                ctx.state = VisitState.FINALIZING
+                                logger.info(f"Track {track_id} FINALIZING (not seen for {time_since_seen:.1f}s)")
+                        
+                        elif ctx.state == VisitState.FINALIZING:
+                            if time_since_seen > (dep_time + post_time):
+                                # End visit
+                                if ctx.recorder:
+                                    ctx.recorder.stop()
+                                
+                                if ctx.best_candidate:
+                                    queue.put_nowait(ctx.best_candidate)
+                                    duration = timestamp - ctx.start_ts
+                                    logger.info(
+                                        f"Track {track_id} ENDED → queued "
+                                        f"(conf={ctx.best_candidate.det_full.conf:.2f}, "
+                                        f"frames={ctx.frames_tracked}, duration={duration:.1f}s)"
+                                    )
+                                    last_observation_ts = timestamp
+                                else:
+                                    logger.warning(f"Track {track_id} ended but no candidate found")
+                                
+                                del active_tracks[track_id]
+                
+                # Skip temporal voting path
+                await asyncio.sleep(0.01)
+                continue
+    
+            # === TEMPORAL VOTING PATH (original logic) ===
+            # Store frame in temporal buffer
+            frame_buffer.append(FrameEntry(
+                frame=frame.copy(),
+                roi_frame=roi_frame.copy(),
+                timestamp=time.time(),
+                detections=detections,
+                motion_mask=motion_mask.copy() if motion_mask is not None else None,
+                xoff=xoff,
+                yoff=yoff
+            ))
+    
+            # Temporal voting: find best detection across recent frames
+            best_entry: FrameEntry | None = None
+            best_det: Det | None = None
+            detection_frame_count = sum(1 for entry in frame_buffer if entry.detections)
+            min_required = max(1, min(int(s.temporal_min_detections), frame_buffer.maxlen or 1))
+            temporal_stats = {
+                "window_frames": int(frame_buffer.maxlen or 1),
+                "positive_frames": int(detection_frame_count),
+                "min_required": int(min_required),
+            }
+            if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+                logger.debug(
+                    "Temporal voting: %s/%s frames with detections (min required: %s)",
+                    detection_frame_count,
+                    frame_buffer.maxlen,
+                    min_required,
+                )
+    
+            if detection_frame_count >= min_required:
+                for entry in frame_buffer:
+                    for d in entry.detections:
+                        if best_det is None or d.conf > best_det.conf:
+                            best_det = d
+                            best_entry = entry
+            else:
+                # Not enough positive frames in the window. Use latest frame context but skip detections.
+                if len(frame_buffer) > 0:
+                    best_entry = frame_buffer[-1]
+                else:
+                    continue
+    
+            if best_entry is None:
+                # No detections in window. Use latest frame context to ensure state machine runs.
+                if len(frame_buffer) > 0:
+                    best_entry = frame_buffer[-1]
+                else:
+                    continue
+    
+            # Restore context from the best frame
+            frame = best_entry.frame
+            detections = best_entry.detections if best_det is not None else []
+            motion_mask = best_entry.motion_mask
+            xoff = best_entry.xoff
+            yoff = best_entry.yoff
+            bg_active = (motion_mask is not None)
+    
+            if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+                 logger.debug(f"Found {len(detections)} bird detections.")
+    
+            # Check motion overlap
+            kept_entries = []
+            rejected_entries = []
+            if motion_mask is not None:
+                for d in detections:
+                    stats = _motion_overlap_stats(d, motion_mask)
+                    if float(stats["bbox_overlap_ratio"]) >= float(s.bg_min_overlap):
+                        kept_entries.append((d, stats))
+                    else:
+                        rejected_entries.append((d, stats))
+            else:
+                kept_entries = [(d, {}) for d in detections]
+    
+            det = None
+            det_stats = {}
+            if kept_entries:
+                det, det_stats = _select_best_detection(kept_entries)
+            elif os.getenv("HBMON_DEBUG_BG") == "1" and rejected_entries:
+                # Optionally log why detections were rejected
+                for d, stats in rejected_entries:
+                    logger.debug(f"REJECTED: p={d.conf:.2f} area={d.area} overlap={stats['bbox_overlap_ratio']:.2f} (min={s.bg_min_overlap})")
+    
+            # Use timestamp from the selected frame
+            assert best_entry is not None
+            timestamp = best_entry.timestamp
+    
+            if det:
+                pass # Replaced by logic below
+    
+            # Determine if we have a valid bird
+            is_bird_present = (det is not None)
+            
+            # State Machine Logic
+            current_time = timestamp # Use frame timestamp
+            
+            # 1. Transitions & Actions
+            cooldown_seconds = float(s.cooldown_seconds)
+            cooldown_active = (
+                last_observation_ts is not None
+                and cooldown_seconds > 0.0
+                and (current_time - last_observation_ts) < cooldown_seconds
+            )
+    
+            if is_bird_present:
+                 visit_last_seen_ts = current_time
+                 
+                 if visit_state == VisitState.IDLE:
+                     if cooldown_active:
+                         if os.getenv("HBMON_DEBUG_VERBOSE") == "1":
+                             logger.debug("Cooldown active; skipping visit start")
+                         continue
+                     # START RECORDING
+                     visit_state = VisitState.RECORDING
+                     visit_start_ts = current_time
+                     logger.info(f"Visit STARTED. Detection p={det.conf:.2f}")
+                     
+                     # Prepare video path
+                     visit_video_uuid = uuid.uuid4().hex
+                     stamp = time.strftime("%Y%m%d", time.localtime(current_time))
+                     video_dir = media_dir() / "clips" / stamp
+                     video_dir.mkdir(parents=True, exist_ok=True)
+                     visit_video_path = video_dir / f"{visit_video_uuid}.mp4"
+                     
+                     # Start recorder (approx 20fps)
+                     # Videos are stored uncompressed for ML training quality
+                     # Compression happens on-the-fly during browser streaming
+                     visit_recorder = BackgroundRecorder(
+                         visit_video_path, 
+                         fps=20.0, 
+                         width=frame.shape[1], 
+                         height=frame.shape[0]
+                     )
+                     visit_recorder.start()
+                     
+                     # Dump arrival buffer
+                     for f in arrival_buffer:
+                          visit_recorder.feed(f)
+                     
+                     # Reset best candidate tracking
+                     visit_best_candidate = None
+                     visit_best_score = (-1.0, 0)  # Reset to min
+                 
+                 if visit_state in (VisitState.RECORDING, VisitState.FINALIZING):
+                     if visit_state == VisitState.FINALIZING:
+                          # Bird returned! Resume recording
+                          visit_state = VisitState.RECORDING
+                          logger.info("Visit RESUMED")
+    
+                     # Update best candidate: prefer large, high-confidence detections
+                     score = calculate_detection_score(det)
+    
+                     if score > visit_best_score:
+                         visit_best_score = score
+                         det_full = Det(x1=det.x1 + xoff, y1=det.y1 + yoff, x2=det.x2 + xoff, y2=det.y2 + yoff, conf=det.conf)
+                         
+                         visit_best_candidate = CandidateItem(
+                             frame=frame.copy(),
+                             det_full=det_full,
+                             det=det,
+                             timestamp=timestamp,
+                             motion_mask=motion_mask.copy() if motion_mask is not None else None,
+                             background_img=background_img,
+                             settings_snapshot={
+                                  "detect_conf": float(s.detect_conf),
+                                  "detect_iou": float(s.detect_iou),
+                                  "min_box_area": int(s.min_box_area),
+                                  "fps_limit": float(s.fps_limit),
+                                  "cooldown_seconds": float(s.cooldown_seconds),
+                                  "use_tracking": False,
+                                  "temporal_window_frames": int(s.temporal_window_frames),
+                                  "temporal_min_detections": int(s.temporal_min_detections),
+                                  "bg_subtraction_enabled": bool(s.bg_subtraction_enabled),
+                                  "bg_subtraction_configured": bool(s.background_image),
+                                  "background_image_available": background_img is not None,
+                              },
+                             temporal_stats=temporal_stats,
+                             roi_stats={}, 
+                             bbox_stats=det_stats,
+                             bg_active=bg_active,
+                             s=s,
+                             is_rejected=False,
+                             video_path=visit_video_path,
+                             model_metadata=model_metadata,
+                             roi_shape=(roi_frame.shape[0], roi_frame.shape[1]),
+                             predict_imgsz=predict_imgsz,
+                             xoff=xoff,
+                             yoff=yoff,
+                         )
+    
+            # 2. Continuous Actions (Recording) and Timeouts
+            if visit_state in (VisitState.RECORDING, VisitState.FINALIZING):
+                 if visit_recorder:
+                     visit_recorder.feed(frame)
+            
+                 # Check Departure
+                 if visit_state == VisitState.RECORDING:
+                     dep_time = float(s.departure_timeout_seconds)
+                     if (current_time - visit_last_seen_ts) > dep_time:
+                         visit_state = VisitState.FINALIZING
+                         logger.info("Visit FINALIZING (bird left?)")
+                
+                 elif visit_state == VisitState.FINALIZING:
+                     dep_time = float(s.departure_timeout_seconds)
+                     post_time = float(s.post_departure_buffer_seconds)
+                     if (current_time - visit_last_seen_ts) > (dep_time + post_time): # Total timeout
+                             # END VISIT
+                             visit_state = VisitState.IDLE
+                             if visit_recorder:
+                                  visit_recorder.stop()
+                                  visit_recorder = None
+                             
+                             # Process the best candidate
+                             if visit_best_candidate:
+                                  queue.put_nowait(visit_best_candidate)
+                                  duration = current_time - visit_start_ts
+                                  logger.info(f"Visit ENDED. Queued best candidate (p={visit_best_candidate.det.conf:.2f}). Duration: {duration:.1f}s")
+                                  last_observation_ts = current_time
+                             else:
+                                  logger.warning("Visit ended but no candidate found?")
+                             
+                             frame_buffer.clear()
+    
+            # Rejected ?
+            log_rejected = env_bool("HBMON_BG_LOG_REJECTED", False)
+            if (not det) and log_rejected and rejected_entries:
+                # Check rejected cooldown
+                 rejected_cooldown = float(env_int("HBMON_BG_REJECTED_COOLDOWN_SECONDS", 3))
+                 max_per_minute = env_int("HBMON_BG_REJECTED_MAX_PER_MINUTE", 30)
+                 
+                 if (timestamp - last_logged_candidate_ts >= rejected_cooldown):
+                      # Also check max per minute
+                      while candidate_log_times and (timestamp - candidate_log_times[0]) > 60.0:
+                          candidate_log_times.popleft()
                       
-                      item = CandidateItem(
-                          frame=frame.copy(),
-                          det_full=det_full_rej,
-                          timestamp=timestamp,
-                          motion_mask=motion_mask.copy() if motion_mask is not None else None,
-                          background_img=background_img,
-                          settings_snapshot={
-                              "detect_conf": float(s.detect_conf),
-                              "detect_iou": float(s.detect_iou),
-                              "min_box_area": int(s.min_box_area),
-                              "fps_limit": float(s.fps_limit),
-                              "cooldown_seconds": float(s.cooldown_seconds),
-                              "temporal_window_frames": int(s.temporal_window_frames),
-                              "temporal_min_detections": int(s.temporal_min_detections),
-                              "bg_subtraction_enabled": bool(s.bg_subtraction_enabled),
-                              "bg_subtraction_configured": bool(s.background_image),
-                              "background_image_available": background_img is not None,
-                          },
-                          temporal_stats=temporal_stats,
-                          roi_stats=_roi_motion_stats(motion_mask) if motion_mask is not None else {},
-                          bbox_stats=rej_stats,
-                          bg_active=bg_active,
-                          s=s,
-                          is_rejected=True,
-                          rejected_reason="motion_rejected",
-                          model_metadata=model_metadata,
-                          roi_shape=(roi_frame.shape[0], roi_frame.shape[1]),
-                          predict_imgsz=predict_imgsz,
-                      )
-                      queue.put_nowait(item)
-                      last_logged_candidate_ts = timestamp
-                      candidate_log_times.append(timestamp)
+                      if len(candidate_log_times) < max_per_minute:
+                          best_rej, rej_stats = _select_best_detection(rejected_entries)
+                          det_full_rej = Det(x1=best_rej.x1 + xoff, y1=best_rej.y1 + yoff, x2=best_rej.x2 + xoff, y2=best_rej.y2 + yoff, conf=best_rej.conf)
+                          
+                          item = CandidateItem(
+                              frame=frame.copy(),
+                              det_full=det_full_rej,
+                              timestamp=timestamp,
+                              motion_mask=motion_mask.copy() if motion_mask is not None else None,
+                              background_img=background_img,
+                              settings_snapshot={
+                                  "detect_conf": float(s.detect_conf),
+                                  "detect_iou": float(s.detect_iou),
+                                  "min_box_area": int(s.min_box_area),
+                                  "fps_limit": float(s.fps_limit),
+                                  "cooldown_seconds": float(s.cooldown_seconds),
+                                  "temporal_window_frames": int(s.temporal_window_frames),
+                                  "temporal_min_detections": int(s.temporal_min_detections),
+                                  "bg_subtraction_enabled": bool(s.bg_subtraction_enabled),
+                                  "bg_subtraction_configured": bool(s.background_image),
+                                  "background_image_available": background_img is not None,
+                              },
+                              temporal_stats=temporal_stats,
+                              roi_stats=_roi_motion_stats(motion_mask) if motion_mask is not None else {},
+                              bbox_stats=rej_stats,
+                              bg_active=bg_active,
+                              s=s,
+                              is_rejected=True,
+                              rejected_reason="motion_rejected",
+                              model_metadata=model_metadata,
+                              roi_shape=(roi_frame.shape[0], roi_frame.shape[1]),
+                              predict_imgsz=predict_imgsz,
+                          )
+                          queue.put_nowait(item)
+                          last_logged_candidate_ts = timestamp
+                          candidate_log_times.append(timestamp)
 
 
         # Update background logic (periodic check)
@@ -1902,6 +2242,17 @@ async def run_worker() -> None:
              background_img = new_bg
         
         await asyncio.sleep(0.01)
+
+    finally:
+        logger.info("Shutting down worker background tasks...")
+        for task in [monitor_task, dispatcher_task]:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        logger.info("Worker background tasks stopped")
 
 def main() -> None:
     asyncio.run(run_worker())

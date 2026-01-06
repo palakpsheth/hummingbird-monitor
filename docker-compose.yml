@@ -95,7 +95,7 @@ services:
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
         PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     container_name: hbmon-web
-    command: [ "gunicorn", "hbmon.web:app", "-k", "uvicorn.workers.UvicornWorker", "--workers", "${HBMON_WEB_WORKERS:-4}", "--bind", "0.0.0.0:8000", "--log-level", "info", "--access-logfile", "-", "--error-logfile", "-" ]
+    command: [ "gunicorn", "hbmon.web:app", "-k", "uvicorn.workers.UvicornWorker", "--workers", "${HBMON_WEB_WORKERS:-4}", "--bind", "0.0.0.0:8000", "--timeout", "120", "--log-level", "info", "--access-logfile", "-", "--error-logfile", "-" ]
     environment:
       <<: [ *common-env, *rtsp-env, *bg-subtraction-env ]
       HBMON_TITLE: ${HBMON_TITLE}
@@ -131,6 +131,19 @@ services:
 
       # Annotation stall detection (minutes before marking job as stalled)
       HBMON_ANNOTATION_STALL_TIMEOUT_MINUTES: ${HBMON_ANNOTATION_STALL_TIMEOUT_MINUTES:-15}
+
+      # Magic Wand (On-demand detection)
+      HBMON_MAGIC_WAND_YOLO_MODEL: ${HBMON_MAGIC_WAND_YOLO_MODEL:-yolo11l.pt}
+      HBMON_MAGIC_WAND_CONFIDENCE: ${HBMON_MAGIC_WAND_CONFIDENCE:-0.15}
+      HBMON_MAGIC_WAND_CROP_SIZE: ${HBMON_MAGIC_WAND_CROP_SIZE:-640}
+      HBMON_MAGIC_WAND_USE_SAHI: ${HBMON_MAGIC_WAND_USE_SAHI:-1}
+      HBMON_MAGIC_WAND_TIMEOUT: ${HBMON_MAGIC_WAND_TIMEOUT:-300}
+      HBMON_MAGIC_WAND_RETRIES: ${HBMON_MAGIC_WAND_RETRIES:-1}
+      HBMON_INFERENCE_BACKEND: ${HBMON_INFERENCE_BACKEND:-cpu}
+      HBMON_DEVICE: ${HBMON_DEVICE:-}
+      OPENVINO_CACHE_DIR: ${OPENVINO_CACHE_DIR:-/data/openvino_cache}
+      YOLO_CONFIG_DIR: ${YOLO_CONFIG_DIR:-/data/yolo}
+      HBMON_DEBUG_VERBOSE: ${HBMON_DEBUG_VERBOSE:-1}
 
     # GPU access for system monitoring (intel_gpu_top requires privileged for PMU access)
     privileged: true
@@ -209,6 +222,15 @@ services:
       HBMON_DEBUG_VERBOSE: ${HBMON_DEBUG_VERBOSE:-1}
       HBMON_DEBUG_SAVE_FRAMES: ${HBMON_DEBUG_SAVE_FRAMES:-1}
       HBMON_DEBUG_EVERY_SECONDS: ${HBMON_DEBUG_EVERY_SECONDS:-30}
+
+      # Tracking mode (ByteTrack-based visit detection)
+      HBMON_USE_TRACKING: ${HBMON_USE_TRACKING:-1}
+      HBMON_TRACKER_CONFIG: ${HBMON_TRACKER_CONFIG:-/data/trackers/bytetrack.yaml}
+      HBMON_TRACK_HIGH_THRESH: ${HBMON_TRACK_HIGH_THRESH:-0.1}
+      HBMON_TRACK_LOW_THRESH: ${HBMON_TRACK_LOW_THRESH:-0.01}
+      HBMON_TRACK_NEW_THRESH: ${HBMON_TRACK_NEW_THRESH:-0.15}
+      HBMON_TRACK_MATCH_THRESH: ${HBMON_TRACK_MATCH_THRESH:-0.7}
+      HBMON_TRACK_BUFFER_FRAMES: ${HBMON_TRACK_BUFFER_FRAMES:-40}
 
     volumes:
       - ./data:/data
@@ -314,6 +336,14 @@ services:
       HBMON_ANNOTATION_CONFIDENCE: ${HBMON_ANNOTATION_CONFIDENCE:-0.15}
       HBMON_ANNOTATION_BATCH_SIZE: ${HBMON_ANNOTATION_BATCH_SIZE:-1}
       HBMON_ANNOTATION_NMS_THRESHOLD: ${HBMON_ANNOTATION_NMS_THRESHOLD:-0.5}
+
+      # Magic Wand (On-demand detection)
+      HBMON_MAGIC_WAND_YOLO_MODEL: ${HBMON_MAGIC_WAND_YOLO_MODEL:-yolo11l.pt}
+      HBMON_MAGIC_WAND_CONFIDENCE: ${HBMON_MAGIC_WAND_CONFIDENCE:-0.15}
+      HBMON_MAGIC_WAND_CROP_SIZE: ${HBMON_MAGIC_WAND_CROP_SIZE:-640}
+      HBMON_MAGIC_WAND_USE_SAHI: ${HBMON_MAGIC_WAND_USE_SAHI:-1}
+      HBMON_MAGIC_WAND_TIMEOUT: ${HBMON_MAGIC_WAND_TIMEOUT:-300}
+      HBMON_MAGIC_WAND_RETRIES: ${HBMON_MAGIC_WAND_RETRIES:-1}
 
       # Background job queue settings
       HBMON_ANNOTATION_QUEUE_ENABLED: ${HBMON_ANNOTATION_QUEUE_ENABLED:-1}

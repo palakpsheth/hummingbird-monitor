@@ -131,7 +131,7 @@ class _RejectYOLO:
         return [_RejectResult()]
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_run_worker_logs_rejected_candidate(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     media_dir = tmp_path / "media"

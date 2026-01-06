@@ -115,12 +115,14 @@ class AnnotationDetector:
         # Handle dict or list names
         if isinstance(names, dict):
             for k, v in names.items():
-                if str(v).strip().lower() in ('bird', 'hummingbird'):
+                name_str = str(v).strip().lower()
+                if 'bird' in name_str or 'hummingbird' in name_str:
                     target_id = int(k)
                     break
         elif isinstance(names, (list, tuple)):
             for i, v in enumerate(names):
-                if str(v).strip().lower() in ('bird', 'hummingbird'):
+                name_str = str(v).strip().lower()
+                if 'bird' in name_str or 'hummingbird' in name_str:
                     target_id = int(i)
                     break
                     
@@ -132,9 +134,10 @@ class AnnotationDetector:
             self.bird_class_id = 14
         
         # Override to 14 for COCO models to be safe
+        # Override to 14 for COCO models to be safe, unless we specifically found 'hummingbird'
         if self.bird_class_id != 14:
-            logger.info(f"Overriding bird_class_id {self.bird_class_id} with COCO standard 14")
-            self.bird_class_id = 14
+            logger.info(f"Using resolved bird_class_id={self.bird_class_id}")
+            # removed the forced override here to allow 'hummingbird' class if found
 
     def _load_yolo(self) -> Any:
         """Load YOLO model for annotation detection."""
@@ -162,22 +165,34 @@ class AnnotationDetector:
                 self._yolo = YOLO(str(model_path), task="detect")
             else:
                 logger.info(f"Loading PyTorch model and exporting to OpenVINO: {self.yolo_model_name}")
-                self._yolo = YOLO(self.yolo_model_name, task="detect")
+                # Try to load from YOLO_CONFIG_DIR first
+                config_dir = Path(os.environ.get("YOLO_CONFIG_DIR", "/data/yolo"))
+                pt_path = config_dir / self.yolo_model_name
+                
+                load_path = str(pt_path) if pt_path.exists() else self.yolo_model_name
+                self._yolo = YOLO(load_path, task="detect")
+                
                 # Export to OpenVINO format for future use
                 try:
                     self._export_to_openvino()
                 except Exception as e:
                     logger.warning(f"OpenVINO export failed, using PyTorch: {e}")
         else:
-            self._yolo = YOLO(self.yolo_model_name, task="detect")
+            # Try to load from YOLO_CONFIG_DIR first
+            config_dir = Path(os.environ.get("YOLO_CONFIG_DIR", "/data/yolo"))
+            pt_path = config_dir / self.yolo_model_name
+            load_path = str(pt_path) if pt_path.exists() else self.yolo_model_name
+            
+            self._yolo = YOLO(load_path, task="detect")
         
         return self._yolo
 
     def _get_openvino_model_path(self) -> Path | None:
         """Get path to OpenVINO-exported model if it exists."""
-        cache_dir = Path(os.environ.get("OPENVINO_CACHE_DIR", "/data/openvino_cache"))
+        # Use YOLO_CONFIG_DIR for persistent storage instead of cache dir which might be ephemeral
+        cache_dir = Path(os.environ.get("YOLO_CONFIG_DIR", "/data/yolo"))
         model_name = Path(self.yolo_model_name).stem
-        ov_path = cache_dir / "annotation" / f"{model_name}_openvino_model" / f"{model_name}.xml"
+        ov_path = cache_dir / "models" / f"{model_name}_openvino_model" / f"{model_name}.xml"
         return ov_path if ov_path.exists() else None
 
     def _export_to_openvino(self) -> Path | None:
@@ -185,8 +200,9 @@ class AnnotationDetector:
         if self._yolo is None:
             return None
             
-        cache_dir = Path(os.environ.get("OPENVINO_CACHE_DIR", "/data/openvino_cache"))
-        export_dir = cache_dir / "annotation"
+        # Use YOLO_CONFIG_DIR for persistent storage
+        cache_dir = Path(os.environ.get("YOLO_CONFIG_DIR", "/data/yolo"))
+        export_dir = cache_dir / "models"
         export_dir.mkdir(parents=True, exist_ok=True)
         
         try:
@@ -307,12 +323,14 @@ class AnnotationDetector:
         self,
         frame: np.ndarray,
         refine_with_sam: bool | None = None,
+        skip_bird_filter: bool = False,
     ) -> list[DetectedBox]:
         """Detect objects in a single frame.
         
         Args:
             frame: BGR image as numpy array
             refine_with_sam: Override SAM usage for this frame
+            skip_bird_filter: If True, return all detected objects (not just birds)
             
         Returns:
             List of detected bounding boxes
@@ -322,10 +340,9 @@ class AnnotationDetector:
         
         # Resolving dependencies and loading models
         boxes = []
-        sahi_success = False
         
         # Step 1: Standard YOLO
-        boxes = self._detect_standard_yolo(frame)
+        boxes = self._detect_standard_yolo(frame, skip_bird_filter=skip_bird_filter)
         
         if os.environ.get("HBMON_ANNOTATOR_DEBUG", "0") == "1":
             if boxes:
@@ -409,7 +426,8 @@ class AnnotationDetector:
             if self.bird_class_id is not None:
                  if prediction.category.id != self.bird_class_id:
                      # Check name as fallback
-                     if prediction.category.name.lower() not in ('bird', 'hummingbird'):
+                     name_lower = prediction.category.name.lower()
+                     if 'bird' not in name_lower and 'hummingbird' not in name_lower:
                          continue
             
             # SAHI returns absolute coordinates
@@ -437,8 +455,13 @@ class AnnotationDetector:
             
         return boxes
 
-    def _detect_standard_yolo(self, frame: np.ndarray) -> list[DetectedBox]:
-        """Run standard YOLO detection (original implementation)."""
+    def _detect_standard_yolo(self, frame: np.ndarray, skip_bird_filter: bool = False) -> list[DetectedBox]:
+        """Run standard YOLO detection (original implementation).
+        
+        Args:
+            frame: BGR image as numpy array
+            skip_bird_filter: If True, detect all classes (not just birds)
+        """
         yolo = self._load_yolo()
         if yolo is None:
             return []
@@ -447,8 +470,8 @@ class AnnotationDetector:
         imgsz_env = os.environ.get("HBMON_YOLO_IMGSZ", "auto")
         predict_imgsz = resolve_predict_imgsz(imgsz_env, frame.shape)
         
-        # Run YOLO detection
-        classes = [self.bird_class_id] if self.bird_class_id is not None else None
+        # Run YOLO detection - optionally filter by bird class
+        classes = None if skip_bird_filter else ([self.bird_class_id] if self.bird_class_id is not None else None)
         results = yolo(frame, conf=self.confidence, verbose=False, imgsz=predict_imgsz, classes=classes)
         
         if not results or len(results) == 0:
@@ -565,8 +588,10 @@ class AnnotationDetector:
             return True
         
         # Check by name if available
-        if class_name and str(class_name).strip().lower() in ('bird', 'hummingbird'):
-            return True
+        if class_name:
+             name_str = str(class_name).strip().lower()
+             if 'bird' in name_str or 'hummingbird' in name_str:
+                 return True
             
         # Fallback for COCO bird ID (14) if not explicitly resolved
         if class_id == 14:
@@ -663,8 +688,6 @@ class AnnotationDetector:
                 return boxes
 
             # 2. Standard IoU-based NMS
-            import torch
-            import torchvision
             
             # Prepare data for NMS
             # torchvision.ops.nms expects boxes in (x1, y1, x2, y2) format
@@ -826,7 +849,8 @@ class AnnotationDetector:
             
             # Post-Process NMS
             if boxes:
-                boxes = self._apply_nms(boxes, frame_debug=frame, frame_idx=(current_batch_start_idx + i if 'current_batch_start_idx' in locals() else i)) # Using i is fine for batch context debugging if unique filenames not strictly required per global frame ID, but user just wants verification.
+                batch_start = locals().get('current_batch_start_idx', 0)
+                boxes = self._apply_nms(boxes, frame_debug=frame, frame_idx=batch_start + i)
 
 
             all_boxes.append(boxes)

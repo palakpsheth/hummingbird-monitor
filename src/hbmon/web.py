@@ -75,6 +75,13 @@ import numpy as np
 
 from hbmon.observation_tools import extract_video_metadata
 
+# Configure logging to show INFO messages (for debug output to appear in gunicorn logs)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s:%(name)s:%(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
 logger = logging.getLogger(__name__)
 
 """
@@ -148,6 +155,7 @@ from hbmon.models import Candidate, Embedding, Individual, Observation, _to_utc
 from hbmon.schema import HealthOut, RoiOut, SystemLoad
 from hbmon.clustering import l2_normalize, suggest_split_two_groups
 from hbmon.utils import get_system_stats
+from hbmon.annotation_detector import AnnotationDetector
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Derived from this module path; not user-controlled, safe for git cwd.
@@ -1039,6 +1047,41 @@ def _validate_detection_inputs(raw: dict[str, str]) -> tuple[dict[str, Any], lis
     bg_save_mask_overlay_raw = str(raw.get("bg_save_mask_overlay", "")).strip().lower()
     parsed["bg_save_mask_overlay"] = bg_save_mask_overlay_raw in {"1", "true", "yes", "on"}
 
+    # Tracking mode fields
+    use_tracking_raw = str(raw.get("use_tracking", "")).strip().lower()
+    parsed["use_tracking"] = use_tracking_raw in {"1", "true", "yes", "on"}
+    
+    # Only validate tracking thresholds if tracking enabled or values provided
+    track_high = str(raw.get("track_high_thresh", "")).strip()
+    if track_high:
+        parse_float("track_high_thresh", "Track high threshold", 0.01, 0.95)
+    else:
+        parsed["track_high_thresh"] = 0.1  # default
+    
+    track_low = str(raw.get("track_low_thresh", "")).strip()
+    if track_low:
+        parse_float("track_low_thresh", "Track low threshold", 0.001, 0.5)
+    else:
+        parsed["track_low_thresh"] = 0.01  # default
+    
+    track_new = str(raw.get("track_new_thresh", "")).strip()
+    if track_new:
+        parse_float("track_new_thresh", "Track new threshold", 0.01, 0.95)
+    else:
+        parsed["track_new_thresh"] = 0.15  # default
+    
+    track_match = str(raw.get("track_match_thresh", "")).strip()
+    if track_match:
+        parse_float("track_match_thresh", "Track match threshold", 0.1, 0.99)
+    else:
+        parsed["track_match_thresh"] = 0.7  # default
+    
+    track_buffer = str(raw.get("track_buffer_frames", "")).strip()
+    if track_buffer:
+        parse_int("track_buffer_frames", "Track buffer frames", 1, 200)
+    else:
+        parsed["track_buffer_frames"] = 40  # default
+
     tz_text = str(raw.get("timezone", "")).strip()
     if not tz_text:
         parsed["timezone"] = "local"
@@ -1101,12 +1144,39 @@ def make_app() -> Any:
 
     ensure_dirs()
 
+    _annotator_detector: AnnotationDetector | None = None
+
+    def get_annotator_detector() -> AnnotationDetector:
+        """Get or create the magic wand detector.
+        
+        Uses HBMON_MAGIC_WAND_* env vars for config.
+        SAHI enabled by default for better small object detection.
+        """
+        nonlocal _annotator_detector
+        if _annotator_detector is None:
+            # Use magic wand specific model and confidence
+            wand_model = os.environ.get("HBMON_MAGIC_WAND_YOLO_MODEL", "yolo11l.pt")
+            wand_conf = float(os.environ.get("HBMON_MAGIC_WAND_CONFIDENCE", "0.15"))
+            use_sahi = os.environ.get("HBMON_MAGIC_WAND_USE_SAHI", "1") == "1"
+            logger.info(f"Initializing magic wand detector: model={wand_model}, conf={wand_conf}, sahi={use_sahi}")
+            _annotator_detector = AnnotationDetector(
+                yolo_model=wand_model,
+                confidence=wand_conf,
+                use_sam=False,  # No SAM for quick magic wand
+                use_sahi=use_sahi,  # SAHI for better small object detection
+            )
+        return _annotator_detector
+
     @asynccontextmanager
     async def _lifespan(_: FastAPI):
         try:
             await init_async_db()
         except RuntimeError:
             init_db()
+        
+        # Note: Magic wand detection runs on annotator service via RQ queue
+        # No model preload needed on web service
+        
         try:
             yield
         finally:
@@ -1221,6 +1291,13 @@ def make_app() -> Any:
             "bg_rejected_save_clip": "1" if getattr(settings, "bg_rejected_save_clip", False) else "0",
             "bg_save_masks": "1" if getattr(settings, "bg_save_masks", True) else "0",
             "bg_save_mask_overlay": "1" if getattr(settings, "bg_save_mask_overlay", True) else "0",
+            # Tracking mode fields
+            "use_tracking": "1" if getattr(settings, "use_tracking", True) else "0",
+            "track_high_thresh": f"{float(getattr(settings, 'track_high_thresh', 0.1)):.2f}",
+            "track_low_thresh": f"{float(getattr(settings, 'track_low_thresh', 0.01)):.3f}",
+            "track_new_thresh": f"{float(getattr(settings, 'track_new_thresh', 0.15)):.2f}",
+            "track_match_thresh": f"{float(getattr(settings, 'track_match_thresh', 0.7)):.2f}",
+            "track_buffer_frames": str(int(getattr(settings, "track_buffer_frames", 40))),
         }
         if raw:
             for k, v in raw.items():
@@ -1868,10 +1945,13 @@ def make_app() -> Any:
         current_frame = None
         if frames:
             if frame:
-                current_frame = next((f for f in frames if f.id == frame), frames[0])
+                current_frame = next((f for f in frames if f.id == frame or f.frame_index == frame), frames[0])
             else:
-                # Default to first frame with detections, or first frame if none
-                current_frame = next((f for f in frames if f.bird_present), frames[0])
+                # Default to first pending frame, then first with detections, then first frame
+                current_frame = next(
+                    (f for f in frames if f.status != "complete"),
+                    next((f for f in frames if f.bird_present), frames[0])
+                )
 
             # Get boxes for current frame
             if current_frame and _SQLA_AVAILABLE:
@@ -1888,6 +1968,7 @@ def make_app() -> Any:
                         "h": b.h,
                         "is_false_positive": b.is_false_positive,
                         "source": b.source,
+                        "confidence": b.confidence,
                     }
                     for b in box_rows
                 ]
@@ -1896,6 +1977,10 @@ def make_app() -> Any:
 
         frames_total = len(frames)
         frames_reviewed = sum(1 for f in frames if f.status == "complete")
+
+        # Magic wand configuration from env
+        wand_timeout = int(os.environ.get("HBMON_MAGIC_WAND_TIMEOUT", "300"))
+        wand_retries = int(os.environ.get("HBMON_MAGIC_WAND_RETRIES", "1"))
 
         return templates.TemplateResponse(
             request,
@@ -1908,6 +1993,8 @@ def make_app() -> Any:
                 current_frame=current_frame,
                 frames_total=frames_total,
                 frames_reviewed=frames_reviewed,
+                wand_timeout=wand_timeout,
+                wand_retries=wand_retries,
             ),
         )
 
@@ -1979,6 +2066,7 @@ def make_app() -> Any:
                 "h": b.h,
                 "is_false_positive": b.is_false_positive,
                 "source": b.source,
+                "confidence": b.confidence,
             }
             for b in box_rows
         ]
@@ -2032,6 +2120,7 @@ def make_app() -> Any:
                     h=float(box.get("h", 0)),
                     is_false_positive=bool(box.get("is_false_positive", False)),
                     source=str(box.get("source", "manual")),
+                    confidence=float(box["confidence"]) if box.get("confidence") is not None else None,
                 ))
             except (ValueError, TypeError):
                 continue
@@ -2054,6 +2143,7 @@ def make_app() -> Any:
                     h=box.h,
                     is_false_positive=box.is_false_positive,
                     source=box.source,
+                    confidence=box.confidence,
                 )
                 db.add(db_box)
 
@@ -2126,7 +2216,12 @@ def make_app() -> Any:
             raise HTTPException(status_code=404, detail="Frame image not found")
 
         if thumb:
-            # Generate or retrieve thumbnail
+            # Check for pre-generated thumbnail first (from frame extraction)
+            pregen_thumb_path = frame_path.with_suffix('.thumb.jpg')
+            if pregen_thumb_path.exists():
+                return FileResponse(str(pregen_thumb_path), media_type="image/jpeg")
+            
+            # Fall back to on-demand thumbnail generation
             from hbmon.thumbnail import get_or_create_thumbnail
             
             # Use relative path for thumbnail cache key
@@ -2144,6 +2239,131 @@ def make_app() -> Any:
                 # Fall back to full image
         
         return FileResponse(str(frame_path), media_type="image/jpeg")
+
+    @app.post("/api/annotate/{obs_id}/frame/{frame_id}/detect_region")
+    async def api_annotate_detect_region(
+        obs_id: int,
+        frame_id: int,
+        coords: dict[str, float],
+        db: AsyncSession | _AsyncSessionAdapter = Depends(get_db_dep),
+    ) -> dict[str, Any]:
+        """Run on-demand detection on a specific region (Magic Wand).
+        
+        Expects JSON body: {"x": float, "y": float} (normalized 0-1)
+        """
+        from hbmon.models import AnnotationFrame
+        
+        f = await db.get(AnnotationFrame, frame_id)
+        if not f:
+            raise HTTPException(status_code=404, detail="Frame not found")
+
+        # Load image - frame_path may be absolute or relative
+        frame_path_str = f.frame_path
+        if frame_path_str.startswith("/"):
+            # Absolute path - use directly
+            img_path = Path(frame_path_str)
+        else:
+            # Relative path - try /app first, then data_dir
+            img_path = Path("/app") / frame_path_str.lstrip("/")
+        
+        if not img_path.exists():
+            # Try data_dir as fallback for relative paths
+            img_path = Path(data_dir()) / frame_path_str.lstrip("/")
+        
+        if not img_path.exists():
+            raise HTTPException(status_code=404, detail=f"Image file not found: {frame_path_str}")
+
+        try:
+            cv2 = _load_cv2()
+            frame = cv2.imread(str(img_path))
+            if frame is None:
+                raise ValueError("Failed to load image")
+        except Exception as e:
+            logger.error(f"Error loading frame for wand: {e}")
+            raise HTTPException(status_code=500, detail="Failed to load image")
+
+        h, w = frame.shape[:2]
+        cx, cy = int(coords["x"] * w), int(coords["y"] * h)
+        
+        # Crop size for magic wand detection (configurable via params or env)
+        # Allow overriding crop_size in request body (coords dict)
+        default_crop = int(os.environ.get("HBMON_MAGIC_WAND_CROP_SIZE", "640"))
+        crop_size = int(coords.get("crop_size", default_crop))
+        
+        half = crop_size // 2
+        
+        x1 = max(0, cx - half)
+        y1 = max(0, cy - half)
+        x2 = min(w, x1 + crop_size)
+        y2 = min(h, y1 + crop_size)
+        
+        # Adjust x1/y1 if we hit right/bottom edge
+        if x2 - x1 < crop_size:
+            x1 = max(0, x2 - crop_size)
+        if y2 - y1 < crop_size:
+            y1 = max(0, y2 - crop_size)
+
+        crop = frame[y1:y2, x1:x2]
+        crop_h, crop_w = crop.shape[:2]
+        
+        if crop_h == 0 or crop_w == 0:
+            return {"boxes": []}
+
+        # Debug logging
+        debug = os.environ.get("HBMON_DEBUG_VERBOSE", "0") == "1"
+        
+        # Allow overriding confidence in request body
+        default_conf = float(os.environ.get("HBMON_MAGIC_WAND_CONFIDENCE", "0.15"))
+        wand_conf = float(coords.get("confidence", default_conf))
+        
+        if debug:
+            backend = os.environ.get("HBMON_INFERENCE_BACKEND", "cpu")
+            wand_model = os.environ.get("HBMON_MAGIC_WAND_YOLO_MODEL", "yolo11l.pt")
+            logger.info(f"Magic wand: click=({coords['x']:.3f},{coords['y']:.3f}) -> crop=[{x1}:{x2},{y1}:{y2}] ({crop_w}x{crop_h})")
+            logger.info(f"Magic wand config: model={wand_model}, conf={wand_conf}, crop={crop_size}, backend={backend}")
+
+        # Enqueue detection job to annotator service
+        from hbmon.annotation_jobs import enqueue_magic_wand_detection, is_magic_wand_queue_available
+        
+        if not is_magic_wand_queue_available():
+            logger.error("Magic wand queue not available")
+            return {"error": "Queue unavailable", "boxes": []}
+        
+        job_id = enqueue_magic_wand_detection(
+            frame_id=frame_id,
+            crop_x1=x1,
+            crop_y1=y1,
+            crop_x2=x2,
+            crop_y2=y2,
+            frame_path=str(img_path),
+            frame_width=w,
+            frame_height=h,
+            confidence=wand_conf,
+            use_sahi=bool(int(coords.get("use_sahi", 0))),
+            enhance_contrast=bool(int(coords.get("enhance_contrast", 0))),
+        )
+        
+        if job_id:
+            logger.info(f"Magic wand job enqueued: {job_id}")
+            return {"job_id": job_id, "status": "queued"}
+        else:
+            logger.error("Failed to enqueue magic wand job")
+            return {"error": "Failed to enqueue job", "boxes": []}
+
+    @app.get("/api/annotate/wand_job/{job_id}")
+    async def api_annotate_wand_job_status(job_id: str) -> dict[str, Any]:
+        """Get status of a magic wand detection job.
+        
+        Poll this endpoint after posting to detect_region.
+        Returns status and boxes when complete.
+        """
+        from hbmon.annotation_jobs import get_magic_wand_job_status
+        
+        result = get_magic_wand_job_status(job_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        return result
 
     @app.get("/api/annotate/{obs_id}/start")
     async def api_annotate_start(
@@ -2330,6 +2550,9 @@ def make_app() -> Any:
             # 2. Also check Redis for queued and explicitly failed jobs (override DB-based status)
             try:
                 from hbmon.annotation_jobs import _get_redis
+                from rq import Queue
+                from rq.job import Job
+                from rq.registry import FailedJobRegistry
                 redis_conn = _get_redis()
                 if not redis_conn:
                     raise Exception("Redis connection unavailable")
@@ -2359,7 +2582,7 @@ def make_app() -> Any:
                         oid = get_obs_id(job)
                         if oid and oid in status_map:
                             status_map[oid] = "failed"
-                    except:
+                    except Exception:
                         continue
 
             except Exception as e:
@@ -3730,6 +3953,12 @@ def make_app() -> Any:
             "post_departure_buffer_seconds",
             "crop_padding",
             "bg_rejected_cooldown_seconds",
+            # Tracking mode fields
+            "track_high_thresh",
+            "track_low_thresh",
+            "track_new_thresh",
+            "track_match_thresh",
+            "track_buffer_frames",
         )
         raw = {name: str(form.get(name, "") or "").strip() for name in field_names}
         raw["timezone"] = str(form.get("timezone", "") or "").strip()
@@ -3739,6 +3968,7 @@ def make_app() -> Any:
             "bg_rejected_save_clip",
             "bg_save_masks",
             "bg_save_mask_overlay",
+            "use_tracking",
         )
         for name in bool_field_names:
             raw[name] = "1" if form.get(name) else "0"
@@ -3785,6 +4015,13 @@ def make_app() -> Any:
         s.bg_rejected_save_clip = parsed["bg_rejected_save_clip"]
         s.bg_save_masks = parsed["bg_save_masks"]
         s.bg_save_mask_overlay = parsed["bg_save_mask_overlay"]
+        # Tracking mode fields
+        s.use_tracking = parsed["use_tracking"]
+        s.track_high_thresh = parsed["track_high_thresh"]
+        s.track_low_thresh = parsed["track_low_thresh"]
+        s.track_new_thresh = parsed["track_new_thresh"]
+        s.track_match_thresh = parsed["track_match_thresh"]
+        s.track_buffer_frames = parsed["track_buffer_frames"]
         save_settings(s)
 
         return RedirectResponse(url="/config?saved=1", status_code=303)

@@ -31,7 +31,7 @@ def _setup_app(tmp_path: Path, monkeypatch) -> TestClient:
     return TestClient(app)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_refresh_embedding(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -73,7 +73,7 @@ async def test_refresh_embedding(tmp_path, monkeypatch):
         np.testing.assert_allclose(proto, expected_norm, atol=1e-5)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_split_review_rendering(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:
@@ -102,7 +102,7 @@ async def test_split_review_rendering(tmp_path, monkeypatch):
     assert "Split review" in response.text
     assert "Indy" in response.text
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_refresh_embedding_no_embs(tmp_path, monkeypatch):
     client = _setup_app(tmp_path, monkeypatch)
     async with get_async_session_factory()() as db:

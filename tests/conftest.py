@@ -249,10 +249,23 @@ def import_web():
         # else: When tmp_path is None, rely on isolate_test_dirs autouse fixture
         # which already sets HBMON_DATA_DIR and HBMON_MEDIA_DIR from its own tmp_path
 
-        # Remove module from sys.modules if already loaded to force re-import
-        if "hbmon.web" in importlib.sys.modules:
-            importlib.sys.modules.pop("hbmon.web")
-
         return importlib.import_module("hbmon.web")
 
     return _import_web
+
+
+
+
+import asyncio
+from typing import Iterator
+
+@pytest.fixture
+def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    """
+    Yields a new asyncio event loop for each test function.
+    This override stops the "loop is already running" errors by ensuring strict isolation.
+    """
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+

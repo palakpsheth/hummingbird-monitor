@@ -359,6 +359,46 @@ def init_db() -> None:
     from hbmon.models import Base  # type: ignore
 
     Base.metadata.create_all(bind=engine)
+    
+    # Run schema migrations for existing tables
+    _run_migrations(engine)
+
+
+def _run_migrations(engine: Engine) -> None:
+    """
+    Run schema migrations to add missing columns to existing tables.
+    
+    SQLAlchemy's create_all only creates missing tables, not missing columns.
+    This function adds columns that were defined after the table was created.
+    """
+    from sqlalchemy import text, inspect
+    
+    migrations = [
+        # (table_name, column_name, column_definition)
+        ("annotation_boxes", "confidence", "REAL"),
+    ]
+    
+    with engine.connect() as conn:
+        inspector = inspect(engine)
+        
+        for table, column, col_def in migrations:
+            # Check if table exists
+            if table not in inspector.get_table_names():
+                continue
+            
+            # Check if column exists
+            existing_cols = [c["name"] for c in inspector.get_columns(table)]
+            if column in existing_cols:
+                continue
+            
+            # Add the column
+            try:
+                # PostgreSQL and SQLite compatible syntax
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"))
+                conn.commit()
+                print(f"[db] Migration: Added column {table}.{column}")
+            except Exception as e:
+                print(f"[db] Migration failed for {table}.{column}: {e}")
 
 
 async def init_async_db() -> None:

@@ -42,6 +42,7 @@ BATCH_HOUR = int(os.environ.get("HBMON_ANNOTATION_BATCH_HOUR", "3"))
 EXTRACTION_TIMEOUT = os.environ.get("HBMON_ANNOTATION_EXTRACTION_TIMEOUT", "30m")
 DETECTION_TIMEOUT = os.environ.get("HBMON_ANNOTATION_DETECTION_TIMEOUT", "60m")
 PROPAGATION_TIMEOUT = os.environ.get("HBMON_ANNOTATION_PROPAGATION_TIMEOUT", "5m")
+MAGIC_WAND_TIMEOUT = os.environ.get("HBMON_MAGIC_WAND_TIMEOUT", "300")  # seconds
 
 # Job retry configuration
 MAX_RETRIES = int(os.environ.get("HBMON_ANNOTATION_MAX_RETRIES", "3"))
@@ -52,6 +53,7 @@ CHECKPOINT_INTERVAL = int(os.environ.get("HBMON_ANNOTATION_CHECKPOINT_INTERVAL",
 
 # Lazy imports for optional dependencies
 _queue = None
+_magic_wand_queue = None
 _redis = None
 
 
@@ -90,6 +92,28 @@ def is_queue_available() -> bool:
     if not QUEUE_ENABLED:
         return False
     return _get_queue() is not None
+
+
+def _get_magic_wand_queue():
+    """Get RQ queue for magic wand detection (lazy init)."""
+    global _magic_wand_queue
+    if _magic_wand_queue is None:
+        redis = _get_redis()
+        if redis:
+            try:
+                from rq import Queue
+                _magic_wand_queue = Queue("magic_wand", connection=redis)
+            except ImportError:
+                logger.warning("RQ package not installed, magic wand queuing disabled")
+                _magic_wand_queue = False
+    return _magic_wand_queue if _magic_wand_queue else None
+
+
+def is_magic_wand_queue_available() -> bool:
+    """Check if magic wand queue is available."""
+    if not QUEUE_ENABLED:
+        return False
+    return _get_magic_wand_queue() is not None
 
 
 def enqueue_preprocessing(obs_id: int, resume: bool = False) -> str | None:
@@ -252,9 +276,219 @@ def get_pending_jobs() -> list[dict[str, Any]]:
         return []
 
 
+def enqueue_magic_wand_detection(
+    frame_id: int,
+    crop_x1: int,
+    crop_y1: int,
+    crop_x2: int,
+    crop_y2: int,
+    frame_path: str,
+    frame_width: int,
+    frame_height: int,
+    confidence: float | None = None,
+    use_sahi: bool | None = None,
+    enhance_contrast: bool = False,
+) -> str | None:
+    """Enqueue magic wand detection job.
+    
+    Args:
+        frame_id: AnnotationFrame ID
+        crop_x1, crop_y1, crop_x2, crop_y2: Crop region in pixels
+        frame_path: Path to frame image
+        frame_width, frame_height: Full frame dimensions
+        
+    Returns:
+        Job ID if enqueued, None if queue unavailable
+    """
+    queue = _get_magic_wand_queue()
+    if not queue:
+        logger.warning("Magic wand queue not available")
+        return None
+    
+    try:
+        job = queue.enqueue(
+            magic_wand_detect_job,
+            frame_id,
+            crop_x1,
+            crop_y1,
+            crop_x2,
+            crop_y2,
+            frame_path,
+            frame_width,
+            frame_height,
+            confidence=confidence,
+            use_sahi=use_sahi,
+            enhance_contrast=enhance_contrast,
+            job_timeout=MAGIC_WAND_TIMEOUT,
+            result_ttl=300,  # Keep result for 5 minutes
+            failure_ttl=300,
+            description=f"Magic wand detection for frame {frame_id}",
+        )
+        logger.info(f"Enqueued magic wand job for frame {frame_id}: {job.id}")
+        return job.id
+    except Exception as e:
+        logger.error(f"Failed to enqueue magic wand job: {e}")
+        return None
+
+
+def get_magic_wand_job_status(job_id: str) -> dict[str, Any] | None:
+    """Get status of a magic wand job.
+    
+    Returns dict with status and boxes if complete.
+    """
+    redis = _get_redis()
+    if not redis:
+        return None
+    
+    try:
+        from rq.job import Job
+        job = Job.fetch(job_id, connection=redis)
+        status = job.get_status()
+        
+        result: dict[str, Any] = {
+            "id": job.id,
+            "status": status,
+        }
+        
+        if status == "finished":
+            result["boxes"] = job.result or []
+        elif status == "failed":
+            result["error"] = str(job.exc_info) if job.exc_info else "Unknown error"
+            result["boxes"] = []
+        
+        return result
+    except Exception as e:
+        logger.debug(f"Failed to fetch magic wand job {job_id}: {e}")
+        return None
+
+
 # ============================================================
 # Job Functions (run by RQ worker)
 # ============================================================
+
+def magic_wand_detect_job(
+    frame_id: int,
+    crop_x1: int,
+    crop_y1: int,
+    crop_x2: int,
+    crop_y2: int,
+    frame_path: str,
+    frame_width: int,
+    frame_height: int,
+    confidence: float | None = None,
+    use_sahi: bool | None = None,
+    enhance_contrast: bool = False,
+) -> list[dict[str, Any]]:
+    """Magic wand detection job (runs in RQ worker on annotator).
+    
+    Runs YOLO detection on a cropped region and returns detected boxes
+    with coordinates mapped back to the full frame.
+    
+    Args:
+        frame_id: AnnotationFrame ID
+        crop_x1, crop_y1, crop_x2, crop_y2: Crop region in pixels
+        frame_path: Path to frame image
+        frame_width, frame_height: Full frame dimensions
+        
+    Returns:
+        List of detected box dicts with normalized coordinates
+    """
+    import cv2
+    import time as _time
+    
+    logger.info(f"Magic wand job: frame={frame_id}, crop=[{crop_x1}:{crop_x2},{crop_y1}:{crop_y2}]")
+    
+    t0 = _time.time()
+    
+    # Load and crop image
+    img = cv2.imread(frame_path)
+    if img is None:
+        logger.error(f"Failed to load image: {frame_path}")
+        return []
+    
+    crop = img[crop_y1:crop_y2, crop_x1:crop_x2]
+    crop_h, crop_w = crop.shape[:2]
+
+    # Optional: Enhance contrast (CLAHE)
+    if enhance_contrast:
+        try:
+            logger.info("Applying CLAHE contrast enhancement")
+            # Convert to LAB color space
+            lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
+            l_channel, a, b = cv2.split(lab)
+            # Apply CLAHE to L-channel
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            cl = clahe.apply(l_channel)
+            # Merge and convert back to BGR
+            limg = cv2.merge((cl, a, b))
+            crop = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+        except Exception as e:
+            logger.warning(f"CLAHE failed: {e}")
+    
+    # Run detection
+    from hbmon.annotation_detector import AnnotationDetector
+    import os
+    
+    wand_model = os.environ.get("HBMON_MAGIC_WAND_YOLO_MODEL", "yolo11l.pt")
+    # Use provided confidence or fallback to env/default
+    if confidence is not None:
+        wand_conf = float(confidence)
+    else:
+        wand_conf = float(os.environ.get("HBMON_MAGIC_WAND_CONFIDENCE", "0.15"))
+        
+    if use_sahi is not None:
+        actual_use_sahi = use_sahi
+    else:
+        actual_use_sahi = os.environ.get("HBMON_MAGIC_WAND_USE_SAHI", "1") == "1"
+    
+    detector = AnnotationDetector(
+        yolo_model=wand_model,
+        confidence=wand_conf,
+        use_sam=False,
+        use_sahi=actual_use_sahi,
+    )
+    detector.initialize()
+    
+    # Detect all objects (skip bird filter for magic wand)
+    boxes = detector.detect_frame(crop, refine_with_sam=False, skip_bird_filter=True)
+    
+    t_detect = (_time.time() - t0) * 1000
+    logger.info(f"Magic wand job: found {len(boxes)} boxes in {t_detect:.1f}ms (SAHI={use_sahi})")
+    
+    # Map boxes back to full frame coordinates
+    mapped_boxes = []
+    for b in boxes:
+        # Convert from crop-relative to full-image
+        bx_px = b.x * crop_w
+        by_px = b.y * crop_h
+        bw_px = b.w * crop_w
+        bh_px = b.h * crop_h
+        
+        final_cx_px = crop_x1 + bx_px
+        final_cy_px = crop_y1 + by_px
+        
+
+        x_norm = max(0.0, min(1.0, final_cx_px / frame_width))
+        y_norm = max(0.0, min(1.0, final_cy_px / frame_height))
+        w_norm = max(0.0, min(1.0, bw_px / frame_width))
+        h_norm = max(0.0, min(1.0, bh_px / frame_height))
+        
+        # Filter out tiny or invalid boxes
+        if w_norm <= 0 or h_norm <= 0:
+            continue
+
+        mapped_boxes.append({
+            "class_id": b.class_id,
+            "x": x_norm,
+            "y": y_norm,
+            "w": w_norm,
+            "h": h_norm,
+            "is_false_positive": False,
+            "source": "wand",
+            "confidence": b.confidence,
+        })
+    
+    return mapped_boxes
 
 def preprocess_observation_job(obs_id: int, resume: bool = False) -> dict[str, Any]:
     """Full preprocessing pipeline for an observation.
@@ -760,6 +994,8 @@ def reset_observation_annotation(obs_id: int) -> dict[str, Any]:
 def _extract_frames_sync(obs_id: int, video_path: Path) -> list[tuple[int, Path]]:
     """Synchronously extract frames from video.
     
+    Also generates thumbnails for faster annotation review UI loading.
+    
     Args:
         obs_id: Observation ID
         video_path: Path to video file
@@ -769,6 +1005,9 @@ def _extract_frames_sync(obs_id: int, video_path: Path) -> list[tuple[int, Path]
     """
     import cv2
     from hbmon.annotation_storage import get_frame_path
+    
+    THUMB_WIDTH = 300  # Match existing thumbnail size in web.py
+    THUMB_QUALITY = 70  # JPEG quality for thumbnails
     
     frames = []
     cap = cv2.VideoCapture(str(video_path))
@@ -783,6 +1022,15 @@ def _extract_frames_sync(obs_id: int, video_path: Path) -> list[tuple[int, Path]
             frame_path = get_frame_path(str(obs_id), idx)
             frame_path.parent.mkdir(parents=True, exist_ok=True)
             cv2.imwrite(str(frame_path), frame)
+            
+            # Generate thumbnail for faster UI loading
+            thumb_path = frame_path.with_suffix('.thumb.jpg')
+            h, w = frame.shape[:2]
+            if w > 0:
+                thumb_h = int(THUMB_WIDTH * h / w)
+                thumb = cv2.resize(frame, (THUMB_WIDTH, thumb_h), interpolation=cv2.INTER_AREA)
+                cv2.imwrite(str(thumb_path), thumb, [cv2.IMWRITE_JPEG_QUALITY, THUMB_QUALITY])
+            
             frames.append((idx, frame_path))
             idx += 1
     finally:

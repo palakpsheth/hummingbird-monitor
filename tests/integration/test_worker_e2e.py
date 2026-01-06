@@ -11,8 +11,8 @@ from hbmon import db as db_module
 from hbmon.models import Observation
 import hbmon.worker as worker
 
-# Mark as integration test
-pytestmark = pytest.mark.integration
+# Mark as integration test AND heavy (resource-intensive, excluded from default runs)
+pytestmark = [pytest.mark.integration, pytest.mark.heavy]
 
 def get_e2e_cases():
     """Discover E2E test cases in tests/integration/test_data/e2e/"""
@@ -21,11 +21,63 @@ def get_e2e_cases():
     if base_dir.exists():
         for item in base_dir.iterdir():
             if item.is_dir() and (item / "metadata.json").exists():
-                cases.append(item)
-    return sorted(cases, key=lambda p: p.name)
+                # Read metadata for pytest marks
+                marks = []
+                try:
+                    with open(item / "metadata.json") as f:
+                        meta = json.load(f)
+                        if meta.get("xfail"):
+                            marks.append(pytest.mark.xfail(reason=meta.get("xfail_reason", "Known issue")))
+                        elif meta.get("skip"):
+                             marks.append(pytest.mark.skip(reason=meta.get("skip_reason", "Skipped via metadata")))
+                except Exception as e:
+                    logging.warning(f"Failed to read metadata for {item.name}: {e}")
 
-@pytest.mark.parametrize("case_dir", get_e2e_cases(), ids=lambda p: p.name)
-@pytest.mark.anyio
+                # Check for video file existence
+                if not (item / "clip.mp4").exists():
+                     marks.append(pytest.mark.skip(reason="Video 'clip.mp4' not found"))
+
+                cases.append(pytest.param(item, id=item.name, marks=marks))
+    
+    # Sort by case name (item.name)
+    # When using pytest.param, the object is a ParameterSet, but we can't access .values easily here if we are just sorting the list of params?
+    # actually pytest.param returns a ParameterSet object.
+    # We can sort before wrapping or access .values[0] if it's there?
+    # Safest is to sort items first, then wrap.
+    return cases
+
+# Sort items first to ensure stability
+def get_sorted_e2e_cases():
+    base_dir = Path(__file__).parent / "test_data" / "e2e"
+    items = []
+    if base_dir.exists():
+        for item in base_dir.iterdir():
+             if item.is_dir() and (item / "metadata.json").exists():
+                 items.append(item)
+    items.sort(key=lambda p: p.name)
+    
+    cases = []
+    for item in items:
+        marks = []
+        try:
+            with open(item / "metadata.json") as f:
+                meta = json.load(f)
+                if meta.get("xfail"):
+                    marks.append(pytest.mark.xfail(reason=meta.get("xfail_reason", "Known issue")))
+                elif meta.get("skip"):
+                        marks.append(pytest.mark.skip(reason=meta.get("skip_reason", "Skipped via metadata")))
+        except Exception as e:
+            logging.warning(f"Failed to read metadata for {item.name}: {e}")
+
+        # Check for video file existence
+        if not (item / "clip.mp4").exists():
+                marks.append(pytest.mark.skip(reason="Video 'clip.mp4' not found"))
+
+        cases.append(pytest.param(item, id=item.name, marks=marks))
+    return cases
+
+@pytest.mark.parametrize("case_dir", get_sorted_e2e_cases())
+@pytest.mark.asyncio
 async def test_worker_e2e_data_driven(tmp_path, monkeypatch, case_dir):
     """
     Data-driven E2E worker test.
@@ -36,11 +88,10 @@ async def test_worker_e2e_data_driven(tmp_path, monkeypatch, case_dir):
     with open(metadata_path) as f:
         metadata = json.load(f)
         
-    if metadata.get("xfail"):
-        pytest.xfail(metadata.get("xfail_reason", "Known issue"))
-
     video_filename = "clip.mp4"
     src_video_path = case_dir / video_filename
+    
+    # Video existence check is now in parameterization (as skip), but keep this safe fallback/check
     if not src_video_path.exists():
         pytest.skip(f"Video not found: {src_video_path}")
         
@@ -55,8 +106,6 @@ async def test_worker_e2e_data_driven(tmp_path, monkeypatch, case_dir):
     media_dir.mkdir(exist_ok=True)
     
     # Copy video to media dir (optional, but good for realism if using RTSP path)
-    # Actually, we point RTSP directly to the file, so we can use source or copy.
-    # Let's use the source directly to save time, or copy if we want to modify it.
     rtsp_url = str(src_video_path.absolute())
     
     monkeypatch.setenv("HBMON_DATA_DIR", str(data_dir))

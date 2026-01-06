@@ -51,9 +51,13 @@ Thumbs.db
 data
 media
 exports
+
 *.sqlite
 *.sqlite3
 
 # ---- large archives ----
 *.tar.gz
 *.zip
+
+# models
+*.pt
